@@ -23,13 +23,7 @@ Identify physical cards with your phone's camera, track real-time market valuati
 
 ## Demo
 
-<div align="center">
-  <a href="https://github.com/thenotoriousJeremy/bindarr/raw/main/docs/store/demo.mp4">
-    <img src="docs/store/demo-poster.jpg" width="280" alt="Watch the scan demo">
-  </a>
-  <br/>
-  <em>▶ Click to watch a live card scan (14s)</em>
-</div>
+https://github.com/user-attachments/assets/4ee6c23f-a024-499b-9fc3-3d144c42ba61
 
 ---
 
