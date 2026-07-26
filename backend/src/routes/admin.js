@@ -323,6 +323,26 @@ router.delete('/set-indexes/:game/:set', (req, res) => {
   res.json({ message: `Removed ${game} ${set} index` });
 });
 
+// Browse sets for the set-index builder modal — returns all known sets with
+// symbol/logo images for the chosen game, newest releases first.
+router.get('/sets-browse', async (req, res) => {
+  const { game } = req.query;
+  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
+  try {
+    // Some older rows may have NULL game (defaults to 'pokemon').
+    const sets = await db.all(
+      `SELECT id, name, series, printed_total, release_date, symbol_url, logo_url
+       FROM sets WHERE game = ?1 OR (game IS NULL AND ?2 = 'pokemon')
+       ORDER BY release_date DESC`,
+      [game, game]
+    );
+    res.json(sets);
+  } catch (error) {
+    console.error('Error browsing sets:', error);
+    res.status(500).json({ error: 'Failed to retrieve sets' });
+  }
+});
+
 // --- Global scan index build management ---
 
 // On-disk status of the whole-game CLIP+ORB indexes plus any in-flight build.

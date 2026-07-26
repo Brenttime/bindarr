@@ -86,9 +86,9 @@ function extractDetailedPrices(card) {
 // without a restart (INSERT OR REPLACE below upserts, so this is idempotent).
 async function fetchAndCacheSets(force = false) {
   try {
-    const existingSets = await db.get('SELECT COUNT(*) as count FROM sets');
+    const existingSets = await db.get(`SELECT COUNT(*) as count FROM sets WHERE game = 'pokemon' OR game IS NULL`);
     if (!force && existingSets && existingSets.count > 0) {
-      console.log(`Sets table already populated (${existingSets.count} sets). Skipping fetch.`);
+      console.log(`Pokemon sets already populated (${existingSets.count} sets). Skipping fetch.`);
       return;
     }
 
@@ -108,12 +108,12 @@ async function fetchAndCacheSets(force = false) {
       }
     }
     
-    console.log(`Fetched ${sets.length} sets. Saving to database...`);
+    console.log(`Fetched ${sets.length} Pokemon sets. Saving to database...`);
     
     for (const s of sets) {
       await db.run(
-        `INSERT OR REPLACE INTO sets (id, name, series, printed_total, total, release_date, ptcgo_code, symbol_url, logo_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO sets (id, name, series, printed_total, total, release_date, ptcgo_code, symbol_url, logo_url, game)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pokemon')`,
         [
           s.id,
           s.name,
@@ -127,9 +127,12 @@ async function fetchAndCacheSets(force = false) {
         ]
       );
     }
-    console.log('Sets successfully cached.');
+    console.log(`Cached ${sets.length} Pokemon sets.`);
   } catch (error) {
-    console.error('Error fetching sets:', error.message);
+    const detail = error.response
+      ? `HTTP ${error.response.status}${error.response.data ? ': ' + JSON.stringify(error.response.data).slice(0, 200) : ''}`
+      : error.message;
+    console.error('Error fetching Pokemon sets:', detail);
   }
 }
 

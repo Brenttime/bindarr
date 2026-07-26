@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
-import { Shield, UserPlus, Key, Trash2, ToggleLeft, ToggleRight, Search, Users, Globe, Database, Play, RefreshCw, AlertTriangle, HardDriveDownload, Download } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Shield, UserPlus, Key, Trash2, ToggleLeft, ToggleRight, Search, Users, Globe, Database, Play, RefreshCw, AlertTriangle, HardDriveDownload, Download, BookOpen, ChevronDown, ChevronRight } from 'lucide-react';
 import { useBackGuard } from '../utils/useBackGuard';
+import SetBrowserModal from './SetBrowserModal';
 
 const formatBytes = (n) => {
   if (!n) return '0 B';
@@ -35,11 +36,16 @@ function AdminPanel({ showToast }) {
   // Set-index build states
   const [builds, setBuilds] = useState([]);
   const [buildProgress, setBuildProgress] = useState({});
-  const [buildGame, setBuildGame] = useState('mtg');
+  const [buildGame, setBuildGame] = useState(() => localStorage.getItem('default_game') || 'mtg');
   const [buildSetCode, setBuildSetCode] = useState('');
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [showSetBrowser, setShowSetBrowser] = useState(false);
+  useBackGuard(showSetBrowser, () => setShowSetBrowser(false));
+  const [setNameMap, setSetNameMap] = useState({});
+  const [expandedGames, setExpandedGames] = useState(new Set(['mtg', 'pokemon']));
   const pollRef = useRef(null);
+  const mountedRef = useRef(true);
 
   // Global scan index states
   const [globals, setGlobals] = useState([]);
@@ -50,13 +56,44 @@ function AdminPanel({ showToast }) {
   const [backupLoading, setBackupLoading] = useState(false);
 
   useEffect(() => {
+    mountedRef.current = true;
     fetchUsers();
     fetchSettings();
     fetchBackups();
     Promise.all([fetchBuilds(), fetchGlobals()]).then(([a, b]) => { if (a || b) startPolling(); });
-    return stopPolling;
+    fetchSetNames();
+    return () => {
+      mountedRef.current = false;
+      stopPolling();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Build a lookup map: "game|setCode" → set name. MTG set ids are prefixed
+  // "mtg-" in the sets table (e.g. "mtg-mh3") but the build keys use the bare
+  // code ("mh3"), so we strip the prefix when building the lookup.
+  const fetchSetNames = async () => {
+    try {
+      const res = await fetch('/api/sets');
+      if (!res.ok) return;
+      const allSets = await res.json();
+      if (!mountedRef.current) return;
+      const map = {};
+      for (const s of allSets) {
+        const code = s.game === 'mtg' && s.id.startsWith('mtg-') ? s.id.slice(4) : s.id;
+        map[`${s.game}|${code}`] = s.name;
+      }
+      setSetNameMap(map);
+    } catch { /* non-critical */ }
+  };
+
+  const toggleGameExpand = (game) => {
+    setExpandedGames(prev => {
+      const next = new Set(prev);
+      if (next.has(game)) next.delete(game); else next.add(game);
+      return next;
+    });
+  };
 
   const stopPolling = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -75,6 +112,7 @@ function AdminPanel({ showToast }) {
       const res = await fetch('/api/admin/global-indexes');
       if (!res.ok) return false;
       const data = await res.json();
+      if (!mountedRef.current) return false;
       setGlobals(data.games || []);
       setGlobalProgress(data.progress || {});
       return Object.values(data.progress || {}).some(isGlobalActive);
@@ -120,6 +158,7 @@ function AdminPanel({ showToast }) {
       const res = await fetch('/api/admin/set-indexes');
       if (!res.ok) return false;
       const data = await res.json();
+      if (!mountedRef.current) return false;
       setBuilds(data.builds || []);
       setBuildProgress(data.progress || {});
       return Object.values(data.progress || {}).some(isActive);
@@ -174,6 +213,30 @@ function AdminPanel({ showToast }) {
     }
   };
 
+  // Silent build — no confirm dialog, doesn't close preview/manual input.
+  // Used by the Set Browser modal so users can queue multiple sets quickly.
+  const handleBuildSilent = async (game, set) => {
+    try {
+      const res = await fetch('/api/admin/set-indexes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ game, set }),
+      });
+      const data = await res.json();
+      if (!mountedRef.current) return;
+      if (res.ok) {
+        showToast(data.message);
+        await fetchBuilds();
+        startPolling();
+      } else {
+        showToast(data.error || 'Failed to start build.');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Error starting build.');
+    }
+  };
+
   const handleDeleteBuild = async (game, set) => {
     if (!window.confirm(`Remove the ${game} "${set}" index? Scanning this set will rebuild it on demand.`)) return;
     try {
@@ -211,6 +274,7 @@ function AdminPanel({ showToast }) {
       const res = await fetch('/api/admin/backups');
       if (res.ok) {
         const data = await res.json();
+        if (!mountedRef.current) return;
         setBackups(data.backups || []);
       }
     } catch (err) {
@@ -262,6 +326,7 @@ function AdminPanel({ showToast }) {
       const response = await fetch('/api/admin/users');
       if (response.ok) {
         const data = await response.json();
+        if (!mountedRef.current) return;
         setUsers(data);
       } else {
         showToast('Failed to fetch user list.');
@@ -270,7 +335,7 @@ function AdminPanel({ showToast }) {
       console.error(err);
       showToast('Error connecting to backend.');
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   };
 
@@ -279,6 +344,7 @@ function AdminPanel({ showToast }) {
       const response = await fetch('/api/settings');
       if (response.ok) {
         const data = await response.json();
+        if (!mountedRef.current) return;
         setPublicBaseUrl(data.public_base_url || '');
       }
     } catch (err) {
@@ -584,6 +650,9 @@ function AdminPanel({ showToast }) {
             <button type="button" className="btn btn-secondary" style={{ height: '42px' }} onClick={handlePreview} disabled={previewLoading || !buildSetCode.trim()}>
               {previewLoading ? <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div> : 'Preview'}
             </button>
+            <button type="button" className="btn btn-secondary" style={{ height: '42px', display: 'flex', alignItems: 'center', gap: '0.35rem' }} onClick={() => setShowSetBrowser(true)}>
+              <BookOpen size={14} /> Browse Sets
+            </button>
           </div>
 
           {preview && (
@@ -607,8 +676,9 @@ function AdminPanel({ showToast }) {
               <table className="collection-table">
                 <thead>
                   <tr>
-                    <th>Game</th>
+                    <th style={{ width: '28px' }}></th>
                     <th>Set</th>
+                    <th>Name</th>
                     <th>Cards</th>
                     <th>Size</th>
                     <th>Status</th>
@@ -621,53 +691,89 @@ function AdminPanel({ showToast }) {
                     const pending = Object.entries(buildProgress)
                       .filter(([key, p]) => isActive(p) && !builtKeys.has(key))
                       .map(([key]) => ({ key, game: key.split('|')[0], set: key.split('|')[1], cardCount: 0, sizeBytes: 0, builtAt: 0 }));
-                    return [...pending, ...builds].map((b) => {
-                      const p = buildProgress[b.key];
-                      const active = isActive(p);
-                      const pct = p && p.total ? Math.round((p.done / p.total) * 100) : 0;
+                    const all = [...pending, ...builds];
+
+                    // Group by game, sorted alphabetically
+                    const GAMES = ['mtg', 'pokemon'];
+                    return GAMES.map(g => {
+                      const group = all.filter(b => b.game === g);
+                      if (group.length === 0) return null;
+                      const expanded = expandedGames.has(g);
+                      const totalCards = group.reduce((sum, b) => sum + (b.cardCount || 0), 0);
+                      const totalSize = group.reduce((sum, b) => sum + (b.sizeBytes || 0), 0);
                       return (
-                        <tr key={b.key}>
-                          <td style={{ textTransform: 'uppercase', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{b.game}</td>
-                          <td style={{ fontWeight: 700, color: 'var(--text-strong)' }}>{b.set}</td>
-                          <td>{b.cardCount || (p && p.total) || '-'}</td>
-                          <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{b.sizeBytes ? formatBytes(b.sizeBytes) : '-'}</td>
-                          <td style={{ minWidth: '160px' }}>
-                            {active ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                <div style={{ height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                                  <div style={{ height: '100%', width: p.status === 'fetching' ? '15%' : `${pct}%`, background: 'var(--accent-red)', transition: 'width 0.4s ease' }}></div>
-                                </div>
-                                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                                  {p.status === 'fetching' ? 'Fetching card list...' : `Indexing ${p.done}/${p.total} (${pct}%)`}
-                                </span>
-                              </div>
-                            ) : p && p.status === 'error' ? (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--accent-red)' }} title={p.error}>Failed</span>
-                            ) : (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--accent-green, #4ade80)' }}>Ready</span>
-                            )}
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '0.35rem' }}>
-                              <button
-                                className="btn btn-secondary btn-icon-only"
-                                title="Rebuild"
-                                onClick={() => handleBuild(b.game, b.set, 0)}
-                                disabled={active}
-                              >
-                                <RefreshCw size={14} />
-                              </button>
-                              <button
-                                className="btn btn-danger btn-icon-only"
-                                title="Remove index"
-                                onClick={() => handleDeleteBuild(b.game, b.set)}
-                                disabled={active}
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
+                        <React.Fragment key={g}>
+                          {/* Game header row */}
+                          <tr
+                            style={{ cursor: 'pointer', background: 'rgba(255,255,255,0.03)' }}
+                            onClick={() => toggleGameExpand(g)}
+                          >
+                            <td style={{ padding: '0.35rem 0.5rem' }}>
+                              {expanded ? <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />}
+                            </td>
+                            <td colSpan={2} style={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.8rem', color: 'var(--text-strong)' }}>
+                              {g === 'mtg' ? 'Magic: The Gathering' : 'Pokémon'}
+                              <span style={{ marginLeft: '0.5rem', fontWeight: 400, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                ({group.length} {group.length === 1 ? 'set' : 'sets'})
+                              </span>
+                            </td>
+                            <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{totalCards || '-'}</td>
+                            <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{totalSize ? formatBytes(totalSize) : '-'}</td>
+                            <td colSpan={2}></td>
+                          </tr>
+                          {/* Detail rows */}
+                          {expanded && group.map((b) => {
+                            const p = buildProgress[b.key];
+                            const active = isActive(p);
+                            const pct = p && p.total ? Math.round((p.done / p.total) * 100) : 0;
+                            const setName = setNameMap[b.key] || '';
+                            return (
+                              <tr key={b.key}>
+                                <td></td>
+                                <td style={{ fontWeight: 700, color: 'var(--text-strong)', fontFamily: 'monospace', fontSize: '0.8rem' }}>{b.set}</td>
+                                <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={setName}>{setName || '-'}</td>
+                                <td>{b.cardCount || (p && p.total) || '-'}</td>
+                                <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{b.sizeBytes ? formatBytes(b.sizeBytes) : '-'}</td>
+                                <td style={{ minWidth: '160px' }}>
+                                  {active ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+                                        <div style={{ height: '100%', width: p.status === 'fetching' ? '15%' : `${pct}%`, background: 'var(--accent-red)', transition: 'width 0.4s ease' }}></div>
+                                      </div>
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                        {p.status === 'fetching' ? 'Fetching card list...' : `Indexing ${p.done}/${p.total} (${pct}%)`}
+                                      </span>
+                                    </div>
+                                  ) : p && p.status === 'error' ? (
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--accent-red)' }} title={p.error}>Failed</span>
+                                  ) : (
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--accent-green, #4ade80)' }}>Ready</span>
+                                  )}
+                                </td>
+                                <td>
+                                  <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                    <button
+                                      className="btn btn-secondary btn-icon-only"
+                                      title="Rebuild"
+                                      onClick={() => handleBuild(b.game, b.set, 0)}
+                                      disabled={active}
+                                    >
+                                      <RefreshCw size={14} />
+                                    </button>
+                                    <button
+                                      className="btn btn-danger btn-icon-only"
+                                      title="Remove index"
+                                      onClick={() => handleDeleteBuild(b.game, b.set)}
+                                      disabled={active}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
                       );
                     });
                   })()}
@@ -956,6 +1062,17 @@ function AdminPanel({ showToast }) {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Set Browser Modal */}
+      {showSetBrowser && (
+        <SetBrowserModal
+          game={buildGame}
+          onClose={() => setShowSetBrowser(false)}
+          onStartBuild={handleBuildSilent}
+          existingKeys={builds.map(b => b.key)}
+          progress={buildProgress}
+        />
       )}
     </div>
   );

@@ -97,14 +97,12 @@ function App() {
 
   // Navigate tabs through here so each change pushes a history entry: a back
   // gesture then returns to the PREVIOUS tab (not always dashboard), and modals
-  // stack their own guards on top. At the dashboard root with nothing pushed,
-  // back exits normally.
+  // stack their own guards on top. We never dispose the old tab guard — each
+  // switch pushes a fresh entry so the back button walks through tab history.
+  // Disposing with history.back() would race during rapid switches and navigate
+  // the browser past the app origin into about:blank.
   const goTab = (tab) => {
     if (tab === activeTab) return;
-    if (tabGuardRef.current) {
-      tabGuardRef.current();
-      tabGuardRef.current = null;
-    }
     const prev = activeTab;
     tabGuardRef.current = pushBackGuard(() => {
       tabGuardRef.current = null;
