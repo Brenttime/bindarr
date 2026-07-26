@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.INDEX_DATA_DIR || path.join(__dirname, '..', 'data');
 
 let tfPromise = null;      // resolves to { pipeline, RawImage }
 let extractorPromise = null;

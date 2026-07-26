@@ -10,7 +10,9 @@ const path = require('path');
 const scanMatch = require('./scanMatch');
 const embedMatch = require('./embedMatch');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// INDEX_DATA_DIR points the scan indexes at a persisted, writable location in
+// Docker (the named volume); defaults to backend/data for local dev.
+const DATA_DIR = process.env.INDEX_DATA_DIR || path.join(__dirname, '..', 'data');
 const SCRIPTS_DIR = path.join(__dirname, '..', 'scripts');
 const GAMES = ['mtg', 'pokemon'];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
