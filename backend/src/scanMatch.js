@@ -14,7 +14,7 @@ const embedMatch = require('./embedMatch');
 const setIndex = require('./setIndex');
 const { parseSetList } = require('./utils/setQuery');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.INDEX_DATA_DIR || path.join(__dirname, '..', 'data');
 const RECALL_K = 250;      // CLIP candidates to geometrically verify
 const REF_WIDTH = 500;     // must match build-card-orb.mjs
 const DESC_BYTES = 32;

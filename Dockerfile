@@ -22,8 +22,8 @@ RUN npm run build
 FROM node:20-alpine AS production
 WORKDIR /app
 
-# Install native compilation dependencies for SQLite3 (alpine needs build tools)
-RUN apk add --no-cache python3 make g++ 
+# Native build tools for SQLite3, plus su-exec to drop root in the entrypoint.
+RUN apk add --no-cache python3 make g++ su-exec
 
 # Set environment to production
 ENV NODE_ENV=production
@@ -31,9 +31,13 @@ ENV PORT=3001
 ENV DB_PATH=/app/database/pokemon_cards.db
 # Set indexes live on the persisted volume too, else they rebuild every redeploy
 ENV SETS_DIR=/app/database/sets
+# Global scan indexes (embed/orb bins) also live on the persisted volume, both so
+# a rebuild has a writable target under the non-root `node` user and so the
+# multi-GB output survives redeploys instead of being rebuilt each time.
+ENV INDEX_DATA_DIR=/app/database/index
 
-# Create database volume mount target directory
-RUN mkdir -p /app/database
+# Create database volume mount target directory (+ the global-index subdir)
+RUN mkdir -p /app/database/index
 
 # Copy backend configuration
 COPY backend/package*.json ./backend/
@@ -44,6 +48,10 @@ RUN npm ci --omit=dev
 # Copy backend source files
 COPY backend/src/ ./src/
 
+# Global-index build scripts spawned by src/globalIndex.js at runtime (Rebuild
+# Global Index Cache). Omitting these breaks that feature in the image.
+COPY backend/scripts/ ./scripts/
+
 # Shared JSON tables required at runtime by backend/src/utils/compartmentSort.js
 # via ../../../shared/*.json (resolves to /app/shared)
 COPY shared/ /app/shared/
@@ -52,11 +60,17 @@ COPY shared/ /app/shared/
 # (../../frontend/dist relative to backend/src, i.e. /app/frontend/dist)
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
-# Drop root: run as the built-in unprivileged `node` user. Ownership of the
-# database dir is set here so a fresh named volume mounted at /app/database
-# inherits node-writable permissions on first init.
+# Ownership of the app + database dirs set here so a fresh named volume mounted
+# at /app/database inherits node-writable permissions on first init.
 RUN chown -R node:node /app
-USER node
+
+# The container starts as root and the entrypoint drops to the unprivileged
+# `node` user AFTER chowning the mounted volume (a legacy root-owned volume
+# would otherwise be unwritable). sed strips any CRLF so the shebang works when
+# the file is checked out on Windows.
+COPY entrypoint.sh /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Expose port
 EXPOSE 3001
