@@ -49,8 +49,14 @@ RUN mkdir -p /app/database/index
 # Copy backend configuration
 COPY backend/package*.json ./backend/
 WORKDIR /app/backend
-# Install production backend dependencies (compiles sqlite3 native addon)
+# Install production backend dependencies (prebuilt native binaries).
 RUN npm ci --omit=dev
+# Recompile ONLY sqlite3 from source: its node-pre-gyp prebuilt is linked
+# against a newer glibc (GLIBC_2.38) than this Debian base provides, so the
+# prebuilt aborts at startup with ERR_DLOPEN_FAILED. Building here links against
+# the image's own glibc. Scoped to sqlite3 so sharp/onnxruntime-node keep their
+# prebuilts (sharp can't build from source without libvips-dev).
+RUN npm rebuild sqlite3 --build-from-source
 
 # Copy backend source files
 COPY backend/src/ ./src/
