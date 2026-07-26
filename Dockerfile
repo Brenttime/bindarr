@@ -19,11 +19,18 @@ RUN npm run build
 # =========================================
 # Stage 2: Set up Production Server
 # =========================================
-FROM node:20-alpine AS production
+# Debian (glibc), NOT alpine: onnxruntime-node (pulled in by
+# @huggingface/transformers for CLIP inference during the global-index build)
+# ships glibc-linked prebuilt binaries and fails to dlopen on alpine/musl
+# (ERR_DLOPEN_FAILED, issue #19).
+FROM node:20-slim AS production
 WORKDIR /app
 
-# Native build tools for SQLite3, plus su-exec to drop root in the entrypoint.
-RUN apk add --no-cache python3 make g++ su-exec
+# Native build tools for SQLite3, gosu to drop root in the entrypoint, plus
+# wget (healthcheck) and ca-certificates (HTTPS to the card APIs + model host).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 make g++ gosu wget ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 # Set environment to production
 ENV NODE_ENV=production
@@ -42,7 +49,7 @@ RUN mkdir -p /app/database/index
 # Copy backend configuration
 COPY backend/package*.json ./backend/
 WORKDIR /app/backend
-# Install production backend dependencies (compiling sqlite3 on alpine)
+# Install production backend dependencies (compiles sqlite3 native addon)
 RUN npm ci --omit=dev
 
 # Copy backend source files
@@ -76,7 +83,7 @@ ENTRYPOINT ["/entrypoint.sh"]
 EXPOSE 3001
 
 # Liveness/readiness probe. start-period covers startup (set sync + price job).
-# busybox wget ships with the alpine base image.
+# wget is installed above (slim has no wget by default).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
   CMD wget -qO- http://localhost:3001/api/health || exit 1
 

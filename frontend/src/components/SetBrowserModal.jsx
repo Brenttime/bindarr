@@ -99,7 +99,7 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
       onClick={onClose}
     >
       <div
-        style={{ width: '960px', maxWidth: '98vw', maxHeight: '90vh', overflowY: 'auto', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', background: 'var(--bg-primary, #121212)', borderRadius: 'var(--radius-lg, 12px)', border: '1px solid var(--border-glass)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+        style={{ width: '960px', maxWidth: '98vw', maxHeight: '90vh', overflowY: 'auto', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', background: 'var(--bg-primary, #121212)', borderRadius: 'var(--radius-md, 12px)', border: '1px solid var(--border-glass)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
