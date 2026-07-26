@@ -12,4 +12,4 @@ if [ "$(stat -c %U /app/database)" != "node" ]; then
   chown -R node:node /app/database
 fi
 
-exec su-exec node "$@"
+exec gosu node "$@"
