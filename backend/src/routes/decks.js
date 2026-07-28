@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const tcgApi = require('../tcgApi');
-const { parseCardRow } = require('../utils/priceHelpers');
+const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { compartmentLabel } = require('../utils/compartmentSort');
 const { validateDeckAddition } = require('../utils/deckRules');
 const { authenticateToken } = require('../middleware/auth');
@@ -300,9 +300,7 @@ router.post('/:id/cards', async (req, res) => {
 
     // Record initial price history trend if card is added
     const cacheCard = await db.get(`SELECT price_trend FROM card_cache WHERE id = ?`, [card_id]);
-    if (cacheCard && cacheCard.price_trend > 0) {
-      await db.run(`INSERT OR IGNORE INTO price_history (card_id, price) VALUES (?, ?)`, [card_id, cacheCard.price_trend]);
-    }
+    if (cacheCard) await recordPrice(card_id, cacheCard.price_trend);
 
     res.json({ message: 'Card added/updated in deck successfully' });
   } catch (error) {

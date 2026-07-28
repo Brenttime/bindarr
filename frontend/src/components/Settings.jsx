@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal } from 'lucide-react';
+import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github } from 'lucide-react';
 
 function Settings({ user, onUpdateUser, showToast }) {
   const [showApiKey, setShowApiKey] = useState(false);
@@ -21,6 +21,10 @@ function Settings({ user, onUpdateUser, showToast }) {
   const [defaultGame, setDefaultGame] = useState(() => localStorage.getItem('default_game') || 'pokemon');
   const [autoConfirm, setAutoConfirm] = useState(() => localStorage.getItem('scanner_auto_confirm') === '1');
 
+  const [versionInfo, setVersionInfo] = useState(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [backendReachable, setBackendReachable] = useState(true);
+
   useEffect(() => {
     fetch('/api/settings')
       .then(res => res.ok ? res.json() : null)
@@ -29,6 +33,90 @@ function Settings({ user, onUpdateUser, showToast }) {
       })
       .catch(() => {});
   }, []);
+
+  // The build stamps its own version in, so Settings can always state what it
+  // is even with the backend down. The call below only adds the SERVER's
+  // version (to catch a stale backend behind a fresh frontend) and powers the
+  // update check — it is never what makes the version appear.
+  const appVersion = import.meta.env.VITE_APP_VERSION || null;
+  const isDemo = !!import.meta.env.VITE_DEMO;
+
+  useEffect(() => {
+    fetch('/api/settings/version')
+      .then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then(data => { setVersionInfo(data); setBackendReachable(true); })
+      .catch(() => setBackendReachable(false));
+  }, []);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await fetch('/api/settings/version?check=1');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setVersionInfo(data);
+      setBackendReachable(true);
+      if (data.check_failed) showToast('Could not reach GitHub to check for updates.');
+      else if (data.update_available) showToast(`Version ${data.latest} is available.`);
+      else showToast('You are on the latest version.');
+    } catch (err) {
+      console.error(err);
+      setBackendReachable(false);
+      showToast('Could not reach the server to check for updates.');
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  // The version shown: the build's own stamp, falling back to whatever the
+  // server reports if an older bundle has no stamp baked in.
+  const shownVersion = appVersion || versionInfo?.version || null;
+  // A frontend newer than the backend usually means a half-finished update —
+  // worth surfacing, since it produces confusing bugs that look like app bugs.
+  const versionSkew = appVersion && versionInfo?.version && appVersion !== versionInfo.version
+    ? versionInfo.version
+    : null;
+
+  const REPO_URL = 'https://github.com/thenotoriousJeremy/bindarr';
+
+  // Prefill a bug report with the details that otherwise take three round trips
+  // to obtain. Environment only — nothing about the user's collection.
+  const bugReportUrl = () => {
+    const body = [
+      '### What happened?',
+      '',
+      '',
+      '### What did you expect?',
+      '',
+      '',
+      '### Steps to reproduce',
+      '1. ',
+      '2. ',
+      '',
+      '### Environment',
+      `- Bindarr (app): ${shownVersion || 'unknown'}`,
+      `- Bindarr (server): ${versionInfo?.version || (backendReachable ? 'unknown' : 'unreachable')}`,
+      `- Platform: ${navigator.platform || 'unknown'}`,
+      `- Browser: ${navigator.userAgent}`,
+      `- Screen: ${window.screen?.width}x${window.screen?.height}`,
+      '',
+      '<!-- Screenshots help a lot. Please remove anything you would rather not share. -->',
+    ].join('\n');
+    return `${REPO_URL}/issues/new?labels=bug&title=${encodeURIComponent('[Bug] ')}&body=${encodeURIComponent(body)}`;
+  };
+
+  const featureRequestUrl = () => {
+    const body = [
+      '### What would you like Bindarr to do?',
+      '',
+      '',
+      '### Why would that help?',
+      '',
+      '',
+      `<!-- Bindarr ${shownVersion || 'unknown'} -->`,
+    ].join('\n');
+    return `${REPO_URL}/issues/new?labels=enhancement&title=${encodeURIComponent('[Feature] ')}&body=${encodeURIComponent(body)}`;
+  };
 
   const handleImportFile = async (e) => {
     const file = e.target.files[0];
@@ -694,6 +782,112 @@ function Settings({ user, onUpdateUser, showToast }) {
                 }}></span>
               </span>
             </label>
+          </div>
+        </div>
+
+        {/* About / version */}
+        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
+            <Info size={20} style={{ color: 'var(--accent-yellow)' }} />
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>About Bindarr</h3>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
+            <div>
+              <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span>Bindarr {shownVersion ? `v${shownVersion}` : '(version unknown)'}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  title="Copy version and environment details for a bug report"
+                  onClick={() => {
+                    const text = `Bindarr app v${shownVersion || 'unknown'} | server v${versionInfo?.version || (backendReachable ? 'unknown' : 'unreachable')} | ${navigator.platform || 'unknown'} | ${navigator.userAgent}`;
+                    navigator.clipboard?.writeText(text)
+                      .then(() => showToast('Version details copied.'))
+                      .catch(() => showToast('Could not copy to clipboard.'));
+                  }}
+                  style={{ padding: '0.15rem 0.45rem', fontSize: '0.7rem' }}
+                >
+                  <Clipboard size={12} /> Copy
+                </button>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                {isDemo
+                  ? 'Update checks need the Bindarr backend — this is a static demo.'
+                  : !backendReachable
+                  ? 'Server unreachable — update checks are unavailable right now.'
+                  : versionInfo?.check_failed
+                    ? 'Could not reach GitHub. Check your connection and try again.'
+                    : versionInfo?.update_available
+                      ? `Version ${versionInfo.latest} is available.`
+                      : versionInfo?.latest
+                        ? 'You are running the latest version.'
+                        : 'Updates are only checked when you ask.'}
+              </div>
+              {versionSkew && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--accent-yellow)', marginTop: '0.25rem' }}>
+                  Server is running v{versionSkew}. Restart it to finish updating.
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {/* The demo answers /api from static fixtures, so a "check" would
+                  report "you're up to date" without having checked anything. */}
+              <button type="button" className="btn btn-secondary" onClick={handleCheckUpdate} disabled={checkingUpdate || isDemo}>
+                <RefreshCw size={16} className={checkingUpdate ? 'spin-animation' : ''} />
+                {checkingUpdate ? 'Checking…' : 'Check for updates'}
+              </button>
+              {versionInfo?.update_available && (
+                <a
+                  className="btn btn-primary"
+                  href={versionInfo.release_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ textDecoration: 'none' }}
+                >
+                  <Download size={16} />
+                  Get {versionInfo.latest}
+                </a>
+              )}
+            </div>
+          </div>
+
+          {/* Support links. Each opens GitHub's own compose page in a new tab —
+              prefilled, never submitted, so nothing is posted without the user
+              reading it and pressing the button on GitHub. */}
+          <div>
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '0.5rem' }}>
+              Report a problem
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <a className="btn btn-secondary" href={bugReportUrl()} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <Bug size={16} /> Report a bug
+              </a>
+              <a className="btn btn-secondary" href={featureRequestUrl()} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <Lightbulb size={16} /> Request a feature
+              </a>
+              <a className="btn btn-secondary" href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <MessagesSquare size={16} /> Browse issues
+              </a>
+              <a className="btn btn-secondary" href={`${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <ScrollText size={16} /> Changelog
+              </a>
+              <a className="btn btn-secondary" href={REPO_URL} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <Github size={16} /> Source
+              </a>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem', lineHeight: 1.4 }}>
+              Bug reports open a prefilled GitHub issue with your version and browser
+              filled in — nothing is sent until you review it and submit on GitHub, and
+              nothing about your collection is included.
+            </div>
+          </div>
+
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            Update checks contact the public GitHub releases API for{' '}
+            <a href={versionInfo?.releases_url || `${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)' }}>
+              thenotoriousJeremy/bindarr
+            </a>. Nothing about your collection is sent.
           </div>
         </div>
       </div>

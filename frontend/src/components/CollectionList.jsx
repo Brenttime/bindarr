@@ -89,7 +89,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
 
   // Multi-select / bulk actions — shared long-press + /api/collection/bulk logic.
   const {
-    selectMode, setSelectMode, selectedIds, setSelectedIds, toggleSelect, clearSelection, exitSelectMode,
+    selectMode, setSelectMode, selectedIds, setSelectedIds, toggleSelect, selectAt, clearSelection, exitSelectMode,
     bulkMoveTarget, setBulkMoveTarget, pressHandlers, longPressFired, runBulk,
   } = useMultiSelect({ showToast, onChanged: () => { onUpdate(); fetchCollection(); } });
 
@@ -174,9 +174,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
 
   // Tap: swallowed if a long-press just armed selection; otherwise toggle (in
   // select mode) or open the inspector.
-  const activateCard = (item) => {
+  const activateCard = (item, event) => {
     if (longPressFired.current) { longPressFired.current = false; return; }
-    if (selectMode) toggleSelect(item.entry_id);
+    if (selectMode) selectAt(item.entry_id, displayCards.map(i => i.entry_id), event?.shiftKey);
     else { setInspectorCard(item); setInspectorStartEdit(false); }
   };
 
@@ -616,7 +616,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                 key={item.entry_id}
                 className="tcg-card tilt-card-wrapper"
                 style={{ cursor: 'pointer', touchAction: 'pan-y' }}
-                onClick={() => activateCard(item)}
+                onClick={(e) => activateCard(item, e)}
                 {...pressHandlers(item.entry_id)}
               >
                 <div className="tcg-card-inner" style={{ ...rarityStyle, ...(selected ? { outline: '3px solid var(--accent-red)', outlineOffset: '2px' } : {}) }}>
@@ -727,7 +727,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                           />
                         )}
                         <div
-                          onClick={() => activateCard(item)}
+                          onClick={(e) => activateCard(item, e)}
                           {...pressHandlers(item.entry_id)}
                           style={{ position: 'relative', width: '36px', height: '50px', flexShrink: 0, overflow: 'hidden', borderRadius: '4px', cursor: 'pointer', touchAction: 'pan-y', ...getCardRarityBorder(item.rarity) }}
                         >
@@ -737,7 +737,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                           )}
                         </div>
                         <div style={{ minWidth: 0, flex: 1 }}>
-                          <div onClick={() => activateCard(item)} {...pressHandlers(item.entry_id)} style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>{getCardDisplayName(item.name, item.language)}</div>
+                          <div onClick={(e) => activateCard(item, e)} {...pressHandlers(item.entry_id)} style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>{getCardDisplayName(item.name, item.language)}</div>
                           <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                             <span>{item.set_name} • #{item.number}</span>
                             <span style={{ fontSize: '0.55rem', fontWeight: 800, padding: '1px 3px', borderRadius: '3px', flexShrink: 0, ...getRarityBadgeStyle(item.rarity) }}>

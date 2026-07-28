@@ -3,12 +3,49 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// The app began life as "PokeKeep", a Pokémon-only tracker, so its database was
+// called pokemon_cards.db. It has handled Magic since v1.4.x, and the file name
+// is the last thing still carrying the old name.
+const DB_FILENAME = 'bindarr.db';
+const LEGACY_DB_FILENAME = 'pokemon_cards.db';
+
+// Rename an existing pokemon_cards.db to the new name, WAL sidecars included.
+// Getting this wrong loses collections: point SQLite at a name that isn't there
+// and it cheerfully creates an empty database, which looks exactly like the app
+// wiping everything. So: never overwrite, move the -wal/-shm files with the
+// main one (un-checkpointed transactions live in the WAL), and on any failure
+// keep using the old file rather than silently starting fresh.
+// Returns the path that should actually be opened.
+function resolveDbPath(target) {
+  // Only ever migrate INTO the canonical name. A custom DB_PATH is the
+  // operator's decision and must not attract someone else's old file.
+  if (path.basename(target) !== DB_FILENAME) return target;
+
+  const legacy = path.join(path.dirname(target), LEGACY_DB_FILENAME);
+  if (fs.existsSync(target) || !fs.existsSync(legacy)) return target;
+
+  try {
+    for (const suffix of ['', '-wal', '-shm']) {
+      if (fs.existsSync(legacy + suffix)) fs.renameSync(legacy + suffix, target + suffix);
+    }
+    console.log(`Renamed legacy database ${LEGACY_DB_FILENAME} -> ${DB_FILENAME}.`);
+    return target;
+  } catch (err) {
+    console.error(
+      `Could not rename ${LEGACY_DB_FILENAME} to ${DB_FILENAME} (${err.message}). ` +
+      `Continuing with ${LEGACY_DB_FILENAME} — your data is safe, but please rename it manually.`
+    );
+    return legacy;
+  }
+}
+
 // Ensure database directory exists
-const dbPath = process.env.DB_PATH || path.join(__dirname, '../database/pokemon_cards.db');
-const dbDir = path.dirname(dbPath);
+const requestedDbPath = process.env.DB_PATH || path.join(__dirname, `../database/${DB_FILENAME}`);
+const dbDir = path.dirname(requestedDbPath);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
+const dbPath = resolveDbPath(requestedDbPath);
 
 console.log(`Connecting to SQLite database at: ${dbPath}`);
 const dbConnection = new sqlite3.Database(dbPath, (err) => {
@@ -310,6 +347,18 @@ async function initDb() {
   `);
 
   // --- MIGRATIONS ---
+  // When each game's price sweep last ran. Scryfall updates prices once a day,
+  // so a sweep more often than that cannot return anything new — and the boot
+  // sweep would otherwise re-run on every restart (constantly, under nodemon).
+  // Persisted rather than in-memory precisely because restarts are the problem.
+  const appSettingsCols = await all(`PRAGMA table_info(app_settings)`);
+  if (!appSettingsCols.some(c => c.name === 'mtg_prices_swept_at')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN mtg_prices_swept_at DATETIME`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'pokemon_prices_swept_at')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN pokemon_prices_swept_at DATETIME`);
+  }
+
   const collectionCols = await all(`PRAGMA table_info(collection)`);
   if (!collectionCols.some(c => c.name === 'user_id')) {
     await run(`ALTER TABLE collection ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE`);
@@ -457,5 +506,10 @@ module.exports = {
   withTransaction,
   initDb,
   createCompartments,
-  hashPassword
+  hashPassword,
+  // Exported for tests — the rename runs at module load, so it can't be
+  // exercised through a normal require.
+  resolveDbPath,
+  DB_FILENAME,
+  LEGACY_DB_FILENAME
 };

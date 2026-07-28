@@ -127,9 +127,10 @@ db.initDb()
     const { loadSetsCache } = require('./utils/compartmentSort');
     await loadSetsCache(db);
     
-    // Weekly: refresh sets (picks up newly released ones), reload the in-memory
-    // sets cache so chronological sorting stays current without a restart, then
-    // update prices.
+    // Weekly: refresh sets (picks up newly released ones) and reload the
+    // in-memory sets cache so chronological sorting stays current without a
+    // restart. Scryfall's guidance is that gameplay/set data changes rarely and
+    // weekly is plenty — prices are on their own schedule below.
     setInterval(async () => {
       try {
         await tcgApi.fetchAndCacheSets(true);
@@ -138,11 +139,20 @@ db.initDb()
       } catch (err) {
         console.error('Weekly sets refresh failed:', err);
       }
-      tcgApi.updateCollectionPrices();
-      scryfallApi.updateCollectionPrices();
     }, 1000 * 60 * 60 * 24 * 7);
 
-    // Run a price update in the background shortly after startup (after 30 seconds to not bog down init)
+    // Daily: prices. Scryfall refreshes prices once a day, so this is both the
+    // most often worth doing and the most often allowed. `force` because the
+    // interval itself is already the right cadence.
+    setInterval(() => {
+      tcgApi.updateCollectionPrices(true);
+      scryfallApi.updateCollectionPrices(true);
+    }, 1000 * 60 * 60 * 24);
+
+    // Shortly after startup, catch up if the last sweep was over a day ago.
+    // NOT forced: without that gate this re-ran on every restart, which under
+    // nodemon meant a full sweep on every code edit — for data that cannot have
+    // changed since the last one.
     setTimeout(() => {
       tcgApi.updateCollectionPrices();
       scryfallApi.updateCollectionPrices();

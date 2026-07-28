@@ -1,6 +1,6 @@
 const axios = require('axios');
 const db = require('./db');
-const { parseCardRow } = require('./utils/priceHelpers');
+const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
 const { parseSetList, setSqlFilter } = require('./utils/setQuery');
 
 const API_BASE_URL = 'https://api.pokemontcg.io/v2';
@@ -98,6 +98,30 @@ function extractDetailedPrices(card) {
   }
 
   return { normal, holofoil, reverseHolofoil, avg1, avg7, avg30 };
+}
+
+// Raw pokemontcg.io card -> the shape the app (and the MTG path) speaks.
+function formatCard(c) {
+  const detailed = extractDetailedPrices(c);
+  return {
+    id: c.id,
+    name: c.name,
+    supertype: c.supertype,
+    subtypes: c.subtypes || [],
+    types: c.types || [],
+    rarity: c.rarity,
+    set_id: c.set ? c.set.id : '',
+    set_name: c.set ? c.set.name : '',
+    number: c.number,
+    image_url: c.images ? (c.images.small || c.images.large) : '',
+    price_trend: extractPrice(c),
+    price_normal: detailed.normal,
+    price_holofoil: detailed.holofoil,
+    price_reverse_holofoil: detailed.reverseHolofoil,
+    price_avg1: detailed.avg1,
+    price_avg7: detailed.avg7,
+    price_avg30: detailed.avg30
+  };
 }
 
 // Fetch and cache all sets. Pass force=true to re-fetch even when the table is
@@ -227,7 +251,19 @@ function getStringSimilarity(str1, str2) {
 }
 
 // Search cards locally first, then hit API if not found or empty
-async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', apiKey = '', scope = 'database', userId = null) {
+// Public entry point. Returns { cards, total } — `total` is how many matches
+// exist upstream in all (null when the answer came from cache, which has no
+// such count). Wrapping keeps the many early returns in the body unchanged.
+async function searchCards(...args) {
+  const meta = { total: null };
+  const cards = await runSearch(meta, ...args);
+  return { cards, total: meta.total };
+}
+
+// `page` is 1-based over `limit`-sized pages; the caller keeps asking for the
+// next page while a full page comes back.
+async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', apiKey = '', scope = 'database', userId = null, page = 1, limit = 60) {
+  const offset = (page - 1) * limit;
   // Sanitize the name query: drop pure-noise tokens (junk with no letters)
   // and normalize everything else to Title Case, so typed-lowercase input like
   // "pikachu" is treated the same as "Pikachu" instead of being silently dropped.
@@ -286,7 +322,8 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', apiK
       collParams.push(...collSetFilter.params);
     }
 
-    collSql += ` GROUP BY cc.id LIMIT 50`;
+    collSql += ` GROUP BY cc.id LIMIT ? OFFSET ?`;
+    collParams.push(limit, offset);
     let collResults = await db.all(collSql, collParams);
     return collResults.map(parseCardRow);
   }
@@ -317,7 +354,8 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', apiK
       localParams.push(...localSetFilter.params);
     }
 
-    localSql += ` LIMIT 50`;
+    localSql += ` LIMIT ? OFFSET ?`;
+    localParams.push(limit, offset);
     return db.all(localSql, localParams);
   };
 
@@ -350,16 +388,18 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', apiK
 
   // 2. Fetch from external API
   let upstreamFailed = false;
-  const fetchCardsFromAPI = async (queryStr) => {
+  const fetchCardsFromAPI = async (queryStr, orderBy = 'releaseDate') => {
     try {
       const response = await tcgClient.get('/cards', {
         params: {
           q: queryStr || undefined,
-          pageSize: 50,
-          orderBy: 'releaseDate'
+          page,
+          pageSize: limit,
+          orderBy
         },
         headers: apiKey ? { 'X-Api-Key': apiKey } : {}
       });
+      if (response.data.totalCount != null) meta.total = response.data.totalCount;
       return response.data.data || [];
     } catch (err) {
       if (err.response) {
@@ -397,6 +437,15 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', apiK
       cards = await fetchCardsFromAPI(queryStr);
     }
 
+    // 1b. Set browse: no usable name, just "show me this set". Without this a
+    // set-only search fell through every branch and came back empty.
+    if (cards.length === 0 && words.length === 0 && setList.length) {
+      const setClause = setList.map(s => `set.name:"${s}" OR set.id:"${s}"`).join(' OR ');
+      const queryStr = `(${setClause})` + (cleanNumber ? ` AND number:"${cleanNumber}"` : '');
+      console.log(`Querying Pokémon TCG API (Set browse): q='${queryStr}'`);
+      cards = await fetchCardsFromAPI(queryStr, 'number');
+    }
+
     // 2. Number+set fallback: only when name was garbled but we have a set.
     // Pure number-only search returns every set's card with that number (~50 junk
     // results), so skip it — a number without a set almost never finds the right card.
@@ -429,6 +478,12 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', apiK
       await cacheCards(cards);
     }
 
+    // A set browse has nothing to rank against — keep the API's set/number order
+    // rather than scoring every card against an empty name.
+    if (!cleanName && !cleanNumber) {
+      return cards.map(formatCard);
+    }
+
     // Fuzzy rank cards by similarity to name and number in memory
     const scoredCards = cards.map(c => {
       const nameSim = getStringSimilarity(c.name, cleanName);
@@ -454,28 +509,7 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', apiK
     }
 
     // Return the fetched cards formatted
-    return finalCards.map(c => {
-      const detailed = extractDetailedPrices(c);
-      return {
-        id: c.id,
-        name: c.name,
-        supertype: c.supertype,
-        subtypes: c.subtypes || [],
-        types: c.types || [],
-        rarity: c.rarity,
-        set_id: c.set ? c.set.id : '',
-        set_name: c.set ? c.set.name : '',
-        number: c.number,
-        image_url: c.images ? (c.images.small || c.images.large) : '',
-        price_trend: extractPrice(c),
-        price_normal: detailed.normal,
-        price_holofoil: detailed.holofoil,
-        price_reverse_holofoil: detailed.reverseHolofoil,
-        price_avg1: detailed.avg1,
-        price_avg7: detailed.avg7,
-        price_avg30: detailed.avg30
-      };
-    });
+    return finalCards.map(formatCard);
   } catch (error) {
     if (error.message === 'INVALID_API_KEY' || error.message === 'RATE_LIMIT_EXCEEDED' || error.message === 'UPSTREAM_UNAVAILABLE') {
       throw error;
@@ -597,9 +631,15 @@ async function getCardsBySet(setId, apiKey = '') {
 }
 
 // Periodic function to update pricing for all cards in the collection
-async function updateCollectionPrices() {
+// `force` bypasses the once-a-day gate (used by the scheduled daily run, which
+// is already on the right cadence by construction).
+async function updateCollectionPrices(force = false) {
   if (!process.env.POKEMON_TCG_API_KEY) {
     console.log('Skipping background price update: No global POKEMON_TCG_API_KEY configured to protect rate limits.');
+    return;
+  }
+  if (!force && !(await shouldSweepPrices('pokemon'))) {
+    console.log('Skipping Pokémon price update: already swept within the last 24h.');
     return;
   }
 
@@ -620,16 +660,15 @@ async function updateCollectionPrices() {
       try {
         // Fetching will force update the cache and price
         const updatedCard = await getCardById(item.card_id, process.env.POKEMON_TCG_API_KEY);
-        if (updatedCard && updatedCard.price_trend > 0) {
-          // Record the new price in history
-          await db.run(`INSERT INTO price_history (card_id, price) VALUES (?, ?)`, [item.card_id, updatedCard.price_trend]);
-        }
+        // Record the new price, but only if it actually moved.
+        if (updatedCard) await recordPrice(item.card_id, updatedCard.price_trend);
       } catch (itemErr) {
         console.error(`Failed to update price for card ${item.card_id}:`, itemErr.message);
       }
       // Wait 1 second between requests to respect API rate limits
       await new Promise(r => setTimeout(r, 1000));
     }
+    await markPricesSwept('pokemon');
     console.log('Background price update complete.');
   } catch (err) {
     console.error('Error during background price update:', err);

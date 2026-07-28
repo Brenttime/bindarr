@@ -3,6 +3,7 @@ import { X, MapPin, Trash2, Star, Maximize2, ExternalLink } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice } from '../utils/formatPrice';
 import { tcgplayerUrl, cardmarketUrl } from '../utils/marketplaceLinks';
+import CardImageZoom from './CardImageZoom';
 import CardEntryFields from './CardEntryFields';
 import PriceHistoryChart from './PriceHistoryChart';
 import AddToDeckSelect from './AddToDeckSelect';
@@ -413,7 +414,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               </div>
 
               {/* Price History Area Chart */}
-              <PriceHistoryChart cardId={card.card_id} height={100} defaultRange="1y" />
+              <PriceHistoryChart cardId={card.card_id} height={100} defaultRange="30d" />
 
               {/* Specifications Details Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem 1rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem' }}>
@@ -506,56 +507,8 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
         </div>
       </div>
 
-      {/* Fullscreen Image Preview. stopPropagation on every click so closing the
-          zoom returns to the inspector instead of bubbling to the overlay's
-          handleClose (which would dismiss the whole popup). */}
       {isFullScreen && (
-        <div
-          className="modal-overlay"
-          style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.92)',
-            backdropFilter: 'blur(12px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1100,
-            cursor: 'zoom-out',
-            padding: 'max(1rem, max(env(safe-area-inset-top, 0px), var(--sat, 0px))) 1rem max(1rem, max(env(safe-area-inset-bottom, 0px), var(--sab, 0px))) 1rem'
-          }}
-          onClick={(e) => { e.stopPropagation(); setIsFullScreen(false); }}
-        >
-          <button
-            className="btn btn-secondary btn-icon-only"
-            onClick={(e) => { e.stopPropagation(); setIsFullScreen(false); }}
-            style={{
-              position: 'absolute',
-              top: 'max(1rem, max(env(safe-area-inset-top, 0px), var(--sat, 0px)))',
-              right: '1rem',
-              borderRadius: '50%',
-              zIndex: 10,
-              background: 'rgba(0,0,0,0.6)',
-              color: '#fff'
-            }}
-          >
-            <X size={20} />
-          </button>
-          <img
-            src={card.image_url}
-            alt={card.name}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              maxHeight: '88vh',
-              maxWidth: '88vw',
-              objectFit: 'contain',
-              /* No border-radius: the card art already has its own rounded
-                 corners, so a CSS radius here clips them. drop-shadow follows
-                 the image's own shape instead of a rounded box. */
-              filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.8))'
-            }}
-          />
-        </div>
+        <CardImageZoom src={card.image_url} alt={card.name} onClose={() => setIsFullScreen(false)} />
       )}
     </div>
   );

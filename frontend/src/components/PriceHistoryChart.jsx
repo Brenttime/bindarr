@@ -4,10 +4,14 @@ import { formatPrice } from '../utils/formatPrice';
 
 // Selectable chart windows. Default is 1 Year so price movement is visible; a
 // 30-day window is usually too short to show meaningful change.
+// Only two windows, because only two can be filled. 30 days comes from
+// Cardmarket's real rolling averages (Pokémon); "All" is whatever Bindarr has
+// recorded itself. No card API sells back-history — Scryfall returns current
+// prices only — so 1Y/5Y buttons could never show anything the 30-day one
+// didn't already.
 const RANGE_OPTIONS = [
-  { key: '1m', label: '1M', name: '30 Days' },
-  { key: '1y', label: '1Y', name: '1 Year' },
-  { key: '5y', label: '5Y', name: '5 Years' },
+  { key: '30d', label: '30D', name: '30 Days' },
+  { key: 'all', label: 'All', name: 'All Recorded' },
 ];
 
 // Shared, properly-proportioned price-history chart. Fetches its own data for a
@@ -16,12 +20,13 @@ const RANGE_OPTIONS = [
 export default function PriceHistoryChart({
   cardId,
   height = 150,
-  defaultRange = '1y',
+  defaultRange = '30d',
   titlePrefix = 'Price History',
 }) {
   const [range, setRange] = useState(defaultRange);
   const [data, setData] = useState([]);
   const [insufficientHistory, setInsufficientHistory] = useState(false);
+  const [coverage, setCoverage] = useState({ spanDays: 0, windowDays: null, marketCount: 0, recordedCount: 0 });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -39,6 +44,12 @@ export default function PriceHistoryChart({
           if (!cancelled) {
             setData(json.data ?? []);
             setInsufficientHistory(!!json.insufficientHistory);
+            setCoverage({
+              spanDays: json.spanDays ?? 0,
+              windowDays: json.windowDays ?? null,
+              marketCount: json.marketCount ?? 0,
+              recordedCount: json.recordedCount ?? 0,
+            });
           }
         }
       } catch (err) {
@@ -113,6 +124,20 @@ export default function PriceHistoryChart({
           </button>
         ))}
       </div>
+
+      {/* Say where the line came from. Cardmarket's rolling averages are real
+          market data pulled per request; everything else is what Bindarr has
+          watched happen since it was installed. */}
+      {!loading && !insufficientHistory && (coverage.marketCount > 0 || coverage.recordedCount > 0) && (
+        <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginBottom: '6px', lineHeight: 1.35 }}>
+          {coverage.marketCount > 0
+            ? 'Cardmarket 30-day averages'
+            : `${coverage.spanDays || 0} day${coverage.spanDays === 1 ? '' : 's'} recorded by Bindarr`}
+          {coverage.marketCount > 0 && coverage.recordedCount > 0
+            ? ` + ${coverage.recordedCount} price${coverage.recordedCount === 1 ? '' : 's'} recorded here`
+            : ''}
+        </div>
+      )}
 
       <div style={{ width: '100%', height: `${height}px` }}>
         {loading ? (

@@ -1,8 +1,63 @@
 const express = require('express');
+const axios = require('axios');
 const db = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
+
+// --- Version + update check ---
+
+// backend/package.json is what the release workflow bumps, so it is the running
+// build's version. The repo-root package.json is not bumped and would lie.
+const APP_VERSION = require('../../package.json').version;
+const RELEASES_API = 'https://api.github.com/repos/thenotoriousJeremy/bindarr/releases/latest';
+const RELEASES_PAGE = 'https://github.com/thenotoriousJeremy/bindarr/releases';
+// GitHub allows 60 unauthenticated calls/hour per IP, shared by every user of
+// this instance. Cache hard: a new release is not urgent to the minute.
+const UPDATE_CACHE_MS = 1000 * 60 * 60 * 6;
+let updateCache = { at: 0, data: null };
+
+// "1.4.9" < "1.4.10" — string compare gets this wrong, so compare numerically
+// part by part. Anything non-numeric (a "-beta" suffix) is ignored.
+function isNewer(candidate, current) {
+  const parts = v => String(v).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const a = parts(candidate);
+  const b = parts(current);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return false;
+}
+
+async function checkForUpdate() {
+  if (updateCache.data && Date.now() - updateCache.at < UPDATE_CACHE_MS) return updateCache.data;
+  const resp = await axios.get(RELEASES_API, {
+    timeout: 8000,
+    headers: { 'User-Agent': 'Bindarr', Accept: 'application/vnd.github+json' }
+  });
+  const latest = String(resp.data.tag_name || '').replace(/^v/i, '');
+  const data = {
+    latest,
+    update_available: !!latest && isNewer(latest, APP_VERSION),
+    release_url: resp.data.html_url || RELEASES_PAGE,
+    published_at: resp.data.published_at || null
+  };
+  updateCache = { at: Date.now(), data };
+  return data;
+}
+
+// Current version always answers offline; the update check is best-effort and
+// reports its own failure rather than pretending the app is up to date.
+router.get('/version', authenticateToken, async (req, res) => {
+  const base = { version: APP_VERSION, releases_url: RELEASES_PAGE };
+  if (req.query.check !== '1') return res.json(base);
+  try {
+    res.json({ ...base, ...(await checkForUpdate()) });
+  } catch (error) {
+    console.warn('Update check failed:', error.message);
+    res.json({ ...base, check_failed: true });
+  }
+});
 
 async function getEffectiveSettings() {
   const row = await db.get(`SELECT public_base_url FROM app_settings WHERE id = 1`);
@@ -42,3 +97,5 @@ router.put('/', authenticateToken, requireAdmin, async (req, res) => {
 });
 
 module.exports = router;
+// Exported for tests.
+module.exports.isNewer = isNewer;

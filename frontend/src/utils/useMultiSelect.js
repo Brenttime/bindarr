@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useLongPress } from './useLongPress';
 
 // Long-press-to-arm multi-select + bulk actions over collection entries. Shared
@@ -14,14 +14,40 @@ export function useMultiSelect({ showToast, onChanged, guard } = {}) {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkMoveTarget, setBulkMoveTarget] = useState('');
 
+  // Last plainly-clicked id: the far end of a shift-click range.
+  const anchorId = useRef(null);
+
   const toggleSelect = (entryId) => {
+    anchorId.current = entryId;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(entryId)) next.delete(entryId); else next.add(entryId);
       return next;
     });
   };
-  const clearSelection = () => setSelectedIds(new Set());
+
+  // Click-to-toggle with shift-click range, over `orderedIds` as currently
+  // displayed — so a range is exactly what sits between the two cards on
+  // screen, whatever sort or filter is active. Shift only ever extends, so
+  // several shift-clicks build a selection out of separate blocks.
+  const selectAt = (entryId, orderedIds, withShift) => {
+    const anchor = anchorId.current;
+    if (!withShift || anchor == null || anchor === entryId) {
+      toggleSelect(entryId);
+      return;
+    }
+    const from = orderedIds.indexOf(anchor);
+    const to = orderedIds.indexOf(entryId);
+    if (from === -1 || to === -1) { toggleSelect(entryId); return; }
+    const [lo, hi] = from <= to ? [from, to] : [to, from];
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      for (let i = lo; i <= hi; i++) next.add(orderedIds[i]);
+      return next;
+    });
+  };
+
+  const clearSelection = () => { anchorId.current = null; setSelectedIds(new Set()); };
   const exitSelectMode = () => { setSelectMode(false); clearSelection(); setBulkMoveTarget(''); };
 
   // Enter select mode and select `entryId`. Exposed so callers that own the
@@ -30,6 +56,7 @@ export function useMultiSelect({ showToast, onChanged, guard } = {}) {
     const blocked = guard && guard();
     if (blocked) { showToast(blocked); return; }
     setSelectMode(true);
+    anchorId.current = entryId;
     setSelectedIds(prev => new Set(prev).add(entryId));
   };
 
@@ -64,7 +91,7 @@ export function useMultiSelect({ showToast, onChanged, guard } = {}) {
   };
 
   return {
-    selectMode, setSelectMode, selectedIds, setSelectedIds, toggleSelect, clearSelection, exitSelectMode, arm,
+    selectMode, setSelectMode, selectedIds, setSelectedIds, toggleSelect, selectAt, clearSelection, exitSelectMode, arm,
     bulkMoveTarget, setBulkMoveTarget, pressHandlers, longPressFired, runBulk,
   };
 }

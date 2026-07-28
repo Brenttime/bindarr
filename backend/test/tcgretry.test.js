@@ -87,7 +87,7 @@ async function main() {
   // 5. Recovering upstream still returns cards (retry doesn't break the happy path).
   state = { hits: 0, failCount: 1, status: 500 };
   await withServer(state, async () => {
-    const results = await searchCards('Mew', '', '', '', 'internet');
+    const { cards: results } = await searchCards('Mew', '', '', '', 'internet');
     assert.strictEqual(results.length, 1, 'expected the card once upstream recovers');
     assert.strictEqual(results[0].name, 'Mew');
   });
@@ -98,7 +98,7 @@ async function main() {
   db.all = async () => [{ id: 'x-1', name: 'Mew', number: '1', set_id: 's', set_name: 'S', subtypes: '[]', types: '[]', price_trend: 1.5, last_updated: '2026-07-27 00:00:00' }];
   state = { hits: 0, failCount: 99, status: 500 };
   await withServer(state, async () => {
-    const results = await searchCards('Mew', '', '', '', 'internet');
+    const { cards: results } = await searchCards('Mew', '', '', '', 'internet');
     assert.strictEqual(results.length, 1, 'cached card should be served when upstream is down');
     assert.strictEqual(results[0].name, 'Mew');
     assert.deepStrictEqual(results[0].types, [], 'row should be hydrated through parseCardRow');

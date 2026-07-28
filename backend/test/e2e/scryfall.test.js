@@ -359,6 +359,56 @@ async function runTests() {
       throw err;
     }
 
+    // F3-TC11: bulk add, owned_qty stamping, and the X-Total-Count header —
+    // the three things a set browse relies on to add many cards without
+    // re-adding what is already in the binder.
+    try {
+      port = getNextPort();
+      const serverBulk = spawn('node', ['-r', mockScript, serverScript], {
+        env: { ...process.env, PORT: port, DB_PATH: tmpDb }
+      });
+      await waitForServer(port);
+
+      // Total match count is surfaced as a header, body stays a bare array.
+      // Needs scope=internet: a cache hit has no upstream total to report.
+      const searchUrl = `http://localhost:${port}/api/search?game=mtg&name=Lotus&scope=internet`;
+      const searchRes = await fetch(searchUrl, { headers: authHeaders });
+      assert.strictEqual(searchRes.headers.get('x-total-count'), '1', 'total match count should be reported');
+      const before = await searchRes.json();
+      assert.strictEqual(before[0].owned_qty, 0, 'nothing owned yet');
+
+      // Bulk add: one real card and one bogus id, so partial failure is covered.
+      const bulkRes = await fetch(`http://localhost:${port}/api/collection/bulk-add`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card_ids: ['mtg-lea-232', 'mtg-does-not-exist'], quantity: 2, game: 'mtg' })
+      });
+      assert.strictEqual(bulkRes.status, 200);
+      const bulk = await bulkRes.json();
+      assert.strictEqual(bulk.added, 1, 'the one real card should be added');
+      assert.strictEqual(bulk.failed.length, 1, 'the bogus id should be reported, not swallowed');
+
+      // The same search now reports what is already owned (quantity 2).
+      const afterRes = await fetch(searchUrl, { headers: authHeaders });
+      const after = await afterRes.json();
+      assert.strictEqual(after[0].owned_qty, 2, 'owned copies should show on later searches');
+
+      // An empty request is rejected rather than silently doing nothing.
+      const emptyRes = await fetch(`http://localhost:${port}/api/collection/bulk-add`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card_ids: [] })
+      });
+      assert.strictEqual(emptyRes.status, 400);
+      await emptyRes.text();
+
+      console.log('PASS: F3-TC11');
+      await stopServer(serverBulk, port);
+    } catch (err) {
+      console.error('FAIL: F3-TC11 -', err.message);
+      throw err;
+    }
+
   } finally {
     // Teardown everything
     try { await stopServer(server, port); } catch {}

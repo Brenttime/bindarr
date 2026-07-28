@@ -5,7 +5,7 @@ const scryfallApi = require('../scryfallApi');
 const scanMatch = require('../scanMatch');
 const setIndex = require('../setIndex');
 const { authenticateToken, searchLimiter } = require('../middleware/auth');
-const { resolveCardPrice, parseCardRow } = require('../utils/priceHelpers');
+const { resolveCardPrice, parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { parseSetList } = require('../utils/setQuery');
 const { compartmentLabel, isBinderType, rebalanceCompartmentByScheme } = require('../utils/compartmentSort');
 const { checkedOutAllocation, resolveCompartmentAndPosition, describePlacement } = require('../utils/collectionHelpers');
@@ -16,15 +16,42 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
+// Stamp each result with how many copies the user already owns, so browsing a
+// set shows what is already in the binder instead of inviting duplicate adds.
+// A collection-scope search already reports owned_qty from its own join.
+async function attachOwnedQty(cards, userId) {
+  if (!Array.isArray(cards) || cards.length === 0 || !userId) return;
+  const ids = cards.map(c => c.id).filter(Boolean);
+  if (ids.length === 0) return;
+  const rows = await db.all(
+    `SELECT card_id, SUM(quantity) AS qty FROM collection
+     WHERE user_id = ? AND list_type = 'collection' AND card_id IN (${ids.map(() => '?').join(',')})
+     GROUP BY card_id`,
+    [userId, ...ids]
+  );
+  const owned = new Map(rows.map(r => [r.card_id, r.qty]));
+  for (const c of cards) c.owned_qty = owned.get(c.id) || 0;
+}
+
 // 1. Search cards (proxies to Pokémon TCG or Scryfall + database cache). The
 // `game` param routes to the right provider; both return the same card shape.
 router.get('/search', searchLimiter, async (req, res) => {
   const { name, number, set, scope = 'database', game = 'pokemon', lang, prints } = req.query;
+  // 1-based page over `limit`-sized pages. 250 is the pokemontcg.io ceiling and
+  // a sane cap on how much one Scryfall search will page through per request.
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(250, Math.max(1, parseInt(req.query.limit, 10) || 60));
   try {
-    const results = game === 'mtg'
-      ? await scryfallApi.searchCards(name, number, set, scope, req.user.id, lang, prints === '1')
-      : await tcgApi.searchCards(name, number, set, req.user.tcg_api_key, scope, req.user.id);
-    res.json(results);
+    const { cards, total } = game === 'mtg'
+      ? await scryfallApi.searchCards(name, number, set, scope, req.user.id, lang, prints === '1', page, limit)
+      : await tcgApi.searchCards(name, number, set, req.user.tcg_api_key, scope, req.user.id, page, limit);
+    await attachOwnedQty(cards, req.user.id);
+    // Header, not the body: every existing caller expects a bare array here.
+    if (total != null) {
+      res.set('X-Total-Count', String(total));
+      res.set('Access-Control-Expose-Headers', 'X-Total-Count');
+    }
+    res.json(cards);
   } catch (error) {
     console.error(error);
     if (error.message === 'INVALID_API_KEY') {
@@ -181,8 +208,15 @@ router.get('/collection', async (req, res) => {
   }
 });
 
-// 3. Add Card to Collection
-router.post('/collection', async (req, res) => {
+// Shared by the single add below and the bulk add after it, so one card and two
+// hundred cards travel exactly the same path (cache lookup, compartment
+// resolution, rebalance, price history). Throws AddCardError for caller-visible
+// failures; anything else is a genuine 500.
+class AddCardError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+async function addCardToCollection(user, body) {
   const {
     card_id,
     quantity = 1,
@@ -195,13 +229,14 @@ router.post('/collection', async (req, res) => {
     is_trade = 0,
     game = 'pokemon',
     stackable = false
-  } = req.body;
+  } = body;
+  const req = { user, body };
 
   if (!card_id) {
-    return res.status(400).json({ error: 'card_id is required' });
+    throw new AddCardError(400, 'card_id is required');
   }
 
-  try {
+  {
     let card = await db.get(`SELECT * FROM card_cache WHERE id = ?`, [card_id]);
     if (!card) {
       if (game === 'mtg' || card_id.startsWith('mtg-')) {
@@ -210,7 +245,7 @@ router.post('/collection', async (req, res) => {
         card = await tcgApi.getCardById(card_id, req.user.tcg_api_key);
       }
       if (!card) {
-        return res.status(404).json({ error: `Card ID ${card_id} not found.` });
+        throw new AddCardError(404, `Card ID ${card_id} not found.`);
       }
     }
 
@@ -221,7 +256,7 @@ router.post('/collection', async (req, res) => {
     if (location_id) {
       const loc = await db.get(`SELECT id FROM locations WHERE id = ? AND user_id = ?`, [location_id, req.user.id]);
       if (!loc) {
-        return res.status(400).json({ error: 'Invalid location ID' });
+        throw new AddCardError(400, 'Invalid location ID');
       }
     }
 
@@ -271,11 +306,9 @@ router.post('/collection', async (req, res) => {
       }
     }
 
-    if (card.price_trend > 0) {
-      await db.run(`INSERT OR IGNORE INTO price_history (card_id, price) VALUES (?, ?)`, [card_id, card.price_trend]);
-    }
+    await recordPrice(card_id, card.price_trend);
 
-    res.status(200).json({
+    return {
       message: 'Card added to collection',
       id: lastInsertedId,
       placement: resolved.compartment_id
@@ -283,11 +316,55 @@ router.post('/collection', async (req, res) => {
         : null,
       container_full: !!resolved.full,
       rule_rejected: !!resolved.rejected
-    });
+    };
+  }
+}
+
+// 3. Add Card to Collection
+router.post('/collection', async (req, res) => {
+  try {
+    res.status(200).json(await addCardToCollection(req.user, req.body));
   } catch (error) {
+    if (error instanceof AddCardError) {
+      return res.status(error.status).json({ error: error.message });
+    }
     console.error(error);
     res.status(500).json({ error: 'Failed to add card' });
   }
+});
+
+// 3b. Bulk add: one shared condition/printing/quantity across many cards, so a
+// set browse can be added in one action instead of one drawer per card.
+const BULK_ADD_MAX = 250;
+router.post('/collection/bulk-add', async (req, res) => {
+  const { card_ids = [], ...shared } = req.body;
+  if (!Array.isArray(card_ids) || card_ids.length === 0) {
+    return res.status(400).json({ error: 'card_ids is required' });
+  }
+  if (card_ids.length > BULK_ADD_MAX) {
+    return res.status(400).json({ error: `Cannot add more than ${BULK_ADD_MAX} cards at once.` });
+  }
+  // Sequential on purpose: placement resolves against the rows already inserted,
+  // so adds must not race each other for the same compartment slot.
+  const added = [];
+  const failed = [];
+  for (const card_id of card_ids) {
+    try {
+      const result = await addCardToCollection(req.user, { ...shared, card_id });
+      added.push({ card_id, id: result.id });
+    } catch (error) {
+      if (!(error instanceof AddCardError)) console.error(error);
+      failed.push({ card_id, error: error instanceof AddCardError ? error.message : 'Failed to add card' });
+    }
+  }
+  const qty = Math.max(1, parseInt(shared.quantity, 10) || 1);
+  res.status(failed.length && !added.length ? 500 : 200).json({
+    message: failed.length
+      ? `Added ${added.length} of ${card_ids.length} cards; ${failed.length} failed.`
+      : `Added ${added.length} card${added.length === 1 ? '' : 's'}${qty > 1 ? ` (x${qty} each)` : ''} to collection.`,
+    added: added.length,
+    failed
+  });
 });
 
 // 4. Update Collection Entry

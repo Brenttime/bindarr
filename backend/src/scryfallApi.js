@@ -1,6 +1,6 @@
 const axios = require('axios');
 const db = require('./db');
-const { parseCardRow } = require('./utils/priceHelpers');
+const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
 const { parseSetList, setSqlFilter } = require('./utils/setQuery');
 
 // Scryfall needs no API key but asks callers to identify themselves and accept
@@ -13,43 +13,159 @@ const client = axios.create({
   headers: { 'User-Agent': 'Bindarr/1.0', 'Accept': 'application/json' }
 });
 
-// Scryfall asks for ~10 requests/second and 429s aggressively on bursts. Search,
-// per-set fetches, and the background price refresh all hit it and can run
-// concurrently, so serialize EVERY request through one queue with a minimum gap.
-// A global limiter beats the per-caller delays that don't see each other.
-const SCRYFALL_MIN_GAP_MS = 120;
+// Search, per-set fetches and the background price sweep all hit Scryfall and
+// can run concurrently, so every request goes through one serialized queue —
+// a global limiter beats per-caller delays that can't see each other.
+//
+// Scryfall publishes HARD, PER-ENDPOINT limits, and the card endpoints this app
+// leans on are the strict ones — not the 10/second that applies to everything
+// else. From https://scryfall.com/docs/api/rate-limits:
+//   /cards/search, /cards/named, /cards/random, /cards/collection — 2/second
+//   /cards/manifest — 10/minute
+//   all other methods — 10/second
+// A single 120ms gap was ~4x over the limit on exactly the endpoints search and
+// the price sweep use, which is what earned the 429s.
+// SCRYFALL_GAP_SCALE exists so the e2e suite, which stubs the HTTP layer
+// entirely, isn't paced against a real API it never contacts. Never set it
+// below 1 against api.scryfall.com — exceeding these limits risks a ban.
+const GAP_SCALE = Number.isFinite(Number(process.env.SCRYFALL_GAP_SCALE))
+  ? Number(process.env.SCRYFALL_GAP_SCALE)
+  : 1;
+const ENDPOINT_GAPS = [
+  [/^\/cards\/(search|named|random|collection)\b/, 500 * GAP_SCALE],
+  [/^\/cards\/manifest\b/, 10000 * GAP_SCALE],
+];
+const SCRYFALL_MIN_GAP_MS = 100 * GAP_SCALE; // floor for "all other methods" (10/second)
+// A 429 says "everything you are sending is too much", so backing off only the
+// request that got it is useless — the queue behind it keeps firing at full rate
+// and keeps the penalty alive. `cooldownUntil` pauses EVERY request until the
+// window Scryfall asked for has passed. Default 60s: that is what its 429 body
+// asks for when no Retry-After header is sent.
+const SCRYFALL_DEFAULT_COOLDOWN_MS = 60000;
 let scryfallQueue = Promise.resolve();
 let lastScryfallAt = 0;
+let cooldownUntil = 0;
+// Per-endpoint clocks. The limits are per endpoint, so a search and a /sets call
+// don't have to wait on each other beyond the global 10/second floor.
+const lastByEndpoint = new Map();
+
+// Which bucket a URL falls in. Callers pass both relative ('/cards/search?...')
+// and absolute (Scryfall's own next_page links) URLs, so read just the path.
+function endpointGap(url) {
+  let path = String(url || '');
+  if (/^https?:\/\//i.test(path)) {
+    try { path = new URL(path).pathname; } catch { /* fall through to raw */ }
+  }
+  path = path.split('?')[0];
+  for (const [pattern, gap] of ENDPOINT_GAPS) {
+    if (pattern.test(path)) return { key: pattern.source, gap };
+  }
+  return { key: 'default', gap: SCRYFALL_MIN_GAP_MS };
+}
+
+// How long this request must wait: its own endpoint's gap, the global floor,
+// and any active 429 cooldown — whichever is longest.
+function waitFor(url) {
+  const now = Date.now();
+  const { key, gap } = endpointGap(url);
+  return {
+    key,
+    ms: Math.max(
+      cooldownUntil - now,
+      gap - (now - (lastByEndpoint.get(key) || 0)),
+      SCRYFALL_MIN_GAP_MS - (now - lastScryfallAt),
+      0
+    )
+  };
+}
+
+function noteRateLimit(error) {
+  if (!error.response || error.response.status !== 429) return false;
+  const ra = parseInt(error.response.headers?.['retry-after'], 10);
+  const waitMs = Number.isFinite(ra) ? ra * 1000 : SCRYFALL_DEFAULT_COOLDOWN_MS;
+  const until = Date.now() + waitMs;
+  if (until > cooldownUntil) {
+    cooldownUntil = until;
+    console.warn(`Scryfall rate-limited us — pausing all Scryfall traffic for ${Math.round(waitMs / 1000)}s.`);
+  }
+  return true;
+}
+
 function scryGet(url, config) {
   const run = scryfallQueue.then(async () => {
-    const wait = SCRYFALL_MIN_GAP_MS - (Date.now() - lastScryfallAt);
-    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    // Re-check after waiting: a 429 may have armed the cooldown while queued.
+    for (let w = waitFor(url); w.ms > 0; w = waitFor(url)) {
+      await new Promise(r => setTimeout(r, w.ms));
+    }
+    const { key } = endpointGap(url);
     lastScryfallAt = Date.now();
-    return client.get(url, config);
+    lastByEndpoint.set(key, lastScryfallAt);
+    try {
+      return await client.get(url, config);
+    } catch (error) {
+      noteRateLimit(error);
+      throw error;
+    }
   });
   // Keep the chain alive regardless of this request's outcome.
   scryfallQueue = run.then(() => {}, () => {});
   return run;
 }
 
-// Queue + 429 backoff, returning the raw axios response (callers that need
+// Scryfall's bulk lookup takes at most 75 identifiers per request.
+const COLLECTION_BATCH = 75;
+
+// POST twin of scryGet: same one global queue, same gap, same 429 cooldown, so
+// bulk lookups can never race ahead of (or pile on top of) search traffic.
+function scryPost(url, body, config) {
+  const run = scryfallQueue.then(async () => {
+    for (let w = waitFor(url); w.ms > 0; w = waitFor(url)) {
+      await new Promise(r => setTimeout(r, w.ms));
+    }
+    const { key } = endpointGap(url);
+    lastScryfallAt = Date.now();
+    lastByEndpoint.set(key, lastScryfallAt);
+    try {
+      return await client.post(url, body, config);
+    } catch (error) {
+      noteRateLimit(error);
+      throw error;
+    }
+  });
+  scryfallQueue = run.then(() => {}, () => {});
+  return run;
+}
+
+async function scryPostRetried(url, body, config, retries = 4) {
+  let lastError;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await scryPost(url, body, config);
+    } catch (error) {
+      lastError = error;
+      if (error.response && error.response.status === 429 && i < retries - 1) continue;
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
+// Queue + 429 retry, returning the raw axios response (callers that need
 // has_more/next_page/total_cards can't use fetchFromScryfall, which strips to
-// .data.data). Set-index builds page through this so their traffic shares the
-// one global gap instead of bursting Scryfall into a 429.
+// .data.data). The wait itself is handled by the shared cooldown above, so a
+// retry here just re-queues behind it.
 async function scryGetRetried(url, config, retries = 4) {
+  let lastError;
   for (let i = 0; i < retries; i++) {
     try {
       return await scryGet(url, config);
     } catch (error) {
-      if (error.response && error.response.status === 429 && i < retries - 1) {
-        const ra = parseInt(error.response.headers?.['retry-after'], 10);
-        const backoff = Number.isFinite(ra) ? ra * 1000 : 1000 * (i + 1);
-        await new Promise(r => setTimeout(r, backoff));
-        continue;
-      }
+      lastError = error;
+      if (error.response && error.response.status === 429 && i < retries - 1) continue;
       throw error;
     }
   }
+  throw lastError;
 }
 
 const COLOR_NAMES = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
@@ -100,22 +216,68 @@ function normalizeCard(raw, lang) {
   };
 }
 
+// A page of results is now up to 250 cards, and one round trip per card made
+// the INSERTs cost more than the Scryfall fetch. Batch them; chunked so the
+// bound-parameter count stays well inside SQLite's limit.
+const CACHE_INSERT_CHUNK = 50;
+const CARD_CACHE_ROW = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)';
 async function cacheCards(cards) {
-  for (const c of cards) {
-    await db.run(
-      `INSERT OR REPLACE INTO card_cache
-       (id, name, supertype, subtypes, types, rarity, set_id, set_name, number, image_url, price_trend, price_normal, price_holofoil, price_reverse_holofoil, cmc, color_identity, game, last_updated)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [
+  for (let i = 0; i < cards.length; i += CACHE_INSERT_CHUNK) {
+    const chunk = cards.slice(i, i + CACHE_INSERT_CHUNK);
+    const params = [];
+    for (const c of chunk) {
+      params.push(
         c.id, c.name, c.supertype,
         JSON.stringify(c.subtypes || []), JSON.stringify(c.types || []),
         c.rarity, c.set_id, c.set_name, c.number, c.image_url,
         c.price_trend, c.price_normal, c.price_holofoil, c.price_reverse_holofoil, c.cmc, JSON.stringify(c.color_identity || []), 'mtg'
-      ]
+      );
+    }
+    await db.run(
+      `INSERT OR REPLACE INTO card_cache
+       (id, name, supertype, subtypes, types, rarity, set_id, set_name, number, image_url, price_trend, price_normal, price_holofoil, price_reverse_holofoil, cmc, color_identity, game, last_updated)
+       VALUES ${chunk.map(() => CARD_CACHE_ROW).join(', ')}`,
+      params
     );
   }
 }
 
+
+// Look up many known cards in as few requests as possible. Rows need set_id +
+// number (preferred) or a name. Returns normalized cards plus, for each, the row
+// it came from, so callers can write back against their own ids without
+// trusting the response to preserve order.
+async function bulkFetchByIdentifier(rows) {
+  const cards = [];
+  const pairs = [];
+  let notFound = 0;
+
+  for (let i = 0; i < rows.length; i += COLLECTION_BATCH) {
+    const chunk = rows.slice(i, i + COLLECTION_BATCH);
+    const byKey = new Map();
+    const identifiers = chunk.map(row => {
+      const setId = row.set_id != null ? String(row.set_id).toLowerCase() : '';
+      const num = row.number != null ? String(row.number) : '';
+      if (setId && num) {
+        byKey.set(`sn:${setId}|${num.toLowerCase()}`, row);
+        return { set: setId, collector_number: num };
+      }
+      byKey.set(`n:${String(row.name || '').toLowerCase()}`, row);
+      return { name: row.name || '' };
+    });
+
+    const resp = await scryPostRetried('/cards/collection', { identifiers });
+    notFound += ((resp.data && resp.data.not_found) || []).length;
+    for (const raw of (resp.data && resp.data.data) || []) {
+      const norm = normalizeCard(raw);
+      cards.push(norm);
+      const row = byKey.get(`sn:${String(norm.set_id).toLowerCase()}|${String(norm.number).toLowerCase()}`)
+        || byKey.get(`n:${String(norm.name).toLowerCase()}`);
+      if (row) pairs.push({ row, card: norm });
+    }
+  }
+  return { cards, pairs, notFound };
+}
 
 async function fetchFromScryfall(q, lang, retries = 3) {
   let url = `/cards/search?q=${encodeURIComponent(q)}`;
@@ -126,21 +288,54 @@ async function fetchFromScryfall(q, lang, retries = 3) {
       const resp = await scryGet(url);
       return (resp.data && resp.data.data) || [];
     } catch (error) {
-      if (error.response && error.response.status === 429 && i < retries - 1) {
-        // Honor Retry-After when Scryfall sends it; else exponential backoff.
-        const ra = parseInt(error.response.headers?.['retry-after'], 10);
-        const backoff = Number.isFinite(ra) ? ra * 1000 : 1000 * (i + 1);
-        await new Promise(r => setTimeout(r, backoff));
-        continue;
-      }
+      // The shared cooldown already holds the whole queue for as long as
+      // Scryfall asked, so a retry here just re-queues behind it.
+      if (error.response && error.response.status === 429 && i < retries - 1) continue;
       throw error;
     }
   }
 }
 
+// Scryfall pages are a fixed 175 cards. Pull the caller's [offset, offset+limit)
+// window out of them so search can page by its own limit instead of being capped
+// at one Scryfall page. Returns the raw cards plus whether more exist after them.
+const SCRY_PAGE_SIZE = 175;
+async function fetchWindow(q, lang, offset, limit, order) {
+  let page = Math.floor(offset / SCRY_PAGE_SIZE) + 1;
+  let skip = offset % SCRY_PAGE_SIZE;
+  const out = [];
+  let hasMore = false;
+  let total = null;
+  while (out.length < limit) {
+    let url = `/cards/search?q=${encodeURIComponent(q)}&page=${page}`;
+    if (order) url += `&order=${order}`;
+    if (lang) url += `&lang=${lang.toLowerCase() === 'ja' ? 'ja' : encodeURIComponent(lang)}`;
+    const resp = await scryGetRetried(url);
+    if (resp.data && resp.data.total_cards != null) total = resp.data.total_cards;
+    out.push(...(((resp.data && resp.data.data) || []).slice(skip)));
+    skip = 0;
+    hasMore = !!(resp.data && resp.data.has_more);
+    if (!hasMore) break;
+    page++;
+  }
+  return { cards: out.slice(0, limit), hasMore: hasMore || out.length > limit, total };
+}
+
+// Public entry point. Returns { cards, total } — `total` is how many matches
+// exist upstream in all (null when the answer came from cache, which has no
+// such count). Wrapping keeps the many early returns in the body unchanged.
+async function searchCards(...args) {
+  const meta = { total: null };
+  const cards = await runSearch(meta, ...args);
+  return { cards, total: meta.total };
+}
+
 // Search MTG cards: local card_cache first (game='mtg'), then Scryfall. Mirrors
 // the Pokémon searchCards contract so the route can dispatch on `game` alone.
-async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', scope = 'database', userId = null, lang = null, allPrints = false) {
+// `page` is 1-based over `limit`-sized pages; the caller keeps asking for the
+// next page while a full page comes back.
+async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', scope = 'database', userId = null, lang = null, allPrints = false, page = 1, limit = 60) {
+  const offset = (page - 1) * limit;
   const cleanName = (nameQuery || '').trim();
   const cleanNumber = (numberQuery || '').trim();
   // Set field may list several sets ("ltr, ltc") — match any of them. Scryfall
@@ -184,34 +379,38 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', scop
     if (cleanNumber) { sql += ` AND (cc.number = ? OR CAST(cc.number AS INTEGER) = CAST(? AS INTEGER))`; params.push(cleanNumber, cleanNumber); }
     const collSetFilter = setSqlFilter(setList, 'cc');
     if (collSetFilter) { sql += ` AND ${collSetFilter.clause}`; params.push(...collSetFilter.params); }
-    sql += ` GROUP BY cc.id LIMIT 50`;
+    sql += ` GROUP BY cc.id LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
     return (await db.all(sql, params)).map(parseCardRow);
   }
 
-  // 2. Local cache first
-  let localResults = [];
-  if (scope !== 'internet' && !isForeign) {
+  // 2. Local cache first. Kept as a closure because an internet-scope search
+  // skips it here but still needs it as a fallback when Scryfall is unreachable.
+  const queryLocal = async () => {
     let sql = `SELECT * FROM card_cache WHERE game = 'mtg'`;
     const params = [];
     if (cleanName) { sql += ` AND name LIKE ?`; params.push(`%${cleanName}%`); }
     if (cleanNumber) { sql += ` AND (number = ? OR CAST(number AS INTEGER) = CAST(? AS INTEGER))`; params.push(cleanNumber, cleanNumber); }
     const localSetFilter = setSqlFilter(setList);
     if (localSetFilter) { sql += ` AND ${localSetFilter.clause}`; params.push(...localSetFilter.params); }
-    sql += ` LIMIT 50`;
+    sql += ` LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+    return db.all(sql, params);
+  };
 
-    localResults = await db.all(sql, params);
+  let localResults = [];
+  if (scope !== 'internet' && !isForeign) {
+    localResults = await queryLocal();
     if (localResults.length > 0) {
       // Refresh stale prices in the background; return the cached rows instantly.
       const stale = localResults.filter(r => (Date.now() - new Date(r.last_updated).getTime()) > CACHE_AGE_LIMIT_MS);
       if (stale.length > 0) {
+        // Batched: a page is now up to 250 rows, and one request per stale row
+        // was a 250-call burst behind a single search.
         (async () => {
           try {
-            for (const row of stale) {
-              const raw = await fetchFromScryfall(row.name);
-              if (raw.length) await cacheCards(raw.map(c => normalizeCard(c)));
-              // Scryfall asks callers to space requests ~50-100ms apart.
-              await new Promise(r => setTimeout(r, 120));
-            }
+            const { cards: fresh } = await bulkFetchByIdentifier(stale);
+            if (fresh.length) await cacheCards(fresh);
           } catch (e) {
             console.error('MTG background refresh failed:', e.message);
           }
@@ -228,6 +427,12 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', scop
   // Run specific query (set+cn or name+cn) AND the broad name-only query, then
   // merge results: exact matches first, remaining alternatives sorted by cn.
   // This way the user always sees the likely match at top with other printings below.
+  // Scryfall collapses printings to one card per name by default, so a plain
+  // "Sol Ring" only ever returned a single arbitrary printing. Manual add needs
+  // every printing to pick the one actually being added. Digital-only prints
+  // (Alchemy rebalances) are dropped — there is no physical card to own, same
+  // rule the scan index uses.
+  const PRINTS = ' unique:prints -is:digital';
   const specificQuery = (setList.length && strippedNumber) ? `${scrySet} cn:${strippedNumber}`
     : (cleanName && strippedNumber) ? `${cleanName} cn:${strippedNumber}`
     : null;
@@ -235,32 +440,49 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', scop
   // ("ltr, ltc") returns only those sets, not every printing. Set-only (no
   // name) falls back to browsing the set(s).
   const setConstraint = setList.length ? ` ${scrySet}` : '';
-  const broadQuery = cleanName ? `${cleanName}${setConstraint}` : (setList.length ? scrySet : null);
+  const broadQuery = cleanName ? `${cleanName}${setConstraint}${PRINTS}` : (setList.length ? `${scrySet}${PRINTS}` : null);
   // Last resort: first word only (e.g. "Adamant" from "Adamant Will")
   const firstWord = cleanName.split(/\s+/)[0];
-  const fallbackQuery = (firstWord && firstWord !== cleanName) ? `${firstWord}${setConstraint}` : null;
+  const fallbackQuery = (firstWord && firstWord !== cleanName) ? `${firstWord}${setConstraint}${PRINTS}` : null;
 
-  // Helper: try a Scryfall query, return [] on 404/error.
-  const tryQuery = async (q) => {
+  // Helper: try a Scryfall query window, return [] on 404/error.
+  // Browsing a whole set pages by collector number; a name search keeps
+  // Scryfall's relevance order so the card you typed stays on page 1.
+  const order = (!cleanName && setList.length) ? 'set' : undefined;
+  const tryQuery = async (q, off = 0) => {
     if (!q) return [];
     try {
-      const raw = await fetchFromScryfall(q, lang);
-      return raw.map(c => normalizeCard(c, lang));
+      const { cards, total } = await fetchWindow(q, lang, off, limit, order);
+      // The broad query is the one that defines "how many matches exist"; the
+      // specific set+cn probe would report its own tiny count.
+      if (q === broadQuery && total != null) meta.total = total;
+      return cards.map(c => normalizeCard(c, lang));
     } catch (err) {
-      if (err.response && err.response.status === 404) return [];
+      // 404 = no cards matched; 422 = asked for a page past the last one.
+      if (err.response && (err.response.status === 404 || err.response.status === 422)) return [];
       throw err; // real error (rate limit, network) — bubble up
     }
   };
 
   try {
-    let exact = await tryQuery(specificQuery);
-    // Scryfall asks callers to space requests ~50-100ms apart.
-    if (specificQuery && broadQuery && broadQuery !== specificQuery) await new Promise(r => setTimeout(r, 120));
-    let broad = (broadQuery && broadQuery !== specificQuery) ? await tryQuery(broadQuery) : [];
+    // The specific (set+cn) query yields at most a printing or two and only
+    // makes sense as the head of the first page — later pages just walk the
+    // broad query. Overlap from that shift is deduped by the caller on id.
+    let exact = page === 1 ? await tryQuery(specificQuery) : [];
+
+    // A set + collector number identifies ONE card. Pairing it with the broad
+    // set browse would bury that card under the other 800 in the set, so the
+    // browse only runs as a fallback when the number found nothing. With a name
+    // typed, the broad query is still wanted — it surfaces other printings.
+    const numberPinnedIt = !cleanName && strippedNumber && exact.length > 0;
+    let broad = (!numberPinnedIt && broadQuery && broadQuery !== specificQuery)
+      ? await tryQuery(broadQuery, offset)
+      : [];
+    if (numberPinnedIt) meta.total = exact.length;
 
     // If both empty, try first-word fallback.
     if (exact.length === 0 && broad.length === 0 && fallbackQuery) {
-      broad = await tryQuery(fallbackQuery);
+      broad = await tryQuery(fallbackQuery, offset);
     }
 
     // Merge: exact matches first, then broad alternatives deduped.
@@ -268,10 +490,12 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', scop
     const merged = [...exact, ...broad.filter(c => !seen.has(c.id))];
     if (merged.length === 0) return localResults.map(parseCardRow);
 
-    const cards = merged.slice(0, 50);
-    // Sort alternatives (after exact) by collector number.
+    const cards = merged.slice(0, limit);
+    // Sort alternatives (after exact) by collector number. A set browse has no
+    // exact match to hoist and is already in set order — re-sorting it per page
+    // would only shuffle non-numeric collector numbers to the top of each page.
     const exactIds = new Set(exact.map(c => c.id));
-    cards.sort((a, b) => {
+    if (cleanName || strippedNumber) cards.sort((a, b) => {
       // Exact matches always first.
       const aExact = exactIds.has(a.id) ? 0 : 1;
       const bExact = exactIds.has(b.id) ? 0 : 1;
@@ -285,7 +509,18 @@ async function searchCards(nameQuery = '', numberQuery = '', setQuery = '', scop
     return cards;
   } catch (err) {
     console.error('Scryfall search failed:', err.message);
-    return localResults.map(parseCardRow);
+    // Serve whatever the cache already knows before giving up. With nothing
+    // cached, say the upstream is down rather than "no such card" — a throttled
+    // or broken Scryfall is indistinguishable from an empty result otherwise,
+    // and reporting it as "no results" is what made #22 look like a search bug.
+    const cached = (scope === 'internet' && !isForeign) ? await queryLocal() : localResults;
+    if (cached.length > 0) {
+      console.warn(`Scryfall unavailable — serving ${cached.length} cached match(es).`);
+      return cached.map(parseCardRow);
+    }
+    const status = err.response && err.response.status;
+    if (status === 429) throw new Error('RATE_LIMIT_EXCEEDED');
+    throw new Error('UPSTREAM_UNAVAILABLE');
   }
 }
 
@@ -339,7 +574,9 @@ async function fetchAndCacheSets(force = false) {
 // Refresh prices for every owned/decked MTG card from Scryfall and record price
 // history. The Pokémon updater (tcgApi) skips these, so this is their only
 // periodic refresh path.
-async function updateCollectionPrices() {
+// `force` bypasses the once-a-day gate (used by the scheduled daily run, which
+// is already on the right cadence by construction).
+async function updateCollectionPrices(force = false) {
   try {
     const cards = await db.all(`
       SELECT DISTINCT c.card_id, cc.set_id, cc.number, cc.name FROM collection c
@@ -349,25 +586,27 @@ async function updateCollectionPrices() {
       JOIN card_cache cc ON d.card_id = cc.id WHERE cc.game = 'mtg'
     `);
     if (cards.length === 0) return;
-    console.log(`Starting MTG price update for ${cards.length} unique cards...`);
-    for (const row of cards) {
-      try {
-        const raw = (row.set_id && row.number)
-          ? await fetchFromScryfall(`set:${row.set_id} cn:${row.number}`)
-          : await fetchFromScryfall(row.name || '');
-        if (raw.length) {
-          const norm = normalizeCard(raw[0]);
-          await cacheCards([norm]);
-          if (norm.price_trend > 0) {
-            await db.run(`INSERT INTO price_history (card_id, price) VALUES (?, ?)`, [row.card_id, norm.price_trend]);
-          }
-        }
-      } catch (e) {
-        console.error(`Failed to update MTG price for ${row.card_id}:`, e.message);
-      }
-      await new Promise(r => setTimeout(r, 200));
+    if (!force && !(await shouldSweepPrices('mtg'))) {
+      console.log('Skipping MTG price update: already swept within the last 24h (Scryfall updates prices daily).');
+      return;
     }
-    console.log('MTG price update complete.');
+    console.log(`Starting MTG price update for ${cards.length} unique cards...`);
+
+    // One request PER CARD is what got this app rate-limited: a 200-card
+    // collection meant 200 Scryfall calls every boot, and nodemon reboots on
+    // every code edit. /cards/collection takes 75 identifiers at a time, so the
+    // same sweep is a handful of calls. Verified contract: { data, not_found }.
+    try {
+      const { cards: fresh, pairs, notFound } = await bulkFetchByIdentifier(cards);
+      if (fresh.length) await cacheCards(fresh);
+      for (const { row, card } of pairs) {
+        await recordPrice(row.card_id, card.price_trend);
+      }
+      await markPricesSwept('mtg');
+      console.log(`MTG price update complete: ${pairs.length} priced, ${notFound} not found on Scryfall.`);
+    } catch (e) {
+      console.error('MTG price update failed:', e.message);
+    }
   } catch (err) {
     console.error('Error during MTG price update:', err.message);
   }
@@ -388,4 +627,6 @@ async function getCardById(cardId) {
   return null;
 }
 
-module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, scryGetRetried };
+// `client` and `fetchWindow` are exported for tests (stub the axios adapter),
+// mirroring how tcgApi exposes tcgClient.
+module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, scryGetRetried, client, fetchWindow };

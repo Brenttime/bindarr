@@ -1167,6 +1167,11 @@ button, input, select, textarea {
   100% { transform: rotate(360deg); }
 }
 
+/* Spins an icon in place to mark an in-flight action (refresh buttons). */
+.spin-animation {
+  animation: spin 1s linear infinite;
+}
+
 .toast {
   position: fixed;
   bottom: 80px;

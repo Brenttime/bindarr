@@ -35,7 +35,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set environment to production
 ENV NODE_ENV=production
 ENV PORT=3001
-ENV DB_PATH=/app/database/pokemon_cards.db
+# Upgrades from an image that used pokemon_cards.db keep their data: the app
+# renames the old file (and its WAL sidecars) into place on first start.
+ENV DB_PATH=/app/database/bindarr.db
 # Set indexes live on the persisted volume too, else they rebuild every redeploy
 ENV SETS_DIR=/app/database/sets
 # Global scan indexes (embed/orb bins) also live on the persisted volume, both so

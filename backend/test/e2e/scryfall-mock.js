@@ -1,5 +1,44 @@
+// Every Scryfall call in these tests is served from the fixtures below, so no
+// request ever reaches api.scryfall.com. Pacing them at Scryfall's real
+// 2-requests-per-second would make the rate-limit suite (350 requests) take
+// minutes for no benefit. Set before scryfallApi is required — this file is
+// preloaded with `node -r`.
+process.env.SCRYFALL_GAP_SCALE = '0';
+
 const axios = require('axios');
 const originalGet = axios.Axios.prototype.get;
+const originalPost = axios.Axios.prototype.post;
+
+// POST /cards/collection — the bulk lookup the price refresh uses. Resolves each
+// identifier against the same fixtures the GET branch serves, so a card findable
+// by search is findable in bulk, and anything else lands in not_found.
+axios.Axios.prototype.post = async function(url, body, config) {
+  const fullUrl = (this.defaults.baseURL || '') + url;
+  if (!fullUrl.includes('api.scryfall.com')) return originalPost.call(this, url, body, config);
+
+  if (process.env.MOCK_SCRYFALL_ERROR === 'true') {
+    const err = new Error('Request failed with status code 500');
+    err.response = { status: 500 };
+    throw err;
+  }
+
+  const identifiers = (body && body.identifiers) || [];
+  const data = [];
+  const not_found = [];
+  for (const ident of identifiers) {
+    // Reuse the GET fixtures by handing them the same hints in a fake URL.
+    const hint = ident.name || `${ident.set || ''}-${ident.collector_number || ''}`;
+    const resp = await axios.Axios.prototype.get.call(this, `/cards/search?q=${encodeURIComponent(hint)}`);
+    const card = resp.data.data && resp.data.data[0];
+    // The GET branch falls back to Black Lotus for anything unrecognized; only
+    // count it as a hit when the fixture actually matches what was asked for.
+    const matchesName = ident.name && card && card.name.toLowerCase() === ident.name.toLowerCase();
+    const matchesSetNum = ident.set && card
+      && card.set === ident.set && String(card.collector_number) === String(ident.collector_number);
+    if (matchesName || matchesSetNum) data.push(card); else not_found.push(ident);
+  }
+  return { data: { object: 'list', data, not_found } };
+};
 
 axios.Axios.prototype.get = async function(url, config) {
   const fullUrl = (this.defaults.baseURL || '') + url;
@@ -97,6 +136,8 @@ axios.Axios.prototype.get = async function(url, config) {
     return {
       data: {
         object: 'list',
+        total_cards: 1,
+        has_more: false,
         data: [
           {
             id,

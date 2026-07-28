@@ -61,6 +61,8 @@ The demo runs the real frontend against baked-in sample data (no backend) so you
   - **Binders**: Maps by Binder Name, Page Number, and Slot (1-9). Features a double-page book view with 3D page-flip animations and multi-card slot stacking.
   - **Storage Boxes**: Maps by Box Name, Row ID/Letter, and Divider Section.
 - **Deck Checkout & Check-In**: Reserve the physical cards for a deck and find them fast. Checking a deck out "for play" opens a locator that groups every card by **container → page → slot** and highlights each one in its compartment grid; while checked out, those cards are greyed and badged **In Play** in Storage. Checking the deck back in reverses the flow, guiding each card back to its slot. Select-all by page, container, or the whole deck.
+- **Manual Search & Bulk Add**: Search by name, set, or collector number across both games. Browse an entire set with paging (30–250 per page) and a real match count, with set-code autocomplete over every known set. Cards you already own are badged with their quantity so a set browse doesn't invite duplicates. Long-press or **Select** to multi-select — shift-click grabs everything in between — then add the whole selection in one action.
+- **Rapid Add**: Pin a set, type a collector number, press Enter. The card goes straight in and the field stays focused for the next one, with a running receipt and per-card undo. Entering a set plus a number opens Quick Add directly, since that identifies exactly one card.
 - **Universal Database Exports**: One-click downloads of your complete database in CSV (TCGplayer format compatible) or JSON.
 - **Multi-User Auth**: Session-token authentication (opaque random tokens stored in a server-side `sessions` table, sent as a `Bearer` header) with admin controls for managing users and roles.
 - **100% Self-Hostable & Portable**: Single-container Docker build with a local SQLite database that mounts to a persistent volume.
@@ -234,7 +236,7 @@ Prefer to build locally? Clone the repo — its [`docker-compose.yml`](docker-co
 ### Environment variables (`.env`)
 You can configure Bindarr by passing these environment variables in your container configuration:
 - `PORT` (Default: `3001`) - The port the server runs on.
-- `DB_PATH` (Default: `/app/database/pokemon_cards.db`) - Location of the SQLite database.
+- `DB_PATH` (Default: `/app/database/bindarr.db`) - Location of the SQLite database.
 - `POKEMON_TCG_API_KEY` (Optional) - Your free API key from the [Pokémon TCG developer portal](https://dev.pokemontcg.io/). While Bindarr works without one, a key raises the rate limit from 1,000 requests/day (and 30/minute) to 20,000/day. Note: `pokemontcg.io` now redirects to Scrydex, the team's paid successor API. The free v2 API Bindarr uses is still live and keys are still issued at `dev.pokemontcg.io`; Bindarr does not use Scrydex.
 - `DEFAULT_ADMIN_PASSWORD` (Optional) - Sets a known password for the auto-created `admin` account on first startup. If unset, a random password is generated and printed once to the server logs (see [First-Time Sign In](#first-time-sign-in)).
 - `PUBLIC_BASE_URL` (Optional) - Externally-reachable URL when running behind a reverse proxy, e.g. `https://cards.example.com`. Used to build collection share links, and its origin is automatically added to the CORS allow-list, so setting this alone is enough for logins through the proxy. Also editable from the Admin panel. (`localhost` and private-LAN origins are always allowed regardless. To whitelist *additional* public origins, set `CORS_ORIGIN` to a comma-separated list.)
@@ -286,11 +288,13 @@ These download every card image and are **heavy**: several hours of CPU + downlo
 
 ## Backup, Restore & Recovery
 
+> **Renamed in v1.5.0.** The database file is now `bindarr.db`; it was `pokemon_cards.db`, left over from when the project was Pokémon-only. Upgrades migrate automatically: on first start the old file is renamed (along with its `-wal`/`-shm` sidecars) if no `bindarr.db` exists yet. Nothing to do by hand, and no data is touched if both files are present. If you pinned `DB_PATH` to the old filename it keeps working unchanged — update it when convenient. Existing `pokemon_cards.*.bak` backups still list and restore normally.
+
 **Backup.** All state lives in the single SQLite file (the `bindarr-data` volume in Docker, or `DB_PATH` locally). Two options:
-- **File-level:** copy the DB file while the container is stopped, e.g. `docker run --rm -v bindarr-data:/data -v "$PWD":/backup alpine cp /data/pokemon_cards.db /backup/`. (The app runs in WAL mode; stop the container first so the `-wal`/`-shm` files are checkpointed.)
+- **File-level:** copy the DB file while the container is stopped, e.g. `docker run --rm -v bindarr-data:/data -v "$PWD":/backup alpine cp /data/bindarr.db /backup/`. (The app runs in WAL mode; stop the container first so the `-wal`/`-shm` files are checkpointed.)
 - **Per-user data:** each user can also export their own collection from the app as CSV or JSON (Collection → Export). This is portable to other trackers but does not include other users or app settings.
 
-**Restore.** Stop the container, drop the backed-up `pokemon_cards.db` into the volume, start again. Or use the in-app Import (CSV/JSON) to restore a single user's collection.
+**Restore.** Stop the container, drop the backed-up `bindarr.db` into the volume, start again. Or use the in-app Import (CSV/JSON) to restore a single user's collection.
 
 **Lost admin password.** The initial `admin` password is printed once, on the run that first creates the database. If you lose it and did not set `DEFAULT_ADMIN_PASSWORD`, either set that variable and recreate the database, or delete the DB file so a fresh admin is generated on next startup. There is no self-service password reset.
 

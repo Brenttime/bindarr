@@ -374,17 +374,36 @@ router.get('/stats/history', async (req, res) => {
   }
 });
 
-// Supported chart windows. Maps a range key to its length in days; anything
-// unrecognized (e.g. 'all') returns the full recorded history.
-const PRICE_HISTORY_RANGES = { '1m': 30, '1y': 365, '5y': 1825 };
+// Two windows, because two is all anyone can actually fill:
+//   30d — Cardmarket publishes real rolling averages (avg30/avg7/avg1) that give
+//         a genuine month of trend for free, per request, with no storage.
+//   all — everything Bindarr has recorded itself.
+// 1y/5y are gone. No card API sells back-history: Scryfall returns only current
+// prices (usd/eur/tix, no historical field at all), so a 5-year MTG chart could
+// never be anything but the same line as the 30-day one.
+const PRICE_HISTORY_RANGES = { '30d': 30 };
+
+// Cardmarket's rolling averages, as real dated points. avg30 is the mean of the
+// last 30 days, so it is plotted at the middle of that span, not its start —
+// plotting a 30-day MEAN at "30 days ago" would misread as the price on that
+// day. Same for avg7. avg1 is yesterday's average.
+function marketAnchors(card, now) {
+  const pts = [];
+  if (!card) return pts;
+  if (card.price_avg30 > 0) pts.push({ price: card.price_avg30, time: now - 15 * 86400000, source: 'market' });
+  if (card.price_avg7 > 0) pts.push({ price: card.price_avg7, time: now - 3.5 * 86400000, source: 'market' });
+  if (card.price_avg1 > 0) pts.push({ price: card.price_avg1, time: now - 86400000, source: 'market' });
+  if (card.price_trend > 0) pts.push({ price: card.price_trend, time: now, source: 'current' });
+  return pts;
+}
 
 // Get Card Price History
 router.get('/cards/:id/price-history', async (req, res) => {
   const { id } = req.params;
-  const rangeKey = String(req.query.range || '1y').toLowerCase();
+  const rangeKey = String(req.query.range || '30d').toLowerCase();
   const days = PRICE_HISTORY_RANGES[rangeKey]; // undefined => 'all'
   try {
-    let history = days
+    const recorded = days
       ? await db.all(`
           SELECT price, recorded_at
           FROM price_history
@@ -398,40 +417,53 @@ router.get('/cards/:id/price-history', async (req, res) => {
           ORDER BY recorded_at ASC
         `, [id]);
 
-    history = history.map(h => ({ price: h.price, recorded_at: h.recorded_at }));
-    const realCount = history.length;
+    const now = Date.now();
+    const points = recorded.map(h => ({
+      price: h.price,
+      time: parseSqliteUtc(h.recorded_at).getTime(),
+      source: 'recorded'
+    }));
+    const recordedCount = points.length;
 
-    // Fill in with real anchor points instead of fabricating a curve: the
-    // current price, plus Cardmarket's real avg7/avg30. Only meaningful on
-    // the 1-month window — on a 1y/5y timeline, a point 7 or 30 days back
-    // sits right on top of "now" and previously got added for every range
-    // (the `days >= 7`/`days >= 30` guards were always true for all three
-    // defined ranges), which is why every window looked the same.
-    const cacheCard = await db.get(`SELECT price_trend, price_avg1, price_avg7, price_avg30 FROM card_cache WHERE id = ?`, [id]);
-    if (cacheCard) {
-      const now = Date.now();
-      const nowPrice = cacheCard.price_avg1 > 0 ? cacheCard.price_avg1 : cacheCard.price_trend;
-      const anchors = [{ price: nowPrice, time: now }];
-      if (rangeKey === '1m') {
-        if (cacheCard.price_avg30 > 0) anchors.push({ price: cacheCard.price_avg30, time: now - 30 * 86400000 });
-        if (cacheCard.price_avg7 > 0) anchors.push({ price: cacheCard.price_avg7, time: now - 7 * 86400000 });
-      }
-      for (const a of anchors) {
-        if (a.price > 0) {
-          history.push({ price: a.price, recorded_at: new Date(a.time).toISOString() });
-        }
-      }
+    // Market averages only describe the last 30 days, so they belong on the
+    // 30-day window; on 'all' they would crowd the left edge of a longer line.
+    const anchors = rangeKey === '30d'
+      ? marketAnchors(await db.get(
+        `SELECT price_trend, price_avg1, price_avg7, price_avg30 FROM card_cache WHERE id = ?`, [id]
+      ), now)
+      : [];
+    const marketCount = anchors.filter(a => a.source === 'market').length;
+    points.push(...anchors);
+
+    points.sort((a, b) => a.time - b.time);
+
+    // Collapse flat runs. The sweep used to write a row on every boot whether or
+    // not the price moved, so cards carry hundreds of identical snapshots. Only
+    // the ENDS of a flat stretch carry information — the interior points draw
+    // the same horizontal line. Keeping both ends preserves its true duration.
+    const data = [];
+    for (let i = 0; i < points.length; i++) {
+      const prev = points[i - 1];
+      const next = points[i + 1];
+      if (prev && next && prev.price === points[i].price && next.price === points[i].price) continue;
+      data.push(points[i]);
     }
 
-    history.sort((a, b) => parseSqliteUtc(a.recorded_at) - parseSqliteUtc(b.recorded_at));
+    const times = points.map(p => p.time);
+    const spanDays = times.length >= 2
+      ? Math.round((Math.max(...times) - Math.min(...times)) / 86400000)
+      : 0;
 
-    // 1y/5y have no real historical price source beyond this app's own
-    // weekly-cadence price_history table (see Dashboard's change1y/5y, which
-    // is marked unavailable rather than faked for the same reason) — flag it
-    // instead of rendering a near-identical current-price-only line.
-    const insufficientHistory = (rangeKey === '1y' || rangeKey === '5y') && realCount < 2;
-
-    res.json({ data: history, insufficientHistory });
+    res.json({
+      data: data.map(p => ({ price: p.price, recorded_at: new Date(p.time).toISOString(), source: p.source })),
+      // What the line is actually made of, so the UI can say so rather than
+      // implying Bindarr knows more than it does.
+      marketCount,
+      recordedCount,
+      insufficientHistory: data.length < 2,
+      spanDays,
+      windowDays: days ?? null
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to retrieve price history' });

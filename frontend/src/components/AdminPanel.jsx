@@ -872,7 +872,7 @@ function AdminPanel({ showToast }) {
             </button>
           </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: 0, lineHeight: 1.4 }}>
-            Writes a consistent snapshot of the entire database (users, collections, tags, decks, storage, settings) to a file on the server. The newest {10} are kept. Download one to keep it off-server. To restore: stop the server, replace <code>pokemon_cards.db</code> with a backup file, and restart.
+            Writes a consistent snapshot of the entire database (users, collections, tags, decks, storage, settings) to a file on the server. The newest {10} are kept. Download one to keep it off-server. To restore: stop the server, replace <code>bindarr.db</code> with a backup file, and restart.
           </p>
 
           {backups.length === 0 ? (
