@@ -6,6 +6,9 @@ on:
     tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
+  # Lets a tag be rebuilt/re-tagged without moving the git tag (run this
+  # workflow against a v* ref to republish its image tags).
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -64,8 +67,16 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # `latest` follows the newest RELEASE, not main. The README tells
+          # self-hosters to run :latest, and main can contain unreleased work —
+          # gating it on refs/heads/main silently handed them untagged code.
+          # It also meant `latest` and the version numbers were applied by two
+          # separate runs (main push, then tag push), so they landed on two
+          # different digests and never appeared together in the registry.
+          # Main now publishes `edge` for anyone who wants to track it.
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short

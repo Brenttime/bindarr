@@ -233,6 +233,15 @@ Prefer containers, or want it running as a restart-on-boot background service? B
 
 Prefer to build locally? Clone the repo — its [`docker-compose.yml`](docker-compose.yml) uses `build:` instead of `image:` — then run `docker compose up -d`.
 
+### Image tags
+
+| Tag | Points at |
+| --- | --- |
+| `latest` | the newest release — use this unless you have a reason not to |
+| `1.5`, `1.5.1` | a specific release; pin these if you want to control upgrades |
+| `edge` | the newest `main` commit, including unreleased work |
+| `sha-<short>` | one exact commit |
+
 ### Environment variables (`.env`)
 You can configure Bindarr by passing these environment variables in your container configuration:
 - `PORT` (Default: `3001`) - The port the server runs on.
