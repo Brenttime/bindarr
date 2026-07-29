@@ -11,7 +11,40 @@
 const { createRequire } = require('node:module');
 const path = require('node:path');
 
-const appBackend = path.join(path.dirname(process.execPath), 'app', 'backend');
-process.chdir(appBackend); // dotenv reads ./.env, sqlite writes are cwd-relative
-const req = createRequire(path.join(appBackend, 'launch-anchor.js'));
-req(path.join(appBackend, 'src', 'server.js'));
+// Double-clicked from Explorer, the console window dies with the process — so a
+// startup crash showed as a window that "opens and closes really quick" with no
+// clue what went wrong. Print the error and wait for a keypress instead.
+function fatal(err) {
+  console.error('\nBindarr could not start.\n');
+  console.error(err && err.stack ? err.stack : String(err));
+  if (err && err.code === 'MODULE_NOT_FOUND') {
+    console.error(
+      '\nA file the server needs is missing from this download. Please report this at\n' +
+      'https://github.com/thenotoriousJeremy/bindarr/issues with the text above.'
+    );
+  }
+  console.error('\nPress any key to close...');
+  try {
+    // Raw mode gives us a single keypress; falls through if stdin is not a TTY
+    // (piped/service), where exiting immediately is the right behaviour.
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.once('data', () => process.exit(1));
+      return;
+    }
+  } catch { /* not interactive — fall through */ }
+  process.exit(1);
+}
+
+process.on('uncaughtException', fatal);
+process.on('unhandledRejection', fatal);
+
+try {
+  const appBackend = path.join(path.dirname(process.execPath), 'app', 'backend');
+  process.chdir(appBackend); // dotenv reads ./.env, sqlite writes are cwd-relative
+  const req = createRequire(path.join(appBackend, 'launch-anchor.js'));
+  req(path.join(appBackend, 'src', 'server.js'));
+} catch (err) {
+  fatal(err);
+}

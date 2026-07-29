@@ -82,8 +82,37 @@ jobs:
           cp -r backend/src          "$ROOT/app/backend/src"
           cp -r backend/node_modules "$ROOT/app/backend/node_modules"
           cp    backend/package.json "$ROOT/app/backend/package.json"
+          # backend/src/utils/compartmentSort.js requires ../../../shared/*.json,
+          # which lands at app/shared here. Omitting it crashed the binary at
+          # startup with MODULE_NOT_FOUND before it could even listen.
+          cp -r shared               "$ROOT/app/shared"
           cp -r frontend/dist        "$ROOT/app/frontend/dist"
           cp    .env.example         "$ROOT/app/backend/.env.example"
+
+      # Boot the assembled tree for real. A packaged binary that cannot start is
+      # invisible to every other test in this repo — they all run from source,
+      # where ../../../shared resolves and node_modules is hoisted differently.
+      - name: Smoke test the packaged binary
+        run: |
+          ROOT=build/bindarr-server
+          ( cd "$ROOT" && ./${{ matrix.exe }} > boot.log 2>&1 & echo $! > pid )
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3001/api/health > /dev/null 2>&1; then
+              echo "Server answered /api/health."
+              kill "$(cat "$ROOT/pid")" 2>/dev/null || true
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$ROOT/pid")" 2>/dev/null; then
+              echo "::error::Packaged server exited before serving a request."
+              cat "$ROOT/boot.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "::error::Packaged server never answered /api/health."
+          cat "$ROOT/boot.log"
+          kill "$(cat "$ROOT/pid")" 2>/dev/null || true
+          exit 1
 
       - name: Write README
         run: |
