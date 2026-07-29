@@ -92,27 +92,37 @@ jobs:
       # Boot the assembled tree for real. A packaged binary that cannot start is
       # invisible to every other test in this repo — they all run from source,
       # where ../../../shared resolves and node_modules is hoisted differently.
+      #
+      # Runs against a COPY: starting the server creates a database (with a
+      # generated admin user) and a log beside the exe, and on Windows it holds
+      # those files open. Testing the tree we are about to ship would both
+      # package that database and break the archive step on a locked file.
       - name: Smoke test the packaged binary
         run: |
-          ROOT=build/bindarr-server
-          ( cd "$ROOT" && ./${{ matrix.exe }} > boot.log 2>&1 & echo $! > pid )
+          cp -r build/bindarr-server build/smoketest
+          cd build/smoketest
+          ./${{ matrix.exe }} > boot.log 2>&1 &
+          SRV=$!
+          ok=0
           for i in $(seq 1 60); do
             if curl -fsS http://localhost:3001/api/health > /dev/null 2>&1; then
               echo "Server answered /api/health."
-              kill "$(cat "$ROOT/pid")" 2>/dev/null || true
-              exit 0
+              ok=1
+              break
             fi
-            if ! kill -0 "$(cat "$ROOT/pid")" 2>/dev/null; then
+            # Died on startup — exactly the failure this step exists to catch.
+            if ! kill -0 "$SRV" 2>/dev/null; then
               echo "::error::Packaged server exited before serving a request."
-              cat "$ROOT/boot.log"
-              exit 1
+              break
             fi
             sleep 2
           done
-          echo "::error::Packaged server never answered /api/health."
-          cat "$ROOT/boot.log"
-          kill "$(cat "$ROOT/pid")" 2>/dev/null || true
-          exit 1
+          [ "$ok" = 1 ] || echo "::error::Packaged server never answered /api/health."
+          echo '--- server output ---'
+          cat boot.log || true
+          kill "$SRV" 2>/dev/null || true
+          wait "$SRV" 2>/dev/null || true
+          [ "$ok" = 1 ]
 
       - name: Write README
         run: |
