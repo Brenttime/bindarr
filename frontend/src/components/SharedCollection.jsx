@@ -7,6 +7,8 @@ import { PRINTINGS } from '../utils/cardOptions';
 import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
 import { useBackGuard } from '../utils/useBackGuard';
 import { sortCardsByOrder } from '../utils/cardSort';
+import { displayName } from '../utils/languages';
+import { useT } from '../utils/i18n';
 
 const COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
@@ -44,6 +46,7 @@ function typeColor(name, i) {
 }
 
 function SharedCollection({ shareToken }) {
+  const { t, locale } = useT();
   const getInitialList = () => new URLSearchParams(window.location.search).get('list') || 'collection';
 
   const [data, setData] = useState(null);
@@ -81,7 +84,7 @@ function SharedCollection({ shareToken }) {
         const response = await fetch(`/api/shared/${shareToken}?list=${listType}`);
         if (!response.ok) {
           const errData = await response.json();
-          throw new Error(errData.error || 'Failed to load shared collection.');
+          throw new Error(errData.error || t('shared.errLoad'));
         }
         setData(await response.json());
       } catch (err) {
@@ -92,7 +95,7 @@ function SharedCollection({ shareToken }) {
       }
     };
     fetchSharedData();
-  }, [shareToken, listType]);
+  }, [shareToken, listType, t]);
 
   const collection = useMemo(() => data?.collection || [], [data]);
   const shareLocations = data?.shareLocations;
@@ -155,14 +158,14 @@ function SharedCollection({ shareToken }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '80vh', padding: '1rem' }}>
         <div className="glass-panel" style={{ textAlign: 'center', maxWidth: '400px', width: '100%', padding: '2.5rem 1.5rem', border: '1px solid rgba(255, 71, 71, 0.2)' }}>
           <ShieldAlert size={48} style={{ color: 'var(--accent-red)', marginBottom: '1rem' }} />
-          <h2 style={{ color: 'var(--text-strong)', fontSize: '1.25rem', marginBottom: '0.5rem' }}>Collection Unavailable</h2>
+          <h2 style={{ color: 'var(--text-strong)', fontSize: '1.25rem', marginBottom: '0.5rem' }}>{t('shared.unavailable')}</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{error}</p>
           <a href="/" style={{
             display: 'inline-block', marginTop: '1.5rem', padding: '0.5rem 1.5rem',
             backgroundColor: 'var(--accent-red)', color: 'var(--text-strong)',
             textDecoration: 'none', fontWeight: 700, borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-accent)'
           }}>
-            Go to Bindarr
+            {t('shared.goToBindarr')}
           </a>
         </div>
       </div>
@@ -172,7 +175,7 @@ function SharedCollection({ shareToken }) {
   const { owner, stats } = data;
   const { summary, types, rarities, sets = [] } = stats;
 
-  const typeChartData = types.map((t, i) => ({ name: t.name, value: t.value, color: typeColor(t.name, i) }));
+  const typeChartData = types.map((entry, i) => ({ name: entry.name, value: entry.value, color: typeColor(entry.name, i) }));
   const rarityChartData = rarities.map((r, i) => ({ ...r, fill: COLORS[i % COLORS.length] }));
 
   const handleTabChange = (type) => {
@@ -183,26 +186,27 @@ function SharedCollection({ shareToken }) {
     window.history.pushState({ path: newUrl }, '', newUrl);
   };
 
-  const valueLabel = listType === 'wishlist' ? 'Est. Wishlist Value' : listType === 'trade' ? 'Est. Trade Value' : 'Est. Collection Value';
-  const qtyLabel = listType === 'wishlist' ? 'Total Cards Wanted' : listType === 'trade' ? 'Total Cards for Trade' : 'Total Cards Owned';
-  const listTitle = listType === 'trade' ? 'Trade Binder' : listType === 'wishlist' ? 'Wanted Wishlist' : 'Card Collection';
-  const listBlurb = listType === 'trade' ? 'Browse cards this collector is willing to trade.'
-    : listType === 'wishlist' ? 'View cards this collector is searching for.'
-    : "Browse this collector's catalog library.";
+  // Every label on this page changes with the list being shown, so the list kind
+  // is part of the key rather than three parallel ternaries.
+  const kind = ['collection', 'wishlist', 'trade'].includes(listType) ? listType : 'collection';
+  const valueLabel = t(`shared.${kind}.valueLabel`);
+  const qtyLabel = t(`shared.${kind}.qtyLabel`);
+  const listTitle = t(`shared.${kind}.title`);
+  const listBlurb = t(`shared.${kind}.blurb`);
 
   const donut = (chartData, title, colorKey) => (
     <div className="glass-panel">
       <h3 className="chart-title">{title}</h3>
       <div className="chart-container" style={{ height: '220px' }}>
         {chartData.length === 0 ? (
-          <div className="chart-empty">No data yet.</div>
+          <div className="chart-empty">{t('shared.noData')}</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie data={chartData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
                 {chartData.map((entry, i) => <Cell key={i} fill={entry[colorKey]} />)}
               </Pie>
-              <Tooltip contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }} itemStyle={{ color: 'var(--text-strong)' }} labelStyle={{ color: 'var(--text-strong)' }} formatter={(v) => [v, 'Cards']} />
+              <Tooltip contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }} itemStyle={{ color: 'var(--text-strong)' }} labelStyle={{ color: 'var(--text-strong)' }} formatter={(v) => [v, t('dash.cards')]} />
               <Legend verticalAlign="bottom" height={36} iconSize={10} style={{ fontSize: '0.75rem' }}
                 formatter={(value) => <span style={{ color: 'var(--text-secondary)' }}>{value}</span>} />
             </PieChart>
@@ -222,22 +226,22 @@ function SharedCollection({ shareToken }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
           <Sparkles size={14} style={{ color: 'var(--accent-yellow)' }} />
-          <span>Shared by <strong>{owner}</strong></span>
+          <span>{t('shared.sharedBy')} <strong>{owner}</strong></span>
         </div>
       </header>
 
       {/* Public Sub Navigation Tabs */}
       <div className="sub-nav-tabs" style={{ marginBottom: '1.5rem' }}>
-        {[['collection', 'Collection'], ['wishlist', 'Wishlist'], ['trade', 'Trade Binder']].map(([val, label]) => (
+        {['collection', 'wishlist', 'trade'].map((val) => (
           <button key={val} className={`sub-nav-tab ${listType === val ? 'active' : ''}`} onClick={() => handleTabChange(val)}>
-            {label}
+            {t(`shared.${val}.tab`)}
           </button>
         ))}
       </div>
 
       {/* Title block */}
       <div className="glass-panel" style={{ marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)' }}>{owner}&apos;s {listTitle}</h2>
+        <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)' }}>{t('shared.ownerTitle', { owner, list: listTitle })}</h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{listBlurb}</p>
       </div>
 
@@ -245,18 +249,18 @@ function SharedCollection({ shareToken }) {
       <div className="metrics-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="glass-panel metric-card">
           <div className="metric-header"><span>{valueLabel}</span><Trophy size={18} style={{ color: 'var(--accent-yellow)' }} /></div>
-          <div className="metric-value">${summary.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-          <div className="metric-footer">Based on current TCG Market values</div>
+          <div className="metric-value">${summary.totalValue.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="metric-footer">{t('shared.valueFooter')}</div>
         </div>
         <div className="glass-panel metric-card">
           <div className="metric-header"><span>{qtyLabel}</span><Library size={18} /></div>
           <div className="metric-value">{summary.totalCards}</div>
-          <div className="metric-footer">Total card quantity</div>
+          <div className="metric-footer">{t('shared.qtyFooter')}</div>
         </div>
         <div className="glass-panel metric-card">
-          <div className="metric-header"><span>Unique Cards</span><Compass size={18} /></div>
+          <div className="metric-header"><span>{t('shared.uniqueCards')}</span><Compass size={18} /></div>
           <div className="metric-value">{summary.uniqueCards}</div>
-          <div className="metric-footer">Distinct card entries</div>
+          <div className="metric-footer">{t('shared.uniqueFooter')}</div>
         </div>
       </div>
 
@@ -264,16 +268,16 @@ function SharedCollection({ shareToken }) {
       <div className="dashboard-details" style={{ marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div className="glass-panel">
-            <h3 className="chart-title">Value by Set</h3>
+            <h3 className="chart-title">{t('shared.valueBySet')}</h3>
             <div className="chart-container">
               {sets.length === 0 ? (
-                <div className="chart-empty">No set value data yet.</div>
+                <div className="chart-empty">{t('shared.noSetData')}</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={sets} layout="vertical" margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
                     <XAxis type="number" stroke="var(--text-secondary)" tickFormatter={(v) => `$${v}`} />
                     <YAxis dataKey="name" type="category" width={120} stroke="var(--text-secondary)" tickLine={false} axisLine={false} style={{ fontSize: '0.8rem' }} />
-                    <Tooltip contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }} itemStyle={{ color: 'var(--text-strong)' }} labelStyle={{ color: 'var(--text-strong)' }} formatter={(v) => [`$${v}`, 'Value']} />
+                    <Tooltip contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }} itemStyle={{ color: 'var(--text-strong)' }} labelStyle={{ color: 'var(--text-strong)' }} formatter={(v) => [`$${v}`, t('dash.value')]} />
                     <Bar dataKey="value" fill="var(--accent-red)" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -281,15 +285,15 @@ function SharedCollection({ shareToken }) {
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
-            {donut(typeChartData, 'Type Breakdown', 'color')}
-            {donut(rarityChartData, 'Rarity Distribution', 'fill')}
+            {donut(typeChartData, t('shared.typeBreakdown'), 'color')}
+            {donut(rarityChartData, t('dash.rarityDistribution'), 'fill')}
           </div>
         </div>
 
         {/* Top Valuable */}
         <div className="glass-panel" style={{ flex: 1 }}>
           <h3 className="chart-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Trophy size={18} style={{ color: 'var(--accent-yellow)' }} /> Top Valuable Cards
+            <Trophy size={18} style={{ color: 'var(--accent-yellow)' }} /> {t('dash.topValuable')}
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1.25rem' }}>
             {topValuable.map((card) => (
@@ -297,13 +301,13 @@ function SharedCollection({ shareToken }) {
                 style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', cursor: 'pointer' }}>
                 <img src={card.image_url} alt={card.name} style={{ width: '48px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '5px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }} />
                 <div style={{ flex: 1, overflow: 'hidden' }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.name}</div>
+                  <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName(card)}</div>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.set_name} • {card.rarity}</div>
                 </div>
                 <div style={{ fontWeight: 800, color: 'var(--accent-yellow)', fontSize: '0.9rem' }}>${formatPrice(card.price_trend)}</div>
               </div>
             ))}
-            {topValuable.length === 0 && <div className="chart-empty">No cards yet.</div>}
+            {topValuable.length === 0 && <div className="chart-empty">{t('shared.noCards')}</div>}
           </div>
         </div>
       </div>
@@ -312,33 +316,24 @@ function SharedCollection({ shareToken }) {
       <div className="glass-panel" style={{ marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div className="form-group" style={{ marginBottom: 0, flex: '1 1 220px' }}>
-            <label>Search</label>
+            <label>{t('shared.search')}</label>
             <div style={{ position: 'relative' }}>
-              <input type="text" className="input-control" placeholder="Search card name, set, number..."
+              <input type="text" className="input-control" placeholder={t('shared.searchPlaceholder')}
                 value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)} style={{ width: '100%', paddingLeft: '2.5rem' }} />
               <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
             </div>
           </div>
           <div className="form-group" style={{ marginBottom: 0, flex: '1 1 160px' }}>
-            <label>Sort By</label>
+            <label>{t('collection.sortBy')}</label>
             <select className="select-control" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-              <option value="added-newest">Recently Added</option>
-              <option value="name-asc">Name (A-Z)</option>
-              <option value="name-desc">Name (Z-A)</option>
-              <option value="price-desc">Value (High-Low)</option>
-              <option value="price-asc">Value (Low-High)</option>
-              <option value="qty-desc">Quantity (High-Low)</option>
-              <option value="set-asc">Set</option>
-              <option value="number-asc">Card Number</option>
-              <option value="type-asc">Type / Color</option>
-              <option value="rarity-desc">Rarity (High-Low)</option>
-              <option value="rarity-asc">Rarity (Low-High)</option>
-              <option value="language-asc">Language</option>
+              <option value="added-newest">{t('shared.sortRecent')}</option>
+              {['name-asc', 'name-desc', 'price-desc', 'price-asc', 'qty-desc', 'set-asc', 'number-asc', 'type-asc', 'rarity-desc', 'rarity-asc', 'language-asc']
+                .map(key => <option key={key} value={key}>{t(`collection.sort.${key}`)}</option>)}
             </select>
           </div>
           <button className={`btn ${showFilters ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setShowFilters(s => !s)}
             style={{ padding: '0.5rem 0.9rem', height: '40px', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}>
-            <SlidersHorizontal size={15} /> Filters
+            <SlidersHorizontal size={15} /> {t('collection.filters')}
           </button>
         </div>
 
@@ -346,23 +341,23 @@ function SharedCollection({ shareToken }) {
           <div style={{ marginTop: '1rem' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Type</label>
+                <label>{t('shared.type')}</label>
                 <select className="select-control" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-                  <option value="">All Types</option>
-                  {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  <option value="">{t('collection.allTypes')}</option>
+                  {uniqueTypes.map(type => <option key={type} value={type}>{type}</option>)}
                 </select>
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Rarity</label>
+                <label>{t('collection.fRarity')}</label>
                 <select className="select-control" value={rarityFilter} onChange={(e) => setRarityFilter(e.target.value)}>
-                  <option value="">All Rarities</option>
+                  <option value="">{t('collection.allRarities')}</option>
                   {uniqueRarities.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Printing</label>
+                <label>{t('card.printing')}</label>
                 <select className="select-control" value={printingFilter} onChange={(e) => setPrintingFilter(e.target.value)}>
-                  <option value="">All Printings</option>
+                  <option value="">{t('collection.allPrintings')}</option>
                   {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
@@ -371,7 +366,7 @@ function SharedCollection({ shareToken }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <input type="checkbox" id="stackCardsSharedOpt" checked={stackCards} onChange={(e) => setStackCards(e.target.checked)} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
                 <label htmlFor="stackCardsSharedOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)' }}>
-                  Stack duplicate cards
+                  {t('shared.stackDuplicates')}
                 </label>
               </div>
               {stackCards && (
@@ -379,13 +374,13 @@ function SharedCollection({ shareToken }) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     <input type="checkbox" id="stackByConditionSharedOpt" checked={stackByCondition} onChange={(e) => setStackByCondition(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                     <label htmlFor="stackByConditionSharedOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      Separate by condition
+                      {t('shared.separateByCondition')}
                     </label>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     <input type="checkbox" id="stackByPrintingSharedOpt" checked={stackByPrinting} onChange={(e) => setStackByPrinting(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                     <label htmlFor="stackByPrintingSharedOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      Separate by printing
+                      {t('shared.separateByPrinting')}
                     </label>
                   </div>
                 </>
@@ -398,7 +393,7 @@ function SharedCollection({ shareToken }) {
       {/* Card grid */}
       {processedCollection.length === 0 ? (
         <div className="glass-panel" style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-          No cards matched your filters.
+          {t('collection.noMatches')}
         </div>
       ) : (
         <div className="card-grid">
@@ -422,7 +417,7 @@ function SharedCollection({ shareToken }) {
                   )}
                 </div>
                 <div className="tcg-card-info">
-                  <div className="tcg-card-name">{card.name}</div>
+                  <div className="tcg-card-name">{displayName(card)}</div>
                   <div className="tcg-card-meta">
                     <span style={{ fontSize: '0.7rem' }}>{card.set_name} • #{card.number}</span>
                     <span className="tcg-card-price">${formatPrice(card.price_trend)}</span>
@@ -456,37 +451,37 @@ function SharedCollection({ shareToken }) {
             <div style={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: '1rem', justifyContent: 'center' }}>
               <div>
                 <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(234,179,8,0.1)', color: 'var(--accent-yellow)', border: '1px solid rgba(234,179,8,0.2)', display: 'inline-block', marginBottom: '0.5rem' }}>
-                  {activeCard.rarity || 'Common'}
+                  {activeCard.rarity || t('shared.rarityCommon')}
                 </span>
                 <h3 style={{ fontSize: '1.5rem', color: 'var(--text-strong)', lineHeight: 1.2 }}>{activeCard.name}</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{activeCard.set_name} • Card #{activeCard.number}</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{activeCard.set_name} • {t('shared.cardNumber', { number: activeCard.number })}</p>
               </div>
               <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '1rem', display: 'flex', gap: '2rem' }}>
                 <div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>EST. MARKET PRICE</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{t('shared.estMarketPrice')}</div>
                   <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--accent-yellow)' }}>${formatPrice(activeCard.price_trend)}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>QUANTITY</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{t('shared.quantity')}</div>
                   <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--text-strong)' }}>x{activeCard.quantity}</div>
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}><strong>Card Details:</strong></div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}><strong>{t('shared.cardDetails')}</strong></div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>Supertype:</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.supertype}</span>
-                  {activeCard.types.length > 0 && (<><span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>Types:</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.types.join(', ')}</span></>)}
-                  {activeCard.subtypes.length > 0 && (<><span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>Subtypes:</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.subtypes.join(', ')}</span></>)}
+                  <span style={{ color: 'var(--text-muted)' }}>{t('inspector.specSupertype')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.supertype}</span>
+                  {activeCard.types.length > 0 && (<><span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('shared.specTypes')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.types.join(', ')}</span></>)}
+                  {activeCard.subtypes.length > 0 && (<><span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('shared.specSubtypes')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.subtypes.join(', ')}</span></>)}
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>Condition:</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.condition}</span>
-                  <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>Printing:</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.printing}</span>
-                  <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>Language:</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.language}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.condition}</span>
+                  <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.printing}</span>
+                  <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.language}</span>
                 </div>
                 {shareLocations && activeCard.location && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', marginTop: '0.25rem' }}>
                     <MapPin size={13} style={{ color: 'var(--accent-red)' }} />
-                    <span style={{ color: 'var(--text-muted)' }}>Location:</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.location}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{t('inspector.locationLabel')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.location}</span>
                   </div>
                 )}
               </div>

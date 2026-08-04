@@ -5,7 +5,9 @@ import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '.
 import { formatPrice } from '../utils/formatPrice';
 import { typeCategory } from '../utils/cardSort';
 import { isBinderType } from '../utils/cardOptions';
+import { displayName } from '../utils/languages';
 import { useLongPress } from '../utils/useLongPress';
+import { useT } from '../utils/i18n';
 
 const infoChipStyle = { fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' };
 
@@ -139,6 +141,7 @@ function PrintingBadge({ printing }) {
 // Detail banner for the currently focused card. Shared by the box coverflow and
 // the binder grid so both surfaces describe a selection the same way.
 export function FocusedCardInfo({ card, slotNumber, moveSelect = null }) {
+  const { t } = useT();
   if (!card) return null;
   const isEmpty = !!card.__empty;
   const isDivider = !!card.__divider;
@@ -150,10 +153,10 @@ export function FocusedCardInfo({ card, slotNumber, moveSelect = null }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
           <div style={{ minWidth: 0 }}>
             <strong style={{ fontSize: '0.85rem' }}>
-              #{slotNumber || 1} | {isEmpty ? 'Empty Slot' : isDivider ? (card.label || 'Divider') : isGhost ? 'Recommended Spot' : card.name}
+              #{slotNumber || 1} | {isEmpty ? t('compartment.emptySlot') : isDivider ? (card.label || t('compartment.divider')) : isGhost ? t('compartment.recommendedSpot') : displayName(card)}
             </strong>
             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-              {isEmpty ? 'Available slot for storage' : isDivider ? 'Sorting category divider' : isGhost ? 'Ghost preview spot' : `${card.set_name || ''} ${card.number ? `• #${card.number}` : ''}`}
+              {isEmpty ? t('compartment.emptySlotHint') : isDivider ? t('compartment.dividerHint') : isGhost ? t('compartment.ghostHint') : `${card.set_name || ''} ${card.number ? `• #${card.number}` : ''}`}
             </div>
           </div>
           {moveSelect}
@@ -171,19 +174,19 @@ export function FocusedCardInfo({ card, slotNumber, moveSelect = null }) {
                 {getPrintingBadgeLabel(card.printing)}
               </span>
             )}
-            {card.printing === 'Normal' && <span style={infoChipStyle}>Normal</span>}
-            {card.supertype && <span style={{ ...infoChipStyle, color: 'var(--text-strong)' }} title="Supertype">{card.supertype}</span>}
-            {(card.types || []).length > 0 && <span style={infoChipStyle} title="Types">{card.types.join(' / ')}</span>}
-            {(card.subtypes || []).length > 0 && <span style={infoChipStyle} title="Subtypes">{card.subtypes.join(' / ')}</span>}
+            {card.printing === 'Normal' && <span style={infoChipStyle}>{t('compartment.printingNormal')}</span>}
+            {card.supertype && <span style={{ ...infoChipStyle, color: 'var(--text-strong)' }} title={t('compartment.supertype')}>{card.supertype}</span>}
+            {(card.types || []).length > 0 && <span style={infoChipStyle} title={t('compartment.types')}>{card.types.join(' / ')}</span>}
+            {(card.subtypes || []).length > 0 && <span style={infoChipStyle} title={t('compartment.subtypes')}>{card.subtypes.join(' / ')}</span>}
             {card.condition && <span style={infoChipStyle}>{card.condition}</span>}
             {card.language && card.language !== 'English' && <span style={infoChipStyle}>{card.language}</span>}
             {card.quantity > 1 && <span style={{ ...infoChipStyle, color: 'var(--text-strong)' }}>x{card.quantity}</span>}
             {card.price_trend > 0 && (
               <span style={{ ...infoChipStyle, color: 'var(--accent-yellow)', marginLeft: 'auto' }}>
-                Value ${formatPrice(card.price_trend)}
+                {t('compartment.value', { price: formatPrice(card.price_trend) })}
               </span>
             )}
-            {card.purchase_price > 0 && <span style={infoChipStyle}>Paid ${formatPrice(card.purchase_price)}</span>}
+            {card.purchase_price > 0 && <span style={infoChipStyle}>{t('compartment.paid', { price: formatPrice(card.purchase_price) })}</span>}
           </div>
         )}
       </div>
@@ -243,6 +246,7 @@ export default function CompartmentView({
   onPickCard = null,
   onPlaceSlot = null
 }) {
+  const { t } = useT();
   const isBinder = isBinderType(locationType);
   const isSelected = (entryId) => !!(selectedIds && selectedIds.has(entryId));
   const highlightSet = new Set(highlightEntryIds);
@@ -273,7 +277,7 @@ export default function CompartmentView({
       return rules.length;
     } catch (e) { return 0; }
   })();
-  const acceptsLabel = compRuleCount > 0 ? `Accepts (${compRuleCount})` : 'Accepts';
+  const acceptsLabel = compRuleCount > 0 ? t('compartment.acceptsCount', { count: compRuleCount }) : t('compartment.accepts');
 
   const recIdx = recommendedSpot ? recommendedSpot.index : -1;
   const cardsWithGhost = [...cards];
@@ -471,26 +475,26 @@ export default function CompartmentView({
                 style={{ padding: '0.15rem 0.4rem', fontSize: '0.75rem', width: '110px' }}
               />
             ) : (
-              <strong onDoubleClick={() => { setLabelDraft(compartment.label || ''); setEditingLabel(true); }} title="Double-click to rename" style={{ cursor: 'pointer', fontSize: '0.8rem' }}>
+              <strong onDoubleClick={() => { setLabelDraft(compartment.label || ''); setEditingLabel(true); }} title={t('compartment.renameHint')} style={{ cursor: 'pointer', fontSize: '0.8rem' }}>
                 {compartment.display_label}
               </strong>
             )}
             
             {(compartment.assignedFilters || []).length > 0 && (
-              <span title="Sorting categories filed to this page" style={{ fontSize: '0.55rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                {compartment.assignedFilters.length === 1 ? compartment.assignedFilters[0] : `${compartment.assignedFilters.length} cats`}
+              <span title={t('compartment.assignedCatsHint')} style={{ fontSize: '0.55rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                {compartment.assignedFilters.length === 1 ? compartment.assignedFilters[0] : t('compartment.catsCount', { count: compartment.assignedFilters.length })}
               </span>
             )}
 
             {onEditRules && (
-              <button type="button" className="btn btn-secondary" onClick={() => onEditRules(compartment)} title="Set which cards this page accepts" style={{ fontSize: '0.55rem', padding: '0.15rem 0.4rem', marginLeft: 'auto', ...(compRuleCount > 0 ? { borderColor: 'var(--accent-red)', color: 'var(--text-strong)' } : {}) }}>
+              <button type="button" className="btn btn-secondary" onClick={() => onEditRules(compartment)} title={t('compartment.acceptsHintPage')} style={{ fontSize: '0.55rem', padding: '0.15rem 0.4rem', marginLeft: 'auto', ...(compRuleCount > 0 ? { borderColor: 'var(--accent-red)', color: 'var(--text-strong)' } : {}) }}>
                 {acceptsLabel}
               </button>
             )}
 
             {onToggleLock && (
-              <button type="button" className="btn btn-secondary" onClick={onToggleLock} disabled={containerLocked} title={containerLocked ? 'Container is locked — every page is skipped by filing.' : compartment.locked ? 'Locked — filing skips this page. Click to unlock.' : 'Lock so filing skips this page'} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.55rem', padding: '0.15rem 0.4rem', opacity: containerLocked ? 0.5 : 1, ...((compartment.locked || containerLocked) ? { borderColor: 'var(--accent-yellow)', color: 'var(--accent-yellow)' } : {}) }}>
-                <Lock size={11} /> {compartment.locked ? 'Locked' : 'Lock'}
+              <button type="button" className="btn btn-secondary" onClick={onToggleLock} disabled={containerLocked} title={t(containerLocked ? 'compartment.lockContainer' : compartment.locked ? 'compartment.lockedHint' : 'compartment.lockHint')} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.55rem', padding: '0.15rem 0.4rem', opacity: containerLocked ? 0.5 : 1, ...((compartment.locked || containerLocked) ? { borderColor: 'var(--accent-yellow)', color: 'var(--accent-yellow)' } : {}) }}>
+                <Lock size={11} /> {t(compartment.locked ? 'compartment.locked' : 'compartment.lock')}
               </button>
             )}
 
@@ -501,14 +505,14 @@ export default function CompartmentView({
                   type="number" min="1" className="input-control" defaultValue={compartment.capacity}
                   onBlur={(e) => { const v = parseInt(e.target.value, 10); if (v > 0 && v !== compartment.capacity) onSetCapacity(v); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                  title="Change capacity"
+                  title={t('compartment.changeCapacity')}
                   style={{ width: '40px', padding: '0 0.1rem', fontSize: '0.65rem', background: 'transparent', border: '1px solid transparent', color: 'inherit', textAlign: 'left' }}
                 />
               </div>
             )}
             
             {canRemove && onRemove && (
-              <button type="button" className="btn btn-danger btn-icon-only" onClick={onRemove} title="Remove this page" style={{ width: '22px', height: '22px', padding: 0, marginLeft: 'auto' }}>
+              <button type="button" className="btn btn-danger btn-icon-only" onClick={onRemove} title={t('compartment.removePage')} style={{ width: '22px', height: '22px', padding: 0, marginLeft: 'auto' }}>
                 &times;
               </button>
             )}
@@ -596,7 +600,7 @@ export default function CompartmentView({
                     else setCurrentActiveId(card.entry_id);
                   }}
                 >
-                  <img src={card.image_url} alt={card.name} title={card.name} loading="lazy" decoding="async" />
+                  <img src={card.image_url} alt={displayName(card)} title={displayName(card)} loading="lazy" decoding="async" />
                   {getFoilOverlayClass(card.printing) && <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: '4px' }} />}
                   <PrintingBadge printing={card.printing} />
                   {(pullMode ? pulledSet.has(card.entry_id) : card.checked_out_qty > 0) && (
@@ -633,10 +637,10 @@ export default function CompartmentView({
                 >
                   <span className="slot-number">{pos}</span>
                   {isTarget && (
-                    <div style={{ color: 'var(--accent-green)', fontWeight: 'bold', fontSize: '0.8rem', marginTop: '0.5rem' }}>Pull</div>
+                    <div style={{ color: 'var(--accent-green)', fontWeight: 'bold', fontSize: '0.8rem', marginTop: '0.5rem' }}>{t('compartment.pull')}</div>
                   )}
                   {placementMode && pickedEntryId && !isTarget && (
-                    <div style={{ color: 'var(--accent-red)', fontWeight: 'bold', fontSize: '0.7rem', marginTop: '0.4rem' }}>Place</div>
+                    <div style={{ color: 'var(--accent-red)', fontWeight: 'bold', fontSize: '0.7rem', marginTop: '0.4rem' }}>{t('compartment.place')}</div>
                   )}
                 </div>
               );
@@ -655,7 +659,7 @@ export default function CompartmentView({
               onChange={(e) => { if (e.target.value) onMoveCard(activeCard.entry_id, parseInt(e.target.value, 10)); }}
               style={{ fontSize: '0.65rem', padding: '0.15rem 0.3rem', width: '110px', flexShrink: 0 }}
             >
-              <option value="">Move to...</option>
+              <option value="">{t('compartment.moveTo')}</option>
               {moveTargets.filter(t => t.id !== compartment.id).map(t => (
                 <option key={t.id} value={t.id}>{t.display_label}</option>
               ))}
@@ -791,23 +795,23 @@ export default function CompartmentView({
               />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <strong onDoubleClick={() => { setLabelDraft(compartment.label || ''); setEditingLabel(true); }} title="Double-click to rename" style={{ cursor: 'pointer', fontSize: '0.85rem' }}>
+                <strong onDoubleClick={() => { setLabelDraft(compartment.label || ''); setEditingLabel(true); }} title={t('compartment.renameHint')} style={{ cursor: 'pointer', fontSize: '0.85rem' }}>
                   {compartment.display_label}
                 </strong>
-                <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => { setLabelDraft(compartment.label || ''); setEditingLabel(true); }} style={{ padding: 0, width: '20px', height: '20px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Rename page/row">
+                <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => { setLabelDraft(compartment.label || ''); setEditingLabel(true); }} style={{ padding: 0, width: '20px', height: '20px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title={t('compartment.renamePageRow')}>
                   <Edit3 size={11} />
                 </button>
               </div>
             )}
             {onEditRules && (
-              <button type="button" className="btn btn-secondary" onClick={() => onEditRules(compartment)} title="Set which cards this row accepts" style={{ fontSize: '0.6rem', padding: '0.2rem 0.5rem', marginLeft: 'auto', ...(compRuleCount > 0 ? { borderColor: 'var(--accent-red)', color: 'var(--text-strong)' } : {}) }}>
+              <button type="button" className="btn btn-secondary" onClick={() => onEditRules(compartment)} title={t('compartment.acceptsHintRow')} style={{ fontSize: '0.6rem', padding: '0.2rem 0.5rem', marginLeft: 'auto', ...(compRuleCount > 0 ? { borderColor: 'var(--accent-red)', color: 'var(--text-strong)' } : {}) }}>
                 {acceptsLabel}
               </button>
             )}
 
             {onToggleLock && (
-              <button type="button" className="btn btn-secondary" onClick={onToggleLock} disabled={containerLocked} title={containerLocked ? 'Container is locked — every row is skipped by filing.' : compartment.locked ? 'Locked — filing skips this row. Click to unlock.' : 'Lock so filing skips this row'} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.6rem', padding: '0.2rem 0.5rem', opacity: containerLocked ? 0.5 : 1, ...((compartment.locked || containerLocked) ? { borderColor: 'var(--accent-yellow)', color: 'var(--accent-yellow)' } : {}) }}>
-                <Lock size={12} /> {compartment.locked ? 'Locked' : 'Lock'}
+              <button type="button" className="btn btn-secondary" onClick={onToggleLock} disabled={containerLocked} title={t(containerLocked ? 'compartment.lockContainerRow' : compartment.locked ? 'compartment.lockedHintRow' : 'compartment.lockHintRow')} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.6rem', padding: '0.2rem 0.5rem', opacity: containerLocked ? 0.5 : 1, ...((compartment.locked || containerLocked) ? { borderColor: 'var(--accent-yellow)', color: 'var(--accent-yellow)' } : {}) }}>
+                <Lock size={12} /> {t(compartment.locked ? 'compartment.locked' : 'compartment.lock')}
               </button>
             )}
           </div>
@@ -815,7 +819,7 @@ export default function CompartmentView({
 
         {renderedCards.length === 0 ? (
           <div className="glass-panel" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.8rem' }}>
-            Empty row.
+            {t('compartment.emptyRow')}
           </div>
         ) : (
           <>
@@ -883,7 +887,7 @@ export default function CompartmentView({
                       <div style={{ width: '100%', height: '100%', background: 'rgba(0,0,0,0.3)', border: '2px dashed rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', borderRadius: '5px' }}>
                         <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.8rem', fontWeight: 'bold' }}>Slot {card.__slotNumber}</span>
                         {isTarget && (
-                          <div style={{ color: 'var(--accent-green)', fontWeight: 'bold', fontSize: '1rem', marginTop: '0.5rem' }}>Pull</div>
+                          <div style={{ color: 'var(--accent-green)', fontWeight: 'bold', fontSize: '1rem', marginTop: '0.5rem' }}>{t('compartment.pull')}</div>
                         )}
                       </div>
                     </div>
@@ -991,7 +995,7 @@ export default function CompartmentView({
                 onChange={(e) => { if (e.target.value) onMoveCard(activeCard.entry_id, parseInt(e.target.value, 10)); }}
                 style={{ fontSize: '0.65rem', padding: '0.15rem 0.3rem', width: '110px', flexShrink: 0 }}
               >
-                <option value="">Move to...</option>
+                <option value="">{t('compartment.moveTo')}</option>
                 {moveTargets.filter(t => t.id !== compartment.id).map(t => (
                   <option key={t.id} value={t.id}>{t.display_label}</option>
                 ))}

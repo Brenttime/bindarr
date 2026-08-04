@@ -6,6 +6,8 @@ import { translateJapaneseName } from '../utils/langHelper';
 import CheckoutWizardModal from './CheckoutWizardModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { buildDeckExport, parseDeckLine } from '../utils/deckText';
+import { defaultGame, gameOptions, showGamePicker } from '../utils/games';
+import { useT } from '../utils/i18n';
 
 // Basic Energy (Pokémon) & Basic Lands (MTG) are exempt from the "max 4 of a card" deck rule.
 const isBasicEnergyOrLand = (card, game = 'pokemon') => {
@@ -22,7 +24,15 @@ const isBasicEnergyOrLand = (card, game = 'pokemon') => {
 const deckCountByName = (deckCards, name) =>
   (deckCards || []).filter(c => c.name === name).reduce((s, c) => s + c.quantity, 0);
 
+// What a new deck starts as for a game. Pulled out because it is now needed in
+// three places: the two Game System buttons and the initial state, which has to
+// match the game the picker opens on (MTG, when Pokémon is hidden in Settings).
+const newDeckDefaults = (game) => (game === 'mtg'
+  ? { format: 'Commander / EDH', targetSize: 100 }
+  : { format: 'Standard', targetSize: 60 });
+
 function DeckBuilder({ showToast }) {
+  const { t } = useT();
   const [decks, setDecks] = useState([]);
   const [activeDeck, setActiveDeck] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -50,11 +60,11 @@ function DeckBuilder({ showToast }) {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
   const [newDeckDesc, setNewDeckDesc] = useState('');
-  const [newDeckGame, setNewDeckGame] = useState('pokemon'); // 'pokemon' | 'mtg'
-  const [newDeckFormat, setNewDeckFormat] = useState('Standard');
+  const [newDeckGame, setNewDeckGame] = useState(() => defaultGame()); // 'pokemon' | 'mtg'
+  const [newDeckFormat, setNewDeckFormat] = useState(() => newDeckDefaults(defaultGame()).format);
   const [newDeckCategory, setNewDeckCategory] = useState('Competitive');
   const [newDeckAccentColor, setNewDeckAccentColor] = useState('#eab308');
-  const [newDeckTargetSize, setNewDeckTargetSize] = useState(60);
+  const [newDeckTargetSize, setNewDeckTargetSize] = useState(() => newDeckDefaults(defaultGame()).targetSize);
   const [newDeckImportText, setNewDeckImportText] = useState('');
   const [showImportDecklistArea, setShowImportDecklistArea] = useState(false);
   
@@ -62,11 +72,13 @@ function DeckBuilder({ showToast }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [deckSearchGame, setDeckSearchGame] = useState('pokemon'); // 'pokemon' | 'mtg'
+  const [deckSearchGame, setDeckSearchGame] = useState(() => defaultGame()); // 'pokemon' | 'mtg'
 
   // Deck Selection Menu Controls
   const [deckSearchTerm, setDeckSearchTerm] = useState('');
-  const [deckGameFilter, setDeckGameFilter] = useState('all'); // 'all' | 'pokemon' | 'mtg'
+  // 'all' | 'pokemon' | 'mtg'. With one game hidden, 'all' would show its decks
+  // anyway, so open scoped to the visible game instead.
+  const [deckGameFilter, setDeckGameFilter] = useState(() => (showGamePicker() ? 'all' : defaultGame()));
   const [deckStatusFilter, setDeckStatusFilter] = useState('all'); // 'all' | 'ready' | 'in_progress' | 'in_play'
   const [deckSortBy, setDeckSortBy] = useState('created_desc'); // 'created_desc' | 'created_asc' | 'name_asc' | 'cards_desc'
   const [deckSelectionViewMode, setDeckSelectionViewMode] = useState('table'); // 'grid' | 'table'
@@ -117,7 +129,7 @@ function DeckBuilder({ showToast }) {
       }
     } catch (err) {
       console.error(err);
-      showToast('Error loading decks.');
+      showToast(t('deck.errLoadDecks'));
     } finally {
       setLoading(false);
     }
@@ -144,24 +156,24 @@ function DeckBuilder({ showToast }) {
       });
 
       if (response.ok) {
-        showToast('Deck created successfully!');
+        showToast(t('deck.created'));
         setNewDeckName('');
         setNewDeckDesc('');
-        setNewDeckGame('pokemon');
-        setNewDeckFormat('Standard');
+        setNewDeckGame(defaultGame());
+        setNewDeckFormat(newDeckDefaults(defaultGame()).format);
         setNewDeckCategory('Competitive');
         setNewDeckAccentColor('#eab308');
-        setNewDeckTargetSize(60);
+        setNewDeckTargetSize(newDeckDefaults(defaultGame()).targetSize);
         setNewDeckImportText('');
         setShowImportDecklistArea(false);
         setShowCreateModal(false);
         fetchDecks();
       } else {
-        showToast('Failed to create deck.');
+        showToast(t('deck.errCreate'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error creating deck.');
+      showToast(t('deck.errCreateGeneric'));
     }
   };
 
@@ -180,7 +192,7 @@ function DeckBuilder({ showToast }) {
       }
     } catch (err) {
       console.error(err);
-      showToast('Error loading deck details.');
+      showToast(t('deck.errLoadDetails'));
     } finally {
       setLoading(false);
     }
@@ -202,7 +214,7 @@ function DeckBuilder({ showToast }) {
       });
 
       if (response.ok) {
-        showToast(`Added ${card.name} to deck`);
+        showToast(t('deck.addedCard', { name: card.name }));
         // Refresh details locally
         await loadDeckDetails(activeDeck.id);
       } else {
@@ -211,7 +223,7 @@ function DeckBuilder({ showToast }) {
       }
     } catch (err) {
       console.error(err);
-      showToast('Failed to add card.');
+      showToast(t('search.errAddCard'));
     } finally {
       setSavingCard(false);
     }
@@ -233,12 +245,12 @@ function DeckBuilder({ showToast }) {
     const card = activeDeck.cards.find(c => c.id === cardId);
     if (card && newQty > card.quantity) {
       if (newQty > (card.owned_qty || 0)) {
-        showToast(`You only own ${card.owned_qty} copies of ${card.name}.`);
+        showToast(t('deck.errOwnedLimit', { count: card.owned_qty, name: card.name }));
         return;
       }
       
       if (!isBasicEnergyOrLand(card, activeDeck.game) && deckCountByName(activeDeck.cards, card.name) >= 4) {
-        showToast(`Cannot have more than 4 copies of ${card.name}.`);
+        showToast(t('deck.errCopyLimit', { count: 4, name: card.name }));
         return;
       }
     }
@@ -254,11 +266,11 @@ function DeckBuilder({ showToast }) {
       if (response.ok) {
         await loadDeckDetails(activeDeck.id);
       } else {
-        showToast('Failed to update quantity.');
+        showToast(t('deck.errQuantity'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Failed to update quantity.');
+      showToast(t('deck.errQuantity'));
     } finally {
       setSavingCard(false);
     }
@@ -273,19 +285,19 @@ function DeckBuilder({ showToast }) {
       });
 
       if (response.ok) {
-        showToast('Card removed from deck');
+        showToast(t('deck.cardRemoved'));
         loadDeckDetails(activeDeck.id);
       } else {
-        showToast('Failed to remove card.');
+        showToast(t('loc.errRemoveCard'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Failed to remove card.');
+      showToast(t('loc.errRemoveCard'));
     }
   };
 
   const handleDeleteDeck = async (deckId, name) => {
-    if (!window.confirm(`Are you sure you want to delete deck "${name}"?`)) return;
+    if (!window.confirm(t('deck.confirmDelete', { name }))) return;
 
     try {
       const response = await fetch(`/api/decks/${deckId}`, {
@@ -293,12 +305,12 @@ function DeckBuilder({ showToast }) {
       });
 
       if (response.ok) {
-        showToast('Deck deleted.');
+        showToast(t('deck.deleted'));
         fetchDecks();
       }
     } catch (err) {
       console.error(err);
-      showToast('Error deleting deck.');
+      showToast(t('deck.errDelete'));
     }
   };
 
@@ -332,12 +344,12 @@ function DeckBuilder({ showToast }) {
           const data = await response.json();
           setSearchResults(data);
         } else {
-          showToast(response.status === 429 ? 'Rate limit reached. Try again shortly.' : 'Search failed.');
+          showToast(t(response.status === 429 ? 'deck.errRateLimit' : 'deck.errSearch'));
         }
       }
     } catch (err) {
       console.error(err);
-      showToast('Search failed.');
+      showToast(t('deck.errSearch'));
     } finally {
       setSearching(false);
     }
@@ -351,7 +363,7 @@ function DeckBuilder({ showToast }) {
       setCheckingOut(true);
       const res = await fetch(`/api/decks/${targetDeck.id}/checkout`, { method: 'PUT' });
       if (res.ok) {
-        showToast(`🎮 "${targetDeck.name}" is now checked out for play!`);
+        showToast(t('deck.checkedOut', { name: targetDeck.name }));
         if (activeDeck && activeDeck.id === targetDeck.id) {
           setActiveDeck(prev => ({ ...prev, checked_out: 1, checked_out_at: new Date().toISOString() }));
         }
@@ -368,14 +380,14 @@ function DeckBuilder({ showToast }) {
       } else {
         const errData = await res.json().catch(() => null);
         if (errData && errData.details && errData.details.length > 0) {
-          showToast(`Checkout Failed: ${errData.details[0]}${errData.details.length > 1 ? ` (+${errData.details.length - 1} more)` : ''}`);
+          showToast(t('deck.errCheckout', { detail: errData.details[0], extra: errData.details.length > 1 ? t('deck.andMore', { count: errData.details.length - 1 }) : '' }));
         } else {
           showToast(errData?.error || 'Failed to check out deck.');
         }
       }
     } catch (err) {
       console.error(err);
-      showToast('Error checking out deck.');
+      showToast(t('deck.errCheckoutGeneric'));
     } finally {
       setCheckingOut(false);
     }
@@ -393,7 +405,7 @@ function DeckBuilder({ showToast }) {
       const locData = locRes.ok ? await locRes.json() : null;
       const res = await fetch(`/api/decks/${targetDeck.id}/return`, { method: 'PUT' });
       if (res.ok) {
-        showToast(`📦 "${targetDeck.name}" returned to storage.`);
+        showToast(t('deck.returned', { name: targetDeck.name }));
         if (activeDeck && activeDeck.id === targetDeck.id) {
           setActiveDeck(prev => ({ ...prev, checked_out: 0, checked_out_at: null }));
         }
@@ -405,11 +417,11 @@ function DeckBuilder({ showToast }) {
           setShowCheckoutModal(true);
         }
       } else {
-        showToast('Failed to return deck.');
+        showToast(t('deck.errReturn'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error returning deck.');
+      showToast(t('deck.errReturnGeneric'));
     } finally {
       setCheckingOut(false);
     }
@@ -424,23 +436,23 @@ function DeckBuilder({ showToast }) {
     const undo = checkoutMode === 'checkout' ? 'return' : 'checkout';
     try {
       const res = await fetch(`/api/decks/${id}/${undo}`, { method: 'PUT' });
-      if (!res.ok) { showToast('Failed to undo.'); return; }
+      if (!res.ok) { showToast(t('deck.errUndo')); return; }
       if (activeDeck && activeDeck.id === id) {
         const back = checkoutMode === 'checkout';
         setActiveDeck(prev => ({ ...prev, checked_out: back ? 0 : 1, checked_out_at: back ? null : new Date().toISOString() }));
       }
       fetchDecks();
-      showToast(checkoutMode === 'checkout' ? 'Checkout canceled.' : 'Return canceled.');
+      showToast(t(checkoutMode === 'checkout' ? 'deck.checkoutCanceled' : 'deck.returnCanceled'));
     } catch (err) {
       console.error(err);
-      showToast('Failed to undo.');
+      showToast(t('deck.errUndo'));
     }
   };
 
   // --- DRAW SIMULATOR LOGIC ---
   const startSimulator = () => {
     if (!activeDeck || activeDeck.cards.length === 0) {
-      showToast('Add some cards to the deck first!');
+      showToast(t('deck.errEmptyDeck'));
       return;
     }
 
@@ -480,7 +492,7 @@ function DeckBuilder({ showToast }) {
     // Deck is laid out as [hand][prizes][rest]; hand grows by drawing from rest.
     const nextIndex = prizeCards.length + hand.length;
     if (nextIndex >= simulatorDeck.length) {
-      showToast('No cards left in the deck!');
+      showToast(t('deck.errNoCardsLeft'));
       return;
     }
     setHand([...hand, simulatorDeck[nextIndex]]);
@@ -497,8 +509,8 @@ function DeckBuilder({ showToast }) {
   const handleCopyExportText = () => {
     const text = handleExportDeckText();
     navigator.clipboard.writeText(text)
-      .then(() => showToast('Deck copied to clipboard!'))
-      .catch(() => showToast('Copy failed.'));
+      .then(() => showToast(t('deck.copied')))
+      .catch(() => showToast(t('deck.errCopy')));
   };
 
   // Copy the buylist and open TCGplayer Mass Entry — user pastes (their mass
@@ -506,11 +518,11 @@ function DeckBuilder({ showToast }) {
   // reliable path).
   const handleOpenMassEntry = () => {
     const text = buildDeckExport(activeDeck?.cards, 'buylist');
-    if (!text) { showToast('Nothing to buy — you own every card in this deck.'); return; }
+    if (!text) { showToast(t('deck.nothingToBuy')); return; }
     const line = (activeDeck?.game === 'mtg') ? 'Magic' : 'Pokemon';
     navigator.clipboard.writeText(text).catch(() => {});
     window.open(`https://www.tcgplayer.com/massentry?productline=${line}`, '_blank', 'noopener');
-    showToast('Buylist copied — paste it into TCGplayer Mass Entry.');
+    showToast(t('deck.buylistCopied'));
   };
 
   const handleCompareImport = async () => {
@@ -610,13 +622,13 @@ function DeckBuilder({ showToast }) {
     }
 
     if (addedCount > 0) {
-      showToast(`Imported ${addedCount} card species into deck!`);
+      showToast(t('deck.imported', { count: addedCount }));
       await loadDeckDetails(activeDeck.id);
       setImportText('');
       setImportComparison(null);
       setShowImportModal(false);
     } else {
-      showToast('No matching cards found in your collection.');
+      showToast(t('deck.errNoMatches'));
     }
   };
 
@@ -753,10 +765,10 @@ function DeckBuilder({ showToast }) {
             <div>
               <h2 style={{ fontSize: '1.4rem', color: 'var(--text-strong)', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                 <Layers size={22} style={{ color: 'var(--accent-yellow)' }} />
-                Deck Vault
+                {t('deck.vaultTitle')}
               </h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                Manage, construct, test, and check out your custom competitive decks.
+                {t('deck.vaultSubtitle')}
               </p>
             </div>
             <button 
@@ -764,7 +776,7 @@ function DeckBuilder({ showToast }) {
               onClick={() => setShowCreateModal(true)}
               style={{ padding: '0.6rem 1.25rem', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 14px rgba(234, 179, 8, 0.25)' }}
             >
-              <Plus size={18} /> Create New Deck
+              <Plus size={18} /> {t('deck.createDeck')}
             </button>
           </div>
 
@@ -778,7 +790,7 @@ function DeckBuilder({ showToast }) {
                 <input
                   type="text"
                   className="input-control"
-                  placeholder="Filter decks by name or description..."
+                  placeholder={t('deck.filterPlaceholder')}
                   value={deckSearchTerm}
                   onChange={e => setDeckSearchTerm(e.target.value)}
                   style={{ paddingLeft: '2.25rem', width: '100%', fontSize: '0.85rem' }}
@@ -794,12 +806,12 @@ function DeckBuilder({ showToast }) {
                 )}
               </div>
 
-              {/* Game Tabs */}
+              {/* Game Tabs — only the games Settings is showing. */}
+              {showGamePicker() && (
               <div className="sub-nav-tabs" style={{ margin: 0, background: 'rgba(0,0,0,0.25)', padding: '3px', borderRadius: 'var(--radius-sm)' }}>
                 {[
                   ['all', 'All Decks', totalDecksCount],
-                  ['pokemon', 'Pokémon', pokemonDecksCount],
-                  ['mtg', 'MTG', mtgDecksCount]
+                  ...gameOptions().map(g => [g.value, g.short, g.value === 'mtg' ? mtgDecksCount : pokemonDecksCount]),
                 ].map(([val, label, count]) => (
                   <button
                     key={val}
@@ -815,6 +827,7 @@ function DeckBuilder({ showToast }) {
                   </button>
                 ))}
               </div>
+              )}
 
             </div>
 
@@ -830,7 +843,7 @@ function DeckBuilder({ showToast }) {
                     onChange={e => setDeckStatusFilter(e.target.value)}
                     style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', height: 'auto' }}
                   >
-                    <option value="all">All Statuses</option>
+                    <option value="all">{t('deck.allStatuses')}</option>
                     <option value="ready">Battle Ready (60 Cards)</option>
                     <option value="in_progress">Building (&lt; 60 Cards)</option>
                     <option value="in_play">Currently In Play 🎮</option>
@@ -846,10 +859,10 @@ function DeckBuilder({ showToast }) {
                     onChange={e => setDeckSortBy(e.target.value)}
                     style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', height: 'auto' }}
                   >
-                    <option value="created_desc">Newest First</option>
-                    <option value="created_asc">Oldest First</option>
+                    <option value="created_desc">{t('deck.sortNewest')}</option>
+                    <option value="created_asc">{t('deck.sortOldest')}</option>
                     <option value="name_asc">Name (A-Z)</option>
-                    <option value="cards_desc">Most Cards</option>
+                    <option value="cards_desc">{t('deck.sortMostCards')}</option>
                   </select>
                 </div>
               </div>
@@ -861,7 +874,7 @@ function DeckBuilder({ showToast }) {
                   className={`btn ${deckSelectionViewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`}
                   style={{ padding: '0.25rem 0.55rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
                   onClick={() => setDeckSelectionViewMode('grid')}
-                  title="Grid view"
+                  title={t('deck.gridView')}
                 >
                   <LayoutGrid size={13} /> Grid
                 </button>
@@ -870,7 +883,7 @@ function DeckBuilder({ showToast }) {
                   className={`btn ${deckSelectionViewMode === 'table' ? 'btn-primary' : 'btn-secondary'}`}
                   style={{ padding: '0.25rem 0.55rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
                   onClick={() => setDeckSelectionViewMode('table')}
-                  title="Table view"
+                  title={t('deck.tableView')}
                 >
                   <List size={13} /> Table
                 </button>
@@ -885,15 +898,15 @@ function DeckBuilder({ showToast }) {
           ) : filteredDecks.length === 0 ? (
             <div className="glass-panel" style={{ textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--text-secondary)' }}>
               <Layers size={36} style={{ color: 'var(--text-muted)', marginBottom: '0.75rem', opacity: 0.5 }} />
-              <h3 style={{ color: 'var(--text-strong)', fontSize: '1.05rem', marginBottom: '0.25rem' }}>No decks match your filter</h3>
-              <p style={{ fontSize: '0.85rem' }}>Try adjusting your search query, game filter, or status filter.</p>
+              <h3 style={{ color: 'var(--text-strong)', fontSize: '1.05rem', marginBottom: '0.25rem' }}>{t('deck.noMatches')}</h3>
+              <p style={{ fontSize: '0.85rem' }}>{t('deck.noMatchesHint')}</p>
               {(deckSearchTerm || deckGameFilter !== 'all' || deckStatusFilter !== 'all') && (
                 <button
                   className="btn btn-secondary"
                   style={{ marginTop: '1rem', fontSize: '0.8rem' }}
                   onClick={() => { setDeckSearchTerm(''); setDeckGameFilter('all'); setDeckStatusFilter('all'); }}
                 >
-                  Clear Filters
+                  {t('deck.clearFilters')}
                 </button>
               )}
             </div>
@@ -965,7 +978,7 @@ function DeckBuilder({ showToast }) {
                         textTransform: 'uppercase'
                       }}>
                         <Gamepad2 size={12} />
-                        <span>Currently In Play</span>
+                        <span>{t('deck.inPlay')}</span>
                         {deck.checked_out_at && (
                           <span style={{ marginLeft: 'auto', opacity: 0.8, fontWeight: 600 }}>
                             since {new Date(deck.checked_out_at).toLocaleDateString()}
@@ -1040,7 +1053,7 @@ function DeckBuilder({ showToast }) {
                           border: isComplete ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(59, 130, 246, 0.3)',
                           whiteSpace: 'nowrap'
                         }}>
-                          {isComplete ? 'Ready' : 'Building'}
+                          {t(isComplete ? 'deck.statusReady' : 'deck.statusBuilding')}
                         </span>
                       </div>
 
@@ -1052,7 +1065,7 @@ function DeckBuilder({ showToast }) {
                     {/* Progress Bar & Details */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
-                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Card Capacity</span>
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{t('deck.cardCapacity')}</span>
                         <span style={{ color: isComplete ? '#4ade80' : 'var(--text-strong)', fontWeight: 700 }}>
                           {totalCards} / {targetSize} Cards ({percent}%)
                         </span>
@@ -1109,7 +1122,7 @@ function DeckBuilder({ showToast }) {
                           className="btn btn-danger btn-icon-only"
                           style={{ padding: '0.3rem' }}
                           onClick={(e) => { e.stopPropagation(); handleDeleteDeck(deck.id, deck.name); }}
-                          title="Delete Deck"
+                          title={t('deck.deleteDeck')}
                         >
                           <Trash2 size={12} />
                         </button>
@@ -1126,12 +1139,12 @@ function DeckBuilder({ showToast }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    <th style={{ padding: '0.75rem 1rem' }}>Game & Format</th>
-                    <th style={{ padding: '0.75rem 1rem' }}>Deck Name & Description</th>
-                    <th style={{ padding: '0.75rem 1rem' }}>Capacity</th>
-                    <th style={{ padding: '0.75rem 1rem' }}>Status</th>
-                    <th style={{ padding: '0.75rem 1rem' }}>Created</th>
-                    <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>Actions</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colGameFormat')}</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colNameDesc')}</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colCapacity')}</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>{t('admin.colStatus')}</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>{t('admin.colCreated')}</th>
+                    <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>{t('admin.colActions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1208,11 +1221,11 @@ function DeckBuilder({ showToast }) {
                             </span>
                           ) : isComplete ? (
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '10px', background: 'rgba(74, 222, 128, 0.15)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.3)' }}>
-                              Ready
+                              {t('deck.statusReady')}
                             </span>
                           ) : (
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '10px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', border: '1px solid var(--border-glass)' }}>
-                              Building
+                              {t('deck.statusBuilding')}
                             </span>
                           )}
                         </td>
@@ -1223,15 +1236,15 @@ function DeckBuilder({ showToast }) {
                           <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
                             {deck.checked_out ? (
                               <button className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: '#eab308' }} onClick={() => handleReturn(deck)} disabled={checkingOut}>
-                                Return
+                                {t('deck.return')}
                               </button>
                             ) : (
                               <button className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleCheckout(deck)} disabled={checkingOut}>
-                                Checkout
+                                {t('deck.checkout')}
                               </button>
                             )}
                             <button className="btn btn-primary" style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }} onClick={() => loadDeckDetails(deck.id)}>
-                              Open
+                              {t('deck.open')}
                             </button>
                             <button className="btn btn-danger btn-icon-only" style={{ padding: '0.25rem' }} onClick={() => handleDeleteDeck(deck.id, deck.name)}>
                               <Trash2 size={12} />
@@ -1310,7 +1323,7 @@ function DeckBuilder({ showToast }) {
                 className="btn btn-secondary"
                 onClick={() => setShowExportModal(true)}
                 style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                title="Export deck list as text"
+                title={t('deck.exportHint')}
               >
                 <Download size={14} /> Export
               </button>
@@ -1318,7 +1331,7 @@ function DeckBuilder({ showToast }) {
                 className="btn btn-secondary"
                 onClick={() => setShowImportModal(true)}
                 style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                title="Import cards from text"
+                title={t('deck.importHint')}
               >
                 <Upload size={14} /> Import
               </button>
@@ -1363,9 +1376,9 @@ function DeckBuilder({ showToast }) {
             }}>
               <span style={{ fontSize: '1.25rem' }}>🎮</span>
               <div>
-                <strong>This deck is currently checked out for play.</strong>
+                <strong>{t('deck.checkedOutBanner')}</strong>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                  These cards are physically out of storage. Click &quot;Return to Storage&quot; when you&apos;re done playing to mark them as back in storage.
+                  {t('deck.checkedOutHint')}
                 </div>
               </div>
             </div>
@@ -1380,35 +1393,37 @@ function DeckBuilder({ showToast }) {
                 {/* Search & Quick Add to Deck */}
                 <div className="glass-panel">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <h3 style={{ fontSize: '0.95rem', color: 'var(--text-strong)', margin: 0 }}>Add Cards to Deck</h3>
-                    <div className="sub-nav-tabs" style={{ margin: 0 }}>
-                      {[['pokemon', 'Pokémon'], ['mtg', 'MTG']].map(([val, label]) => (
-                        <button
-                          key={val}
-                          type="button"
-                          className={`sub-nav-tab ${deckSearchGame === val ? 'active' : ''}`}
-                          style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}
-                          onClick={() => setDeckSearchGame(val)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <h3 style={{ fontSize: '0.95rem', color: 'var(--text-strong)', margin: 0 }}>{t('deck.addCardsTitle')}</h3>
+                    {showGamePicker() && (
+                      <div className="sub-nav-tabs" style={{ margin: 0 }}>
+                        {gameOptions().map(({ value, short }) => (
+                          <button
+                            key={value}
+                            type="button"
+                            className={`sub-nav-tab ${deckSearchGame === value ? 'active' : ''}`}
+                            style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}
+                            onClick={() => setDeckSearchGame(value)}
+                          >
+                            {short}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <form onSubmit={handleSearchCards} style={{ display: 'flex', gap: '0.5rem' }}>
                     <input
                       type="text"
                       className="input-control"
-                      placeholder="Search card name (or click Browse)..."
+                      placeholder={t('deck.searchPlaceholder')}
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       style={{ flex: 1 }}
                     />
-                    <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 1rem' }} title="Search">
+                    <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 1rem' }} title={t('shared.search')}>
                       <Search size={16} />
                     </button>
-                    <button type="button" className="btn btn-secondary" onClick={(e) => handleSearchCards(e, true)} style={{ padding: '0.5rem 0.9rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }} title="Browse all owned cards in collection">
-                      Browse Collection
+                    <button type="button" className="btn btn-secondary" onClick={(e) => handleSearchCards(e, true)} style={{ padding: '0.5rem 0.9rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }} title={t('deck.browseHint')}>
+                      {t('deck.browseCollection')}
                     </button>
                   </form>
 
@@ -1435,7 +1450,7 @@ function DeckBuilder({ showToast }) {
                                 </div>
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                <button className="btn btn-secondary btn-icon-only" style={{ padding: '0.2rem' }} onClick={() => setPreviewCard(card)} title="Preview Card Art">
+                                <button className="btn btn-secondary btn-icon-only" style={{ padding: '0.2rem' }} onClick={() => setPreviewCard(card)} title={t('deck.previewArt')}>
                                   <Eye size={12} />
                                 </button>
                                 <button className="btn btn-primary btn-icon-only" style={{ padding: '0.2rem' }} disabled={disabledAdd} onClick={() => handleAddCardToDeck(card)} title={isAtRuleMax ? "4-copy limit reached" : isAtMaxOwned ? "Not enough owned copies" : "Add to deck"}>
@@ -1476,7 +1491,7 @@ function DeckBuilder({ showToast }) {
                   </div>
                   
                   {activeDeck.cards.length === 0 ? (
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>This deck is currently empty. Use the search bar above to add cards.</p>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>{t('deck.emptyDeck')}</p>
                   ) : (
                     GROUP_ORDER.map(supertype => {
                       const list = activeDeck.cards.filter(c => {
@@ -1512,7 +1527,7 @@ function DeckBuilder({ showToast }) {
                                         style={{ width: '22px', height: '22px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                         disabled={savingCard}
                                         onClick={() => handleUpdateCardQty(card.id, card.quantity - 1)}
-                                        title={card.quantity === 1 ? 'Remove from deck' : 'Decrease quantity'}
+                                        title={t(card.quantity === 1 ? 'deck.removeFromDeck' : 'deck.decreaseQty')}
                                       >
                                         {card.quantity === 1 ? <Trash2 size={11} /> : '-'}
                                       </button>
@@ -1545,7 +1560,7 @@ function DeckBuilder({ showToast }) {
                                   </div>
                                   <div style={{ padding: '4px', display: 'flex', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }}>
                                     <div style={{ display: 'flex', gap: '2px' }}>
-                                      <button className={`btn ${card.quantity === 1 ? 'btn-danger' : 'btn-secondary'} btn-icon-only`} style={{ width: '20px', height: '20px', fontSize: '0.7rem', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} disabled={savingCard} onClick={() => handleUpdateCardQty(card.id, card.quantity - 1)} title={card.quantity === 1 ? 'Remove from deck' : 'Decrease quantity'}>
+                                      <button className={`btn ${card.quantity === 1 ? 'btn-danger' : 'btn-secondary'} btn-icon-only`} style={{ width: '20px', height: '20px', fontSize: '0.7rem', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} disabled={savingCard} onClick={() => handleUpdateCardQty(card.id, card.quantity - 1)} title={t(card.quantity === 1 ? 'deck.removeFromDeck' : 'deck.decreaseQty')}>
                                         {card.quantity === 1 ? <Trash2 size={10} /> : '-'}
                                       </button>
                                       <button className="btn btn-secondary btn-icon-only" style={{ width: '20px', height: '20px', fontSize: '0.7rem', padding: 0 }} disabled={savingCard || card.quantity >= (card.owned_qty || 0) || (!isBasicEnergyOrLand(card, deckGame) && deckCountByName(activeDeck.cards, card.name) >= 4)} onClick={() => handleUpdateCardQty(card.id, card.quantity + 1)}>+</button>
@@ -1574,7 +1589,7 @@ function DeckBuilder({ showToast }) {
                     ) : (
                       <AlertTriangle size={15} style={{ color: 'var(--accent-yellow)' }} />
                     )}
-                    Deck Health & Rules
+                    {t('deck.healthTitle')}
                   </h3>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.8rem' }}>
@@ -1587,7 +1602,7 @@ function DeckBuilder({ showToast }) {
                       <strong style={{ color: 'var(--text-strong)' }}>{activeDeck.cards.length} {deckGame === 'mtg' ? 'titles' : 'species'}</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
-                      <span>{deckGame === 'mtg' ? 'Basic Lands Exemptions:' : 'Basic Energy Exemptions:'}</span>
+                      <span>{t(deckGame === 'mtg' ? 'deck.basicLands' : 'deck.basicEnergy')}</span>
                       <strong style={{ color: 'var(--accent-yellow)' }}>
                         {activeDeck.cards.filter(c => isBasicEnergyOrLand(c, deckGame)).reduce((s, c) => s + c.quantity, 0)} {deckGame === 'mtg' ? 'basic lands' : 'basic energy'}
                       </strong>
@@ -1656,7 +1671,7 @@ function DeckBuilder({ showToast }) {
                 {energyData.length > 0 && (
                   <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                     <h3 style={{ fontSize: '0.95rem', color: 'var(--text-strong)', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <BarChart2 size={14} style={{ color: 'var(--accent-yellow)' }} /> {deckGame === 'mtg' ? 'Color & Land Distribution' : 'Energy Type Distribution'}
+                      <BarChart2 size={14} style={{ color: 'var(--accent-yellow)' }} /> {t(deckGame === 'mtg' ? 'deck.colorLandDist' : 'dash.typeDistribution')}
                     </h3>
                     <div style={{ width: '100%', height: '220px' }}>
                       <ResponsiveContainer width="100%" height="100%">
@@ -1698,17 +1713,19 @@ function DeckBuilder({ showToast }) {
 
             <h3 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', fontWeight: 800, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <FolderPlus size={20} style={{ color: 'var(--accent-yellow)' }} />
-              Create New Deck
+              {t('deck.createTitle')}
             </h3>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
-              Set up a deck profile to start adding cards and simulating opening hands.
+              {t('deck.createSubtitle')}
             </p>
 
             <form onSubmit={handleCreateDeck} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem', maxHeight: '80vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
               
-              {/* Game System Selection */}
+              {/* Game System Selection — hidden when only one game is shown, in
+                  which case newDeckGame already holds it. */}
+              {showGamePicker() && (
               <div className="form-group">
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.4rem', display: 'block' }}>Game System</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.4rem', display: 'block' }}>{t('deck.gameSystem')}</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                   <div
                     onClick={() => {
@@ -1755,15 +1772,16 @@ function DeckBuilder({ showToast }) {
                   >
                     <Swords size={22} style={{ color: newDeckGame === 'mtg' ? '#ef4444' : 'var(--text-muted)' }} />
                     <span style={{ fontSize: '0.85rem', fontWeight: 700, color: newDeckGame === 'mtg' ? '#ef4444' : 'var(--text-secondary)' }}>Magic (MTG)</span>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Constructed / Commander</span>
+                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{t('deck.constructedCommander')}</span>
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Format & Target Size Row */}
               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.75rem' }}>
                 <div className="form-group">
-                  <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.3rem', display: 'block' }}>Format</label>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.3rem', display: 'block' }}>{t('deck.format')}</label>
                   <select
                     className="input-control"
                     value={newDeckFormat}
@@ -1782,7 +1800,7 @@ function DeckBuilder({ showToast }) {
                 </div>
 
                 <div className="form-group">
-                  <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.3rem', display: 'block' }}>Target Size</label>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.3rem', display: 'block' }}>{t('deck.targetSize')}</label>
                   <input
                     type="number"
                     min="1"
@@ -1797,11 +1815,11 @@ function DeckBuilder({ showToast }) {
 
               {/* Deck Name */}
               <div className="form-group">
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.3rem', display: 'block' }}>Deck Name</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.3rem', display: 'block' }}>{t('deck.deckName')}</label>
                 <input 
                   type="text" 
                   className="input-control" 
-                  placeholder="e.g. Charizard ex Engine or Atarka Red..." 
+                  placeholder={t('deck.namePlaceholder')} 
                   value={newDeckName} 
                   onChange={(e) => setNewDeckName(e.target.value)}
                   required 
@@ -1811,7 +1829,7 @@ function DeckBuilder({ showToast }) {
 
               {/* Category Pills */}
               <div className="form-group">
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.4rem', display: 'block' }}>Deck Category</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.4rem', display: 'block' }}>{t('deck.category')}</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                   {DECK_CATEGORIES.map(cat => {
                     const isSelected = newDeckCategory === cat;
@@ -1841,7 +1859,7 @@ function DeckBuilder({ showToast }) {
 
               {/* Deck Accent Color */}
               <div className="form-group">
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.4rem', display: 'block' }}>Vault Accent Color</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.4rem', display: 'block' }}>{t('deck.accentColor')}</label>
                 <div style={{ display: 'flex', itemsAlign: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   {DECK_ACCENT_COLORS.map(c => {
                     const isSelected = newDeckAccentColor === c.hex;
@@ -1873,7 +1891,7 @@ function DeckBuilder({ showToast }) {
                 <textarea
                   className="input-control"
                   style={{ minHeight: '65px', resize: 'vertical', fontSize: '0.85rem' }}
-                  placeholder="Strategy notes, engine ideas, or format details..."
+                  placeholder={t('deck.notesPlaceholder')}
                   value={newDeckDesc}
                   onChange={(e) => setNewDeckDesc(e.target.value)}
                 />
@@ -1911,15 +1929,15 @@ function DeckBuilder({ showToast }) {
                       onChange={(e) => setNewDeckImportText(e.target.value)}
                     />
                     <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.2rem' }}>
-                      Cards found in your catalog will be added automatically to this deck upon creation.
+                      {t('deck.importOnCreateHint')}
                     </span>
                   </div>
                 )}
               </div>
 
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowCreateModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 2, fontWeight: 700 }}>Create Deck</button>
+                <button type="button" className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowCreateModal(false)}>{t('common.cancel')}</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 2, fontWeight: 700 }}>{t('deck.createDeck')}</button>
               </div>
             </form>
           </div>
@@ -1935,7 +1953,7 @@ function DeckBuilder({ showToast }) {
             </button>
 
             <div>
-              <h3 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', margin: 0 }}>Opening Hand Simulator</h3>
+              <h3 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', margin: 0 }}>{t('deck.handSimulator')}</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
                 Test your deck consistency. Shuffled deck. Mulligan count: <strong style={{ color: 'var(--accent-red)' }}>{mulliganCount}</strong>. Hand size: <strong>{hand.length}</strong> cards.
               </p>
@@ -1955,7 +1973,7 @@ function DeckBuilder({ showToast }) {
               padding: '1.5rem' 
             }}>
               {hand.length === 0 ? (
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No cards drawn yet.</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{t('deck.noCardsDrawn')}</div>
               ) : (
                 hand.map((card, idx) => (
                   <div key={idx} style={{ 
@@ -1992,7 +2010,7 @@ function DeckBuilder({ showToast }) {
             {/* Control buttons */}
             <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <button className="btn btn-secondary" onClick={startSimulator} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                Reshuffle & Restart
+                {t('deck.reshuffle')}
               </button>
               <button 
                 className="btn btn-secondary" 
@@ -2008,7 +2026,7 @@ function DeckBuilder({ showToast }) {
                 style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
                 disabled={hand.length >= simulatorDeck.length}
               >
-                Draw 1 Card
+                {t('deck.drawOne')}
               </button>
             </div>
 
@@ -2033,8 +2051,8 @@ function DeckBuilder({ showToast }) {
             <button className="btn btn-secondary btn-icon-only" onClick={() => setShowExportModal(false)} style={{ position: 'absolute', top: '1rem', right: '1rem', borderRadius: '50%' }}>
               <X size={16} />
             </button>
-            <h3 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.5rem' }}>Export Decklist</h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Standard deck text format ready for sharing or PTCGO / MTGA import.</p>
+            <h3 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.5rem' }}>{t('deck.exportTitle')}</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>{t('deck.exportHintBody')}</p>
             <select
               className="input-control"
               style={{ width: '100%', marginBottom: '1rem', fontSize: '0.85rem' }}
@@ -2042,13 +2060,13 @@ function DeckBuilder({ showToast }) {
               onChange={e => setExportFormat(e.target.value)}
             >
               <option value="ptcgl">Pokémon TCG Live (grouped)</option>
-              <option value="mtga">MTG Arena</option>
+              <option value="mtga">{t('deck.formatMtga')}</option>
               <option value="plain">Plain text (qty + name)</option>
               <option value="buylist">Buylist – cards you still need</option>
             </select>
             {effectiveExportFormat === 'buylist' && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-0.5rem', marginBottom: '1rem' }}>
-                Only copies this deck needs beyond what you own. Paste into TCGplayer Mass Entry.
+                {t('deck.buylistHint')}
               </p>
             )}
             <textarea
@@ -2058,10 +2076,10 @@ function DeckBuilder({ showToast }) {
               value={handleExportDeckText()}
             />
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowExportModal(false)}>Close</button>
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleCopyExportText}>Copy to Clipboard</button>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowExportModal(false)}>{t('common.close')}</button>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleCopyExportText}>{t('deck.copyClipboard')}</button>
               {effectiveExportFormat === 'buylist' && (
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleOpenMassEntry}>Copy & Open TCGplayer</button>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleOpenMassEntry}>{t('deck.copyOpenTcg')}</button>
               )}
             </div>
           </div>
@@ -2075,7 +2093,7 @@ function DeckBuilder({ showToast }) {
             <button className="btn btn-secondary btn-icon-only" onClick={() => { setShowImportModal(false); setImportComparison(null); }} style={{ position: 'absolute', top: '1rem', right: '1rem', borderRadius: '50%' }}>
               <X size={16} />
             </button>
-            <h3 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.5rem' }}>Import & Compare with Collection</h3>
+            <h3 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.5rem' }}>{t('deck.importTitle')}</h3>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Paste decklist lines (e.g. <code>4 Pikachu</code> or <code>2 Lightning Energy</code>):</p>
             
             <textarea
@@ -2090,7 +2108,7 @@ function DeckBuilder({ showToast }) {
             {comparingImport ? (
               <div style={{ padding: '1.5rem', textAlign: 'center' }}>
                 <div className="spinner" style={{ margin: '0 auto 0.5rem auto' }}></div>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Comparing against your collection...</span>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t('deck.comparing')}</span>
               </div>
             ) : importComparison && (
               <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1, overflowY: 'auto' }}>
@@ -2125,11 +2143,11 @@ function DeckBuilder({ showToast }) {
             )}
 
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setShowImportModal(false); setImportComparison(null); }}>Cancel</button>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setShowImportModal(false); setImportComparison(null); }}>{t('common.cancel')}</button>
               {!importComparison ? (
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleCompareImport} disabled={!importText.trim()}>Compare with Collection</button>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleCompareImport} disabled={!importText.trim()}>{t('deck.compare')}</button>
               ) : (
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleImportDeck}>Import Matched Cards</button>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleImportDeck}>{t('deck.importMatched')}</button>
               )}
             </div>
           </div>

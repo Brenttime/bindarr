@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { User, Lock, ArrowRight, Eye, EyeOff, Server } from 'lucide-react';
 import { isNative, getServerUrl, setServerUrl } from '../apiBase';
+import { useT } from '../utils/i18n';
 import Logo from './Logo';
 
 function Login({ onLoginSuccess }) {
+  const { t } = useT();
   const [isRegister, setIsRegister] = useState(false);
   // Native app connects to the user's own self-hosted instance; web is same-origin.
   const [server, setServer] = useState(getServerUrl());
@@ -43,7 +45,7 @@ function Login({ onLoginSuccess }) {
     setError('');
 
     if (isNative && !server) {
-      setError('Enter your server URL first.');
+      setError(t('login.errServerFirst'));
       return;
     }
 
@@ -51,17 +53,17 @@ function Login({ onLoginSuccess }) {
 
     if (isRegister) {
       if (username.length < 3) {
-        setError('Username must be at least 3 characters.');
+        setError(t('login.errUsernameShort', { count: 3 }));
         setLoading(false);
         return;
       }
       if (password.length < 8) {
-        setError('Password must be at least 8 characters.');
+        setError(t('login.errPasswordShort', { count: 8 }));
         setLoading(false);
         return;
       }
       if (password !== confirmPassword) {
-        setError('Passwords do not match.');
+        setError(t('login.errPasswordMismatch'));
         setLoading(false);
         return;
       }
@@ -78,7 +80,7 @@ function Login({ onLoginSuccess }) {
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || 'Authentication failed');
+        throw new Error(data.error || t('login.errFailed'));
       }
 
       onLoginSuccess(data.token, data.user);
@@ -116,7 +118,7 @@ function Login({ onLoginSuccess }) {
             Bind<span style={{ color: 'var(--accent-red)' }}>arr</span>
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-            {isRegister ? 'Create your trainer account' : 'Access your personal card database'}
+            {t(isRegister ? 'login.taglineRegister' : 'login.taglineLogin')}
           </p>
         </div>
 
@@ -137,7 +139,7 @@ function Login({ onLoginSuccess }) {
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           {isNative && (
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="login-server" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Server URL</label>
+              <label htmlFor="login-server" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('login.serverUrl')}</label>
               <div style={{ position: 'relative' }}>
                 <input
                   id="login-server"
@@ -159,7 +161,7 @@ function Login({ onLoginSuccess }) {
           )}
 
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="login-username" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Username</label>
+            <label htmlFor="login-username" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('login.username')}</label>
             <div style={{ position: 'relative' }}>
               <input
                 id="login-username"
@@ -168,7 +170,7 @@ function Login({ onLoginSuccess }) {
                 autoComplete="username"
                 className="input-control"
                 style={{ width: '100%', paddingLeft: '2.5rem' }}
-                placeholder="Enter username"
+                placeholder={t('login.usernamePlaceholder')}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
@@ -179,7 +181,7 @@ function Login({ onLoginSuccess }) {
           </div>
 
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="login-password" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Password</label>
+            <label htmlFor="login-password" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('login.password')}</label>
             <div style={{ position: 'relative' }}>
               <input
                 id="login-password"
@@ -188,7 +190,7 @@ function Login({ onLoginSuccess }) {
                 autoComplete={isRegister ? 'new-password' : 'current-password'}
                 className="input-control"
                 style={{ width: '100%', paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
-                placeholder="Enter password"
+                placeholder={t('login.passwordPlaceholder')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -198,7 +200,7 @@ function Login({ onLoginSuccess }) {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-label={t(showPassword ? 'login.hidePassword' : 'login.showPassword')}
                 style={{
                   position: 'absolute',
                   right: '0.75rem',
@@ -220,7 +222,7 @@ function Login({ onLoginSuccess }) {
 
           {isRegister && (
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="login-confirm-password" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Confirm Password</label>
+              <label htmlFor="login-confirm-password" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('login.confirmPassword')}</label>
               <div style={{ position: 'relative' }}>
                 <input
                   id="login-confirm-password"
@@ -229,7 +231,7 @@ function Login({ onLoginSuccess }) {
                   autoComplete="new-password"
                   className="input-control"
                   style={{ width: '100%', paddingLeft: '2.5rem' }}
-                  placeholder="Re-enter password"
+                  placeholder={t('login.confirmPasswordPlaceholder')}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
@@ -259,7 +261,7 @@ function Login({ onLoginSuccess }) {
               <div className="spinner" style={{ width: '16px', height: '16px', margin: 0, borderWidth: '2px' }}></div>
             ) : (
               <>
-                <span>{isRegister ? 'Register' : 'Login'}</span>
+                <span>{t(isRegister ? 'login.register' : 'login.login')}</span>
                 <ArrowRight size={16} />
               </>
             )}
@@ -268,7 +270,7 @@ function Login({ onLoginSuccess }) {
 
         {registrationEnabled && (
           <div style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
+            {t(isRegister ? 'login.haveAccount' : 'login.noAccount')}{' '}
             <button
               onClick={() => {
                 setIsRegister(!isRegister);
@@ -287,7 +289,7 @@ function Login({ onLoginSuccess }) {
               }}
               disabled={loading}
             >
-              {isRegister ? 'Sign In' : 'Sign Up'}
+              {t(isRegister ? 'login.signIn' : 'login.signUp')}
             </button>
           </div>
         )}

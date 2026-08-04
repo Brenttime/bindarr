@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useT } from '../utils/i18n';
 
 // Distribute a total price paid (a pack/deck) across a set of collection
 // entries, setting each card's per-card purchase_price. The split math lives
@@ -6,26 +7,27 @@ import { useState } from 'react';
 // just the total input + method picker shared by the collection bulk bar and
 // the scanner's recent-scans panel.
 export default function PackPriceSplitter({ entryIds, onApplied, showToast, style }) {
+  const { t } = useT();
   const [total, setTotal] = useState('');
   const [method, setMethod] = useState('weighted');
   const [busy, setBusy] = useState(false);
 
   const apply = async () => {
-    const t = parseFloat(total);
-    if (!(t >= 0)) { showToast('Enter the total paid first.'); return; }
-    if (!entryIds.length) { showToast('No cards to split across.'); return; }
+    const amount = parseFloat(total);
+    if (!(amount >= 0)) { showToast(t('split.errNoTotal')); return; }
+    if (!entryIds.length) { showToast(t('split.errNoCards')); return; }
     setBusy(true);
     try {
       const res = await fetch('/api/collection/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entry_ids: entryIds, action: 'purchase_split', value: { total: t, method } }),
+        body: JSON.stringify({ entry_ids: entryIds, action: 'purchase_split', value: { total: amount, method } }),
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok) { showToast(d.message || 'Split applied.'); setTotal(''); onApplied?.(); }
-      else showToast(d.error || 'Split failed.');
+      if (res.ok) { showToast(d.message || t('split.applied')); setTotal(''); onApplied?.(); }
+      else showToast(d.error || t('split.failed'));
     } catch {
-      showToast('Error splitting price.');
+      showToast(t('split.error'));
     } finally {
       setBusy(false);
     }
@@ -33,7 +35,7 @@ export default function PackPriceSplitter({ entryIds, onApplied, showToast, styl
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', ...style }}>
-      <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Total paid $</span>
+      <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{t('split.totalPaid')} $</span>
       <input
         type="number" step="0.01" min="0" value={total}
         onChange={(e) => setTotal(e.target.value)}
@@ -44,13 +46,13 @@ export default function PackPriceSplitter({ entryIds, onApplied, showToast, styl
       <select
         className="select-control" value={method} onChange={(e) => setMethod(e.target.value)}
         style={{ fontSize: '0.72rem', padding: '0.3rem 0.4rem', maxWidth: '130px' }}
-        title="Weighted splits proportional to each card's market value; Equal splits evenly."
+        title={t('split.methodHint')}
       >
-        <option value="weighted">By value</option>
-        <option value="equal">Evenly</option>
+        <option value="weighted">{t('split.byValue')}</option>
+        <option value="equal">{t('split.evenly')}</option>
       </select>
       <button className="btn btn-primary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={busy || !entryIds.length} onClick={apply}>
-        Split across {entryIds.length}
+        {t('split.splitAcross', { count: entryIds.length })}
       </button>
     </div>
   );

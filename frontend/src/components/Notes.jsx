@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, Pin, Trash2, Search } from 'lucide-react';
+import { useT } from '../utils/i18n';
 
 function NoteItem({ note, onSave, onTogglePin, onDelete }) {
+  const { t } = useT();
   const [title, setTitle] = useState(note.title || '');
   const [body, setBody] = useState(note.body || '');
 
@@ -30,15 +32,15 @@ function NoteItem({ note, onSave, onTogglePin, onDelete }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <input
           value={title}
-          placeholder="Title"
+          placeholder={t('notes.titlePlaceholder')}
           onChange={e => setTitle(e.target.value)}
           onBlur={handleTitleBlur}
           style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--text-strong)', fontWeight: 600, fontSize: '1rem', outline: 'none' }}
         />
         <button
           className="btn btn-secondary btn-icon-only"
-          title={note.pinned ? 'Unpin' : 'Pin'}
-          aria-label={note.pinned ? 'Unpin' : 'Pin'}
+          title={t(note.pinned ? 'notes.unpin' : 'notes.pin')}
+          aria-label={t(note.pinned ? 'notes.unpin' : 'notes.pin')}
           onClick={() => onTogglePin(note)}
           style={{ padding: '0.3rem', color: note.pinned ? 'var(--accent-yellow)' : 'var(--text-secondary)' }}
         >
@@ -46,8 +48,8 @@ function NoteItem({ note, onSave, onTogglePin, onDelete }) {
         </button>
         <button
           className="btn btn-secondary btn-icon-only"
-          title="Delete"
-          aria-label="Delete"
+          title={t('common.delete')}
+          aria-label={t('common.delete')}
           onClick={() => onDelete(note.id)}
           style={{ padding: '0.3rem', color: 'var(--accent-red)' }}
         >
@@ -56,7 +58,7 @@ function NoteItem({ note, onSave, onTogglePin, onDelete }) {
       </div>
       <textarea
         value={body}
-        placeholder="Write something..."
+        placeholder={t('notes.bodyPlaceholder')}
         onChange={e => setBody(e.target.value)}
         onBlur={handleBodyBlur}
         rows={5}
@@ -70,6 +72,7 @@ function NoteItem({ note, onSave, onTogglePin, onDelete }) {
 // per-user (auth via the global fetch token interceptor). Editing saves on
 // blur; pin keeps a note at the top.
 function Notes({ showToast }) {
+  const { t } = useT();
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -82,25 +85,28 @@ function Notes({ showToast }) {
         const list = Array.isArray(d.notes) ? d.notes : (Array.isArray(d) ? d : []);
         setNotes(list);
       })
-      .catch(() => showToast?.('Failed to load notes'))
+      .catch(() => showToast?.(t('notes.errLoad')))
       .finally(() => setLoading(false));
-  }, [showToast]);
+  }, [showToast, t]);
 
   const createNote = async () => {
     try {
       const r = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Untitled', body: '' }),
+        // Stored, not just displayed: a note created in German keeps its German
+        // placeholder title even if the app language changes later. That is the
+        // note's own content from here on.
+        body: JSON.stringify({ title: t('notes.untitled'), body: '' }),
       });
       if (!r.ok) {
-        showToast?.('Failed to create note');
+        showToast?.(t('notes.errCreate'));
         return;
       }
       const d = await r.json();
       if (d.note) setNotes(prev => [d.note, ...prev]);
     } catch {
-      showToast?.('Failed to create note');
+      showToast?.(t('notes.errCreate'));
     }
   };
 
@@ -113,25 +119,25 @@ function Notes({ showToast }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: value }),
       });
-      if (!r.ok) showToast?.('Failed to save note');
+      if (!r.ok) showToast?.(t('notes.errSave'));
     } catch {
-      showToast?.('Failed to save note');
+      showToast?.(t('notes.errSave'));
     }
   };
 
   const togglePin = (note) => saveField(note.id, 'pinned', note.pinned ? 0 : 1);
 
   const deleteNote = async (id) => {
-    if (!window.confirm('Delete this note?')) return;
+    if (!window.confirm(t('notes.confirmDelete'))) return;
     try {
       const r = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
       if (!r.ok) {
-        showToast?.('Failed to delete note');
+        showToast?.(t('notes.errDelete'));
         return;
       }
       setNotes(prev => prev.filter(n => n.id !== id));
     } catch {
-      showToast?.('Failed to delete note');
+      showToast?.(t('notes.errDelete'));
     }
   };
 
@@ -150,14 +156,14 @@ function Notes({ showToast }) {
     return [...filtered].sort((a, b) => ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || (cmp ? cmp(a, b) : 0));
   }, [notes, query, sort]);
 
-  if (loading) return <div className="spinner" aria-label="Loading" style={{ margin: '4rem auto' }} />;
+  if (loading) return <div className="spinner" aria-label={t('common.loading')} style={{ margin: '4rem auto' }} />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ fontSize: '1.3rem', color: 'var(--text-strong)' }}>Notes</h2>
+        <h2 style={{ fontSize: '1.3rem', color: 'var(--text-strong)' }}>{t('nav.notes')}</h2>
         <button className="btn btn-primary" onClick={createNote}>
-          <Plus size={16} /> New Note
+          <Plus size={16} /> {t('notes.new')}
         </button>
       </div>
 
@@ -169,25 +175,25 @@ function Notes({ showToast }) {
               className="input-control"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Search notes..."
+              placeholder={t('notes.searchPlaceholder')}
               style={{ paddingLeft: '2rem', width: '100%' }}
             />
           </div>
           <select className="select-control" value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}>
-            <option value="updated">Recently updated</option>
-            <option value="created">Recently created</option>
-            <option value="title">Title (A-Z)</option>
+            <option value="updated">{t('notes.sortUpdated')}</option>
+            <option value="created">{t('notes.sortCreated')}</option>
+            <option value="title">{t('notes.sortTitle')}</option>
           </select>
         </div>
       )}
 
       {notes.length === 0 ? (
         <div className="glass-panel" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-          No notes yet. Create one to jot down wishlist ideas, deals, or trade plans.
+          {t('notes.emptyState')}
         </div>
       ) : visible.length === 0 ? (
         <div className="glass-panel" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-          No notes match &quot;{query}&quot;.
+          {t('notes.noMatches', { query })}
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>

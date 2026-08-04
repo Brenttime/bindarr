@@ -14,7 +14,9 @@
     "Reverse Holofoil": 1, "Holofoil": 2, "Normal": 3, "1st Edition": 4, "Promo": 5
   },
   "language": {
-    "English": 1, "Japanese": 2, "German": 3, "French": 4, "Spanish": 5, "Italian": 6
+    "English": 1, "Japanese": 2, "German": 3, "French": 4, "Spanish": 5, "Italian": 6,
+    "Portuguese": 7, "Korean": 8, "Russian": 9,
+    "Chinese (Traditional)": 10, "Chinese (Simplified)": 11
   },
   "wubrg": {
     "White": 1, "W": 1, "Blue": 2, "U": 2, "Black": 3, "B": 3,

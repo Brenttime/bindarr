@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useT } from '../utils/i18n';
 
 // Deck picker that adds card(s) to the chosen deck. Owns the deck fetch so the
 // places that offer "Add to Deck" (card popup, collection bulk toolbar) don't
@@ -7,10 +8,11 @@ import { useState, useEffect } from 'react';
 export default function AddToDeckSelect({
   onAdd,
   disabled = false,
-  placeholder = 'Add to Deck…',
+  placeholder,
   className = 'select-control',
   style,
 }) {
+  const { t } = useT();
   const [decks, setDecks] = useState([]);
 
   useEffect(() => {
@@ -27,7 +29,7 @@ export default function AddToDeckSelect({
       onChange={(e) => { if (e.target.value) onAdd(e.target.value); e.target.value = ''; }}
       style={style}
     >
-      <option value="">{placeholder}</option>
+      <option value="">{placeholder ?? t('deck.addToDeck')}</option>
       {decks.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
     </select>
   );

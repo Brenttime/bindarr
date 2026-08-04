@@ -1,11 +1,14 @@
+import { useT } from '../utils/i18n';
+
 export default function Logo({ style, className }) {
+  const { t } = useT();
   return (
-    <svg 
-      viewBox="0 0 40 40" 
-      fill="none" 
-      xmlns="http://www.w3.org/2000/svg" 
-      role="img" 
-      aria-label="Bindarr logo"
+    <svg
+      viewBox="0 0 40 40"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={t('common.logoAlt')}
       className={className}
       style={{ width: '100%', height: '100%', ...style }}
     >

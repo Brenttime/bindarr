@@ -72,3 +72,6 @@ backend/data/
 # Build artifacts / secrets (never commit)
 app-release.aab
 asckey.b64
+
+# Card art cached by backend/test/crop.test.js (re-downloaded on demand)
+.bench-cache/

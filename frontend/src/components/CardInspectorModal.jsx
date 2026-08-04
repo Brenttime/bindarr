@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, MapPin, Trash2, Star, Maximize2, ExternalLink } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
+import { translatedName, setCode, isEnglish } from '../utils/languages';
 import { formatPrice } from '../utils/formatPrice';
-import { tcgplayerUrl, cardmarketUrl } from '../utils/marketplaceLinks';
+import { tcgplayerUrl, cardmarketUrl, priceSource, noLinkReason } from '../utils/marketplaceLinks';
 import CardImageZoom from './CardImageZoom';
 import CardEntryFields from './CardEntryFields';
 import PriceHistoryChart from './PriceHistoryChart';
 import AddToDeckSelect from './AddToDeckSelect';
 import { useBackGuard } from '../utils/useBackGuard';
+import { useT } from '../utils/i18n';
 
 // MTG color identity pip colors (WUBRG), approximating the printed mana colors.
 const MTG_COLOR_BG = {
@@ -34,6 +36,7 @@ function getSlotNumber(c) {
 // gets the same rich view + edit without duplicating the form. onUpdate() lets
 // the parent refetch after a change. onViewStorage is optional (hidden if absent).
 function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onViewStorage, startInEdit = false }) {
+  const { t } = useT();
   const [mode, setMode] = useState('view');
   const [locations, setLocations] = useState([]);
   const [q, setQ] = useState(1);
@@ -119,15 +122,15 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
         card.is_trade = isTrade ? 1 : 0;
         card.favorite = favorite ? 1 : 0;
         card.notes = notes;
-        showToast && showToast('Card entry updated.');
+        showToast && showToast(t('inspector.entryUpdated'));
         onUpdate && onUpdate();
         onClose();
       } else {
-        showToast && showToast('Failed to update card.');
+        showToast && showToast(t('inspector.errUpdate'));
       }
     } catch (err) {
       console.error(err);
-      showToast && showToast('Error editing card.');
+      showToast && showToast(t('inspector.errEdit'));
     }
   };
 
@@ -162,20 +165,20 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
       });
       if (res.ok) {
         hasToggledRef.current = true;
-        showToast && showToast('Card updated.');
+        showToast && showToast(t('inspector.cardUpdated'));
       } else {
         // revert on fail
         if (field === 'is_trade') { setIsTrade(isTrade); card.is_trade = isTrade; }
         if (field === 'favorite') { setFavorite(favorite); card.favorite = favorite; }
         if (field === 'list_type') { setListType(listType); card.list_type = listType; }
-        showToast && showToast('Failed to update card.');
+        showToast && showToast(t('inspector.errUpdate'));
       }
     } catch (err) {
       console.error(err);
       if (field === 'is_trade') { setIsTrade(isTrade); card.is_trade = isTrade; }
       if (field === 'favorite') { setFavorite(favorite); card.favorite = favorite; }
       if (field === 'list_type') { setListType(listType); card.list_type = listType; }
-      showToast && showToast('Error updating card.');
+      showToast && showToast(t('inspector.errUpdateGeneric'));
     }
   };
 
@@ -188,29 +191,29 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
         body: JSON.stringify({ entry_ids: [targetEntryId], action: 'add_to_deck', value: deckId })
       });
       const data = await res.json().catch(() => ({}));
-      showToast && showToast(res.ok ? (data.message || 'Added to deck.') : (data.error || 'Failed to add to deck.'));
+      showToast && showToast(res.ok ? (data.message || t('inspector.addedToDeck')) : (data.error || t('inspector.errAddDeck')));
     } catch (err) {
       console.error(err);
-      showToast && showToast('Error adding to deck.');
+      showToast && showToast(t('inspector.errAddDeckGeneric'));
     }
   };
 
   const handleDelete = async () => {
     if (!targetEntryId) return;
-    if (!window.confirm(`Are you sure you want to delete ${card.name} from your collection?`)) return;
+    if (!window.confirm(t('collection.confirmDeleteCard', { name: card.name }))) return;
     try {
       const res = await fetch(`/api/collection/${targetEntryId}`, { method: 'DELETE' });
       if (res.ok) {
-        showToast && showToast(`${card.name} removed from collection.`);
+        showToast && showToast(t('collection.cardRemoved', { name: card.name }));
         onDeleted && onDeleted(targetEntryId);
         onUpdate && onUpdate();
         onClose();
       } else {
-        showToast && showToast('Failed to delete card.');
+        showToast && showToast(t('collection.errDelete'));
       }
     } catch (err) {
       console.error(err);
-      showToast && showToast('Error connecting to backend.');
+      showToast && showToast(t('common.errBackend'));
     }
   };
 
@@ -243,7 +246,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
           <div
             className="ci-image-wrap"
             onClick={() => setIsFullScreen(true)}
-            title="Click to view full screen"
+            title={t('inspector.zoomHint')}
             style={{ position: 'relative', width: '100%', maxWidth: '300px', cursor: 'pointer' }}
           >
             <img
@@ -276,7 +279,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               border: '1px solid rgba(255,255,255,0.15)'
             }}>
               <Maximize2 size={12} />
-              <span>Full Screen</span>
+              <span>{t('inspector.fullScreen')}</span>
             </div>
           </div>
         </div>
@@ -287,21 +290,36 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
               {card.list_type === 'wishlist' && (
                 <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(6, 182, 212, 0.15)', color: '#06b6d4', border: '1px solid rgba(6, 182, 212, 0.3)' }}>
-                  Wishlist Item
+                  {t('inspector.wishlistItem')}
                 </span>
               )}
               {card.is_trade === 1 && (
                 <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(74, 222, 128, 0.15)', color: 'var(--type-grass)', border: '1px solid rgba(74, 222, 128, 0.3)' }}>
-                  For Trade
+                  {t('inspector.forTrade')}
                 </span>
               )}
             </div>
 
             <h3 style={{ fontSize: '1.65rem', color: 'var(--text-strong)', fontWeight: 800, lineHeight: 1.15, marginBottom: '0.25rem' }}>
-              {getCardDisplayName(card.name, card.language)}
+              {getCardDisplayName(card.name, card.language, card.printed_name)}
             </h3>
+            {/* The English name when the provider gives us one for this printing
+                (Magic always does). Nothing is shown for a Japan-only Pokémon
+                card — no provider has an English name for it. */}
+            {translatedName(card) && (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+                {translatedName(card)}
+              </p>
+            )}
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 500 }}>
-              {card.set_name}{cardNumber ? ` • #${cardNumber}` : ''}{card.rarity ? ` • ${card.rarity}` : ''} • x{card.quantity ?? 1} owned
+              {card.set_name}
+              {/* Set code alongside the native set name: it reads the same in every
+                  language, so it is the part you can search or quote. The collector
+                  number is already spelled out just after, so only the code here. */}
+              {!isEnglish(card.language) && setCode(card) && (
+                <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}> ({setCode(card)})</span>
+              )}
+              {cardNumber ? ` • #${cardNumber}` : ''}{card.rarity ? ` • ${card.rarity}` : ''} • {t('inspector.owned', { count: card.quantity ?? 1 })}
             </p>
 
             {/* MTG cards: show color pips + type line (Pokémon energy types are
@@ -317,7 +335,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                   }}>{color}</span>
                 ))}
                 {(!card.types || card.types.length === 0) && (
-                  <span style={{ fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.15rem 0.45rem', borderRadius: '999px', background: 'rgba(180,180,180,0.25)', color: '#eee' }}>Colorless</span>
+                  <span style={{ fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.15rem 0.45rem', borderRadius: '999px', background: 'rgba(180,180,180,0.25)', color: '#eee' }}>{t('inspector.colorless')}</span>
                 )}
                 {Array.isArray(card.subtypes) && card.subtypes.length > 0 && (
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{card.subtypes.join(' ')}</span>
@@ -332,14 +350,14 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(74,222,128,0.1)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(74,222,128,0.2)' }}>
                   <input type="checkbox" checked={listType === 'collection'} onChange={(e) => setListType(e.target.checked ? 'collection' : 'wishlist')} id="markOwned" style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
                   <label htmlFor="markOwned" style={{ cursor: 'pointer', margin: 0, fontWeight: 700, color: 'var(--type-grass)', fontSize: '0.85rem' }}>
-                    Mark as Obtained (Move to Collection)
+                    {t('inspector.markObtained')}
                   </label>
                 </div>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                   <input type="checkbox" checked={isTrade === 1} onChange={(e) => setIsTrade(e.target.checked ? 1 : 0)} id="isTrade" style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
                   <label htmlFor="isTrade" style={{ cursor: 'pointer', margin: 0, fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.85rem' }}>
-                    Listed in Trade Binder
+                    {t('inspector.listedInTrade')}
                   </label>
                 </div>
               )}
@@ -351,9 +369,9 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               />
 
               <div className="form-group">
-                <label>Storage Container</label>
+                <label>{t('inspector.storageContainer')}</label>
                 <select className="select-control" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-                  <option value="">Unassigned Pile</option>
+                  <option value="">{t('bulk.unassignedPile')}</option>
                   {locations.map((loc) => (
                     <option key={loc.id} value={loc.id}>{loc.name} ({loc.type})</option>
                   ))}
@@ -361,20 +379,20 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               </div>
 
               <div className="form-group">
-                <label>Notes</label>
+                <label>{t('nav.notes')}</label>
                 <textarea
                   className="input-control"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Provenance, condition details, trade plans..."
+                  placeholder={t('inspector.notesPlaceholder')}
                   rows={3}
                   style={{ resize: 'vertical', fontFamily: 'inherit' }}
                 />
               </div>
 
               <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.25rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setMode('view')} style={{ flex: 1 }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 2 }}>Save Changes</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setMode('view')} style={{ flex: 1 }}>{t('common.cancel')}</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 2 }}>{t('inspector.saveChanges')}</button>
               </div>
             </form>
           ) : (
@@ -382,46 +400,66 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               {/* Price Panel */}
               <div style={{ borderTop: '1px solid var(--border-glass)', borderBottom: '1px solid var(--border-glass)', padding: '0.75rem 0', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                 <div>
-                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700 }}>TCG MARKET PRICE</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700 }}>{t('inspector.marketPrice')}</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-yellow)', marginTop: '0.15rem' }}>
                     ${formatPrice(card.price_trend)}
                   </div>
+                  {/* Say where a non-English price came from and in what currency —
+                      it is Cardmarket's EUR figure rendered with the app's $. */}
+                  {priceSource(card) && (
+                    <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                      {t('inspector.priceVia', { source: priceSource(card).name, currency: priceSource(card).currency })}
+                    </div>
+                  )}
                 </div>
                 <div>
-                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700 }}>EST. PURCHASE VALUE</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700 }}>{t('inspector.purchaseValue')}</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-strong)', marginTop: '0.15rem' }}>
                     ${formatPrice(card.purchase_price)}
                   </div>
                 </div>
               </div>
 
-              {/* Marketplace links — where the price is sourced */}
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <a
-                  href={tcgplayerUrl(card)} target="_blank" rel="noopener noreferrer"
-                  className="btn btn-secondary"
-                  style={{ flex: 1, minWidth: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontSize: '0.75rem' }}
-                >
-                  <ExternalLink size={13} /> View on TCGplayer
-                </a>
-                <a
-                  href={cardmarketUrl(card)} target="_blank" rel="noopener noreferrer"
-                  className="btn btn-secondary"
-                  style={{ flex: 1, minWidth: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontSize: '0.75rem' }}
-                >
-                  <ExternalLink size={13} /> Cardmarket
-                </a>
-              </div>
+              {/* Marketplace links — where the price is sourced. A link is only
+                  rendered when it can actually resolve: a Japan-only Pokémon card
+                  has no English name and no provider URL, and a search on its
+                  localized name returns nothing on either site. */}
+              {(tcgplayerUrl(card) || cardmarketUrl(card)) ? (
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  {tcgplayerUrl(card) && (
+                    <a
+                      href={tcgplayerUrl(card)} target="_blank" rel="noopener noreferrer"
+                      className="btn btn-secondary"
+                      style={{ flex: 1, minWidth: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontSize: '0.75rem' }}
+                    >
+                      <ExternalLink size={13} /> {t('inspector.viewOnTcgplayer')}
+                    </a>
+                  )}
+                  {cardmarketUrl(card) && (
+                    <a
+                      href={cardmarketUrl(card)} target="_blank" rel="noopener noreferrer"
+                      className="btn btn-secondary"
+                      style={{ flex: 1, minWidth: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontSize: '0.75rem' }}
+                    >
+                      <ExternalLink size={13} /> Cardmarket
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                  {noLinkReason(card)}
+                </div>
+              )}
 
               {/* Price History Area Chart */}
               <PriceHistoryChart cardId={card.card_id} height={100} defaultRange="30d" />
 
               {/* Specifications Details Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem 1rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem' }}>
-                <div><span style={{ color: 'var(--text-muted)' }}>Condition:</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.condition}</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>Printing:</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.printing}</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>Language:</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.language}</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>Supertype:</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.supertype}</span></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.condition}</span></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.printing}</span></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.language}</span></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specSupertype')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.supertype}</span></div>
               </div>
 
               {/* Storage Container details (clickable to view in storage) */}
@@ -435,18 +473,18 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                     fontSize: '0.75rem', cursor: onViewStorage ? 'pointer' : 'default',
                     transition: 'background 0.2s'
                   }}
-                  title={onViewStorage ? 'Click to view in storage' : undefined}
+                  title={onViewStorage ? t('inspector.viewInStorage') : undefined}
                 >
                   <MapPin size={14} style={{ color: 'var(--accent-red)', flexShrink: 0 }} />
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                    <span style={{ color: 'var(--text-muted)' }}>Location: </span>
+                    <span style={{ color: 'var(--text-muted)' }}>{t('inspector.locationLabel')} </span>
                     <strong style={{ color: 'var(--text-strong)' }}>
-                      {card.location_name ? `${card.location_name}${card.location_type ? ` (${card.location_type})` : ''}` : 'Unassigned Pile'}
+                      {card.location_name ? `${card.location_name}${card.location_type ? ` (${card.location_type})` : ''}` : t('bulk.unassignedPile')}
                     </strong>
                     {card.location_name && card.compartment_display_label && (
                       <span style={{ color: 'var(--text-secondary)' }}>
                         {` • ${card.compartment_display_label}`}
-                        {getSlotNumber(card) !== null ? ` • Slot ${getSlotNumber(card)}` : ''}
+                        {getSlotNumber(card) !== null ? ` • ${t('wizard.slot', { slot: getSlotNumber(card) })}` : ''}
                       </span>
                     )}
                   </div>
@@ -462,12 +500,12 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               {/* Main Actions Row: Edit Card + Icon buttons for Favorite & Delete */}
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setMode('edit')}>
-                  Edit Card
+                  {t('inspector.editCard')}
                 </button>
 
                 <AddToDeckSelect
                   onAdd={handleAddToDeck}
-                  placeholder="+ Add to Deck…"
+                  placeholder={t('inspector.addToDeck')}
                   style={{ fontSize: '0.8rem', padding: '0.45rem 0.5rem', maxWidth: '140px' }}
                 />
 
@@ -476,9 +514,9 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                     className="btn btn-secondary" 
                     style={{ backgroundColor: 'rgba(74,222,128,0.2)', color: 'var(--type-grass)', border: '1px solid rgba(74,222,128,0.3)', padding: '0 0.75rem', fontSize: '0.8rem' }} 
                     onClick={() => handleQuickToggle('list_type', 'collection')}
-                    title="Move to Collection"
+                    title={t('bulk.moveToCollection')}
                   >
-                    Obtained
+                    {t('inspector.obtained')}
                   </button>
                 )}
 
@@ -487,7 +525,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                   className={`btn ${favorite === 1 ? 'btn-primary' : 'btn-secondary'} btn-icon-only`}
                   style={{ borderRadius: 'var(--radius-sm)', padding: '0.6rem', ...(favorite === 1 ? { backgroundColor: 'rgba(250,204,21,0.2)', color: '#facc15', border: '1px solid rgba(250,204,21,0.3)' } : {}) }}
                   onClick={() => handleQuickToggle('favorite', favorite === 1 ? 0 : 1)}
-                  title={favorite === 1 ? 'Remove Favorite' : 'Mark as Favorite'}
+                  title={t(favorite === 1 ? 'inspector.unfavorite' : 'inspector.favorite')}
                 >
                   <Star size={16} fill={favorite === 1 ? '#facc15' : 'none'} />
                 </button>
@@ -497,7 +535,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                   className="btn btn-danger btn-icon-only"
                   style={{ borderRadius: 'var(--radius-sm)', padding: '0.6rem' }}
                   onClick={handleDelete}
-                  title="Delete Card"
+                  title={t('inspector.deleteCard')}
                 >
                   <Trash2 size={16} />
                 </button>

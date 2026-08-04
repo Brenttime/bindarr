@@ -1,9 +1,11 @@
 const express = require('express');
 const db = require('../db');
 const tcgApi = require('../tcgApi');
+const tcgdexApi = require('../tcgdexApi');
 const scryfallApi = require('../scryfallApi');
 const scanMatch = require('../scanMatch');
 const setIndex = require('../setIndex');
+const languages = require('../utils/languages');
 const { authenticateToken, searchLimiter } = require('../middleware/auth');
 const { resolveCardPrice, parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { parseSetList } = require('../utils/setQuery');
@@ -33,8 +35,10 @@ async function attachOwnedQty(cards, userId) {
   for (const c of cards) c.owned_qty = owned.get(c.id) || 0;
 }
 
-// 1. Search cards (proxies to Pokémon TCG or Scryfall + database cache). The
-// `game` param routes to the right provider; both return the same card shape.
+// 1. Search cards (proxies to Pokémon TCG, Scryfall or TCGdex + database cache).
+// `game` and `lang` route to the right provider; all three return the same card
+// shape. Scryfall serves Magic in every language, but pokemontcg.io is
+// English-only — so a non-English Pokémon search goes to TCGdex instead.
 router.get('/search', searchLimiter, async (req, res) => {
   const { name, number, set, scope = 'database', game = 'pokemon', lang, prints } = req.query;
   // 1-based page over `limit`-sized pages. 250 is the pokemontcg.io ceiling and
@@ -44,7 +48,9 @@ router.get('/search', searchLimiter, async (req, res) => {
   try {
     const { cards, total } = game === 'mtg'
       ? await scryfallApi.searchCards(name, number, set, scope, req.user.id, lang, prints === '1', page, limit)
-      : await tcgApi.searchCards(name, number, set, req.user.tcg_api_key, scope, req.user.id, page, limit);
+      : languages.isEnglish(lang)
+        ? await tcgApi.searchCards(name, number, set, req.user.tcg_api_key, scope, req.user.id, page, limit)
+        : await tcgdexApi.searchCards(name, number, set, scope, req.user.id, lang, page, limit);
     await attachOwnedQty(cards, req.user.id);
     // Header, not the body: every existing caller expects a bare array here.
     if (total != null) {
@@ -70,26 +76,30 @@ router.get('/search', searchLimiter, async (req, res) => {
 // 1b. Identify a scanned card image by CLIP embedding similarity.
 router.post('/scan-match', searchLimiter, async (req, res) => {
   try {
-    const { game = 'pokemon', image, set = '', recallK, orb } = req.body || {};
+    const { game = 'pokemon', image, set = '', recallK, orb, lang } = req.body || {};
     if (game !== 'mtg' && game !== 'pokemon') return res.status(400).json({ error: 'Invalid game' });
     if (!image || typeof image !== 'string') return res.status(400).json({ error: 'Missing image' });
     const base64 = image.includes(',') ? image.slice(image.indexOf(',') + 1) : image;
     const buf = Buffer.from(base64, 'base64');
     if (buf.length < 100) return res.status(400).json({ error: 'Invalid image data' });
-    const result = await scanMatch.match(buf, game, 8, set, { recallK, orb });
+    const result = await scanMatch.match(buf, game, 8, set, { recallK, orb, lang });
     if (result.candidates && result.candidates.length > 0) {
+      // Hydration is language-scoped: a Japanese scan matched a Japanese index, so
+      // handing back the English row for the same set+number would name the card
+      // correctly and then add the wrong printing to the collection.
+      const langName = languages.toName(lang);
       const hydrated = await Promise.all(result.candidates.map(async (cand) => {
         let row = null;
         if (cand.set && cand.number) {
           row = await db.get(
-            `SELECT * FROM card_cache WHERE game = ? AND (set_id = ? OR LOWER(set_name) = LOWER(?)) AND number = ? LIMIT 1`,
-            [result.game, cand.set, cand.set, cand.number]
+            `SELECT * FROM card_cache WHERE game = ? AND language = ? AND (set_id = ? OR LOWER(set_name) = LOWER(?)) AND number = ? LIMIT 1`,
+            [result.game, langName, cand.set, cand.set, cand.number]
           );
         }
         if (!row && cand.name) {
           row = await db.get(
-            `SELECT * FROM card_cache WHERE game = ? AND LOWER(name) = LOWER(?) LIMIT 1`,
-            [result.game, cand.name]
+            `SELECT * FROM card_cache WHERE game = ? AND language = ? AND (LOWER(name) = LOWER(?) OR LOWER(printed_name) = LOWER(?)) LIMIT 1`,
+            [result.game, langName, cand.name, cand.name]
           );
         }
         return row ? { ...cand, card: parseCardRow(row) } : cand;
@@ -106,15 +116,29 @@ router.post('/scan-match', searchLimiter, async (req, res) => {
 // Build/verify a per-set ORB index
 router.post('/prepare-set', searchLimiter, async (req, res) => {
   try {
-    const { game = 'mtg', set } = req.body || {};
+    const { game = 'mtg', set, lang } = req.body || {};
     const supported = game === 'mtg' || game === 'pokemon';
     const sets = parseSetList(set);
     if (!supported || !sets.length) return res.json({ ready: false, supported });
-    const pending = sets.filter(s => !setIndex.isReady(game, s));
+    const pending = sets.filter(s => !setIndex.isReady(game, s, lang));
     if (pending.length === 0) return res.json({ ready: true });
-    pending.forEach(s => setIndex.ensureSet(game, s).catch(() => {}));
-    // Report the first still-building set's progress for the UI bar.
-    res.json({ ready: false, building: true, progress: setIndex.setProgress(game, pending[0]), pending });
+
+    // A set that cannot be built (no such set for this language, or the provider
+    // has no card data for it) has to be reported, not polled forever. Without
+    // this the client sat on "fetching card list" indefinitely while every poll
+    // kicked off another doomed build.
+    const failures = pending
+      .map(s => ({ set: s, error: setIndex.buildFailed(game, s, lang) }))
+      .filter(f => f.error);
+    const buildable = pending.filter(s => !setIndex.buildFailed(game, s, lang));
+    if (buildable.length === 0) {
+      return res.json({ ready: false, building: false, failed: true, failures, error: failures[0].error });
+    }
+
+    buildable.forEach(s => setIndex.ensureSet(game, s, lang).catch(() => {}));
+    // Report the first still-building set's progress for the UI bar, plus any
+    // sets in the list that already failed (a multi-set scan can be part ready).
+    res.json({ ready: false, building: true, progress: setIndex.setProgress(game, buildable[0], lang), pending: buildable, failures });
   } catch (error) {
     console.error('prepare-set failed:', error.message);
     res.status(500).json({ error: 'Prepare set failed' });
@@ -157,6 +181,9 @@ router.get('/collection', async (req, res) => {
         c.list_type,
         c.notes,
         cc.name,
+        -- The localized name for a non-English printing, so every view that
+        -- renders a collection card can show it as the card actually reads.
+        cc.printed_name,
         cc.supertype,
         cc.subtypes,
         cc.types,
@@ -172,6 +199,8 @@ router.get('/collection', async (req, res) => {
         cc.price_holofoil,
         cc.price_reverse_holofoil,
         cc.game,
+        cc.tcgplayer_url,
+        cc.cardmarket_url,
         l.id as location_id,
         l.name as location_name,
         l.type as location_type,
@@ -237,10 +266,21 @@ async function addCardToCollection(user, body) {
   }
 
   {
+    // A card matched by a set-scoped scan was cached from a TCGdex set brief:
+    // name, number and art only. Fill it in before it enters the collection, or it
+    // is stored with no price, no marketplace link and a defaulted rarity — which
+    // is what it then shows in the inspector forever.
+    if (card_id.startsWith('tcgdex-')) {
+      try { await tcgdexApi.hydrateCard(card_id); }
+      catch (e) { console.warn(`Could not hydrate ${card_id}: ${e.message}`); }
+    }
+
     let card = await db.get(`SELECT * FROM card_cache WHERE id = ?`, [card_id]);
     if (!card) {
       if (game === 'mtg' || card_id.startsWith('mtg-')) {
         card = await scryfallApi.getCardById(card_id);
+      } else if (card_id.startsWith('tcgdex-')) {
+        card = await tcgdexApi.getCardById(card_id);
       } else {
         card = await tcgApi.getCardById(card_id, req.user.tcg_api_key);
       }

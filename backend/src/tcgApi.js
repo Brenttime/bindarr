@@ -2,6 +2,7 @@ const axios = require('axios');
 const db = require('./db');
 const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
 const { parseSetList, setSqlFilter } = require('./utils/setQuery');
+const { cacheNormalizedCards } = require('./utils/cardCache');
 
 const API_BASE_URL = 'https://api.pokemontcg.io/v2';
 const API_KEY = process.env.POKEMON_TCG_API_KEY || ''; // Optional user key
@@ -120,7 +121,10 @@ function formatCard(c) {
     price_reverse_holofoil: detailed.reverseHolofoil,
     price_avg1: detailed.avg1,
     price_avg7: detailed.avg7,
-    price_avg30: detailed.avg30
+    price_avg30: detailed.avg30,
+    // pokemontcg.io ships the marketplace links the prices came from.
+    tcgplayer_url: c.tcgplayer ? c.tcgplayer.url || null : null,
+    cardmarket_url: c.cardmarket ? c.cardmarket.url || null : null
   };
 }
 
@@ -179,43 +183,12 @@ async function fetchAndCacheSets(force = false) {
   }
 }
 
-// Save a list of cards to SQLite cache
-async function cacheCards(cards) {
-  for (const card of cards) {
-    const price = extractPrice(card);
-    const detailed = extractDetailedPrices(card);
-    const subtypes = JSON.stringify(card.subtypes || []);
-    const types = JSON.stringify(card.types || []);
-    const imageUrl = card.images ? (card.images.small || card.images.large) : '';
-
-    await db.run(
-      `INSERT OR REPLACE INTO card_cache
-       (id, name, supertype, subtypes, types, rarity, set_id, set_name, number, image_url, price_trend, price_normal, price_holofoil, price_reverse_holofoil, price_avg1, price_avg7, price_avg30, cmc, color_identity, last_updated)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [
-        card.id,
-        card.name,
-        card.supertype || '',
-        subtypes,
-        types,
-        card.rarity || 'Common',
-        card.set ? card.set.id : '',
-        card.set ? card.set.name : '',
-        card.number || '',
-        imageUrl,
-        price,
-        detailed.normal,
-        detailed.holofoil,
-        detailed.reverseHolofoil,
-        detailed.avg1,
-        detailed.avg7,
-        detailed.avg30,
-        null,
-        null
-      ]
-    );
-  }
-}
+// Save a list of RAW pokemontcg.io cards to the SQLite cache. formatCard already
+// produces exactly the shape card_cache stores, so this just normalizes and hands
+// off to the shared writer — the column list lives in utils/cardCache.js.
+// Everything here is English by definition: pokemontcg.io has no other language
+// (see utils/languages.js), which is what tcgdexApi.js exists for.
+const cacheCards = (cards) => cacheNormalizedCards((cards || []).map(formatCard), 'pokemon');
 
 // Helper: Levenshtein distance similarity (0.0 to 1.0)
 function getLevenshteinDistance(a, b) {
@@ -303,9 +276,12 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
     `;
     const collParams = [userId];
 
+    // Collection scope searches every language the user owns (a deck search must
+    // still find their Japanese copies), and a localized name typed in matches via
+    // printed_name.
     if (cleanName) {
-      collSql += ` AND cc.name LIKE ?`;
-      collParams.push(`%${cleanName}%`);
+      collSql += ` AND (cc.name LIKE ? OR cc.printed_name LIKE ?)`;
+      collParams.push(`%${cleanName}%`, `%${cleanName}%`);
     }
     if (cleanNumber) {
       if (cleanNumber !== strippedNumber && strippedNumber !== '') {
@@ -332,7 +308,10 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
   // Kept as a closure because an internet-scope search skips it here but still
   // needs it as a fallback when the upstream API is unreachable.
   const queryLocal = async () => {
-    let localSql = `SELECT * FROM card_cache WHERE game = 'pokemon'`;
+    // English only: non-English Pokémon rows share this table (they come from
+    // TCGdex, since pokemontcg.io has no other language) and must not surface in
+    // an English search just because they are cached next to each other.
+    let localSql = `SELECT * FROM card_cache WHERE game = 'pokemon' AND language = 'English'`;
     const localParams = [];
 
     if (cleanName) {
@@ -524,10 +503,11 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
 async function getCardById(id, apiKey = '') {
   const cached = await db.get(`SELECT * FROM card_cache WHERE id = ?`, [id]);
 
-  // MTG cards live under the "mtg-" prefix and are served by Scryfall, not the
-  // Pokémon TCG API — never query pokemontcg.io for them (it would 404). Return
-  // whatever is cached (Scryfall refreshes MTG prices on search).
-  if (id && id.startsWith('mtg-')) {
+  // MTG cards live under the "mtg-" prefix and are served by Scryfall, and
+  // non-English Pokémon cards under "tcgdex-" — neither exists on pokemontcg.io,
+  // so querying it for them would just 404. Return whatever is cached (Scryfall
+  // refreshes MTG prices on search; tcgdexApi refreshes its own).
+  if (id && (id.startsWith('mtg-') || id.startsWith('tcgdex-'))) {
     return cached ? parseCardRow(cached) : null;
   }
 
@@ -647,12 +627,15 @@ async function updateCollectionPrices(force = false) {
     // Select unique Pokémon card IDs from both collections (owned and wishlist)
     // and decks. MTG cards are excluded — they refresh via Scryfall on search,
     // and hitting the Pokémon API for an "mtg-" id would just 404.
+    // English only — non-English Pokémon rows come from TCGdex and are swept by
+    // tcgdexApi.updateCollectionPrices, so asking pokemontcg.io about them would
+    // burn a second of rate limit per card to get a 404.
     const cardsInUse = await db.all(`
       SELECT DISTINCT c.card_id FROM collection c
-      JOIN card_cache cc ON c.card_id = cc.id WHERE cc.game = 'pokemon'
+      JOIN card_cache cc ON c.card_id = cc.id WHERE cc.game = 'pokemon' AND cc.language = 'English'
       UNION
       SELECT DISTINCT d.card_id FROM deck_cards d
-      JOIN card_cache cc ON d.card_id = cc.id WHERE cc.game = 'pokemon'
+      JOIN card_cache cc ON d.card_id = cc.id WHERE cc.game = 'pokemon' AND cc.language = 'English'
     `);
     
     console.log(`Starting background price update for ${cardsInUse.length} unique cards...`);

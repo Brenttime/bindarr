@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { Camera, Search } from 'lucide-react';
 import CameraScanner from './CameraScanner';
 import CardSearch from './CardSearch';
+import { useT } from '../utils/i18n';
 
 function AddCards({ onAddSuccess, showToast, setActiveTab, initialMode = 'scan' }) {
+  const { t } = useT();
   const [mode, setMode] = useState(initialMode);
 
   // Demo build has no backend: the camera scanner and live card search can't
@@ -12,11 +14,9 @@ function AddCards({ onAddSuccess, showToast, setActiveTab, initialMode = 'scan' 
     return (
       <div className="glass-panel" style={{ maxWidth: '520px', margin: '2rem auto', padding: '2rem', textAlign: 'center' }}>
         <Camera size={40} style={{ color: 'var(--accent-yellow)', marginBottom: '1rem' }} />
-        <h2 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.75rem' }}>Not available in the demo</h2>
+        <h2 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.75rem' }}>{t('demo.unavailableTitle')}</h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
-          The card scanner and live search need the Bindarr backend (camera recognition,
-          card database, price lookups). This is a static, read-only preview of the app.
-          Run your own instance to add cards.
+          {t('demo.unavailableBody')}
         </p>
       </div>
     );
@@ -31,14 +31,14 @@ function AddCards({ onAddSuccess, showToast, setActiveTab, initialMode = 'scan' 
             onClick={() => setMode('scan')}
           >
             <Camera size={18} />
-            <span>Scan Cards</span>
+            <span>{t('addCards.scan')}</span>
           </button>
-          <button 
+          <button
             className={`sub-nav-tab ${mode === 'search' ? 'active' : ''}`}
             onClick={() => setMode('search')}
           >
             <Search size={18} />
-            <span>Search & Add</span>
+            <span>{t('addCards.search')}</span>
           </button>
         </div>
       </div>

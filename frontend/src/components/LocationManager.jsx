@@ -6,12 +6,15 @@ import { getCardRarityBorder, getRarityBadgeStyle, getRarityBadgeLabel } from '.
 import CardInspectorModal from './CardInspectorModal';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { isBinderType as computeIsBinder } from '../utils/cardOptions';
+import { displayName } from '../utils/languages';
 import CompartmentView, { FocusedCardInfo } from './CompartmentView';
 import { SortBuilder, FilterBuilder } from './SortFilterBuilder';
 import CreateContainerModal from './CreateContainerModal';
 import { useBackGuard } from '../utils/useBackGuard';
+import { useT } from '../utils/i18n';
 
 function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId, setSelectedLocationId, focusEntryId }) {
+  const { t } = useT();
   const [locations, setLocations] = useState([]);
   const [activeLocationId, setActiveLocationId] = useState(null);
   const [compartments, setCompartments] = useState([]);
@@ -414,7 +417,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       });
       const data = await res.json();
       if (res.ok) {
-        showToast('Storage container created!');
+        showToast(t('loc.containerCreated'));
         setShowCreate(false);
         await fetchLocations();
         setActiveLocationId(data.id);
@@ -424,36 +427,36 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       }
     } catch (err) {
       console.error(err);
-      showToast('Error creating container.');
+      showToast(t('loc.errCreate'));
     }
   };
 
   const handleDeleteLocation = async (locId, name) => {
     if (selectedLoc && selectedLoc.id === locId && selectedLoc.locked) {
-      showToast('Container is locked. Unlock it first to delete it.');
+      showToast(t('loc.lockedDelete'));
       return;
     }
-    if (!window.confirm(`Delete "${name}"? Stored cards will move to Unsorted.`)) return;
+    if (!window.confirm(t('loc.confirmDeleteContainer', { name }))) return;
     try {
       const res = await fetch(`/api/locations/${locId}`, { method: 'DELETE' });
       if (res.ok) {
-        showToast(`Deleted "${name}".`);
+        showToast(t('loc.containerDeleted', { name }));
         if (activeLocationId === locId) setActiveLocationId(null);
         await refreshAll();
         onUpdate();
       } else {
-        showToast('Failed to delete container.');
+        showToast(t('loc.errDelete'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error deleting container.');
+      showToast(t('loc.errDeleteGeneric'));
     }
   };
 
   const handleUpdateLocationFields = async (fields) => {
     if (!selectedLoc) return;
     if (selectedLoc.locked && !('locked' in fields)) {
-      showToast('Container is locked. Unlock it first to change settings.');
+      showToast(t('loc.lockedSettings'));
       return;
     }
     try {
@@ -473,51 +476,51 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       }
     } catch (err) {
       console.error(err);
-      showToast('Error updating container.');
+      showToast(t('loc.errUpdateContainer'));
     }
   };
 
   const handleAddCompartment = async () => {
     if (!selectedLoc) return;
     if (selectedLoc.locked) {
-      showToast('Container is locked. Unlock it first to add rows or pages.');
+      showToast(t('loc.lockedAdd'));
       return;
     }
     try {
       const res = await fetch(`/api/locations/${selectedLoc.id}/compartments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       if (res.ok) { 
         const created = await res.json();
-        showToast(isBinderType ? 'Page added.' : 'Row added.'); 
+        showToast(t(isBinderType ? 'loc.pageAdded' : 'loc.rowAdded')); 
         await Promise.all([fetchCompartments(selectedLoc.id), fetchLocations()]);
         if (created && created.id) {
           setActiveCompartmentId(created.id);
           if (created.idx) setActivePageIndex(created.idx - 1);
         }
       }
-      else showToast('Failed to add compartment.');
-    } catch (err) { console.error(err); showToast('Error adding compartment.'); }
+      else showToast(t('loc.errAddCompartment'));
+    } catch (err) { console.error(err); showToast(t('loc.errAddCompartmentGeneric')); }
   };
 
   const handleRemoveCompartment = async (compartmentId) => {
     if (!selectedLoc) return;
     if (selectedLoc.locked) {
-      showToast('Container is locked. Unlock it first to remove rows or pages.');
+      showToast(t('loc.lockedRemove'));
       return;
     }
-    if (!window.confirm('Remove this compartment?')) return;
+    if (!window.confirm(t('loc.confirmRemoveCompartment'))) return;
     try {
       const res = await fetch(`/api/compartments/${compartmentId}`, { method: 'DELETE' });
       const data = await res.json();
-      if (res.ok) { showToast('Compartment removed.'); await Promise.all([fetchCompartments(activeLocationId), fetchLocations()]); }
+      if (res.ok) { showToast(t('loc.compartmentRemoved')); await Promise.all([fetchCompartments(activeLocationId), fetchLocations()]); }
       else showToast(data.error || 'Failed to remove compartment.');
-    } catch (err) { console.error(err); showToast('Error removing compartment.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errRemoveCompartment')); }
   };
 
   // Lock/unlock a row/page: filing skips locked ones (existing cards stay).
   // Uses the working /locations/:id/compartments/:comp_id route.
   const handleToggleCompartmentLock = async (compartmentId, locked) => {
     if (selectedLoc?.locked) {
-      showToast('Container is locked. Unlock it first to modify row locks.');
+      showToast(t('loc.lockedRowLocks'));
       return;
     }
     if (!activeLocationId) return;
@@ -525,9 +528,9 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       const res = await fetch(`/api/locations/${activeLocationId}/compartments/${compartmentId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locked })
       });
-      if (res.ok) { showToast(locked ? 'Row locked — filing will skip it.' : 'Row unlocked.'); await fetchCompartments(activeLocationId); }
-      else showToast('Failed to update lock.');
-    } catch (err) { console.error(err); showToast('Error updating lock.'); }
+      if (res.ok) { showToast(t(locked ? 'loc.rowLocked' : 'loc.rowUnlocked')); await fetchCompartments(activeLocationId); }
+      else showToast(t('loc.errLock'));
+    } catch (err) { console.error(err); showToast(t('loc.errLockGeneric')); }
   };
 
   // Lock/unlock a whole container: filing (and overflow) skip it entirely.
@@ -539,24 +542,24 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locked: next })
       });
       if (res.ok) { showToast(next ? `"${selectedLoc.name}" locked — filing will skip it.` : `"${selectedLoc.name}" unlocked.`); await fetchLocations(); }
-      else showToast('Failed to update lock.');
-    } catch (err) { console.error(err); showToast('Error updating lock.'); }
+      else showToast(t('loc.errLock'));
+    } catch (err) { console.error(err); showToast(t('loc.errLockGeneric')); }
   };
 
   const handleRenameCompartment = async (compartmentId, label) => {
     if (selectedLoc?.locked) {
-      showToast('Container is locked. Unlock it first to rename rows or pages.');
+      showToast(t('loc.lockedRename'));
       return;
     }
     try {
       await fetch(`/api/compartments/${compartmentId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) });
       await fetchCompartments(activeLocationId);
-    } catch (err) { console.error(err); showToast('Error renaming compartment.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errRename')); }
   };
 
   const handleSetCapacity = async (compartmentId, capacity, forceUpdateAll = false) => {
     if (selectedLoc?.locked) {
-      showToast('Container is locked. Unlock it first to change capacity.');
+      showToast(t('loc.lockedCapacity'));
       return;
     }
     if (compartments.length > 1 && !forceUpdateAll && !capacityUpdatePending) {
@@ -567,12 +570,12 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
     try {
       await fetch(`/api/compartments/${compartmentId}${updateAll ? '?updateAll=true' : ''}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity }) });
       await fetchCompartments(activeLocationId);
-    } catch (err) { console.error(err); showToast('Error resizing compartment.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errResize')); }
   };
 
   const handleMoveCard = async (entryId, compartmentId) => {
     if (selectedLoc?.locked) {
-      showToast('Container is locked. Unlock it first to move cards.');
+      showToast(t('loc.lockedMove'));
       return;
     }
     try {
@@ -580,19 +583,19 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ compartment_id: compartmentId })
       });
-      if (res.ok) { showToast('Card moved.'); await refreshAll(); }
+      if (res.ok) { showToast(t('loc.cardMoved')); await refreshAll(); }
       else {
         const errData = await res.json().catch(()=>({}));
         showToast(errData.error || 'Failed to move card.');
       }
-    } catch (err) { console.error(err); showToast('Error moving card.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errMove')); }
   };
 
   // --- Manual tap-to-place (Arrange) ---
   // Pick/unpick a card to move. Tapping the picked card again cancels.
   const handlePickCard = (entryId) => {
     if (selectedLoc?.locked) {
-      showToast('Container is locked. Unlock it first to arrange cards.');
+      showToast(t('loc.lockedArrange'));
       return;
     }
     setPickedEntryId(prev => (prev === entryId ? null : entryId));
@@ -602,7 +605,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
   // send the slot and let the backend place absolutely (binder) or insert (box).
   const handlePlaceSlot = async (compartmentId, slotNumber, occupantEntryId) => {
     if (selectedLoc?.locked) {
-      showToast('Container is locked. Unlock it first to arrange cards.');
+      showToast(t('loc.lockedArrange'));
       return;
     }
     if (!pickedEntryId || occupantEntryId === pickedEntryId) { setPickedEntryId(null); return; }
@@ -622,20 +625,20 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       } else {
         showToast(data.error === 'COMPARTMENT_FULL' ? 'That page/row is full.' : (data.error || 'Failed to place card.'));
       }
-    } catch (err) { console.error(err); showToast('Error placing card.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errPlace')); }
   };
 
   const handleDeleteCard = async (entryId) => {
     if (selectedLoc?.locked) {
-      showToast('Container is locked. Unlock it first to delete cards.');
+      showToast(t('loc.lockedDeleteCards'));
       return;
     }
-    if (!window.confirm('Remove this card from your collection?')) return;
+    if (!window.confirm(t('loc.confirmRemoveCard'))) return;
     try {
       const res = await fetch(`/api/collection/${entryId}`, { method: 'DELETE' });
-      if (res.ok) { showToast('Card removed.'); await refreshAll(); onUpdate(); }
-      else showToast('Failed to remove card.');
-    } catch (err) { console.error(err); showToast('Error removing card.'); }
+      if (res.ok) { showToast(t('loc.cardRemoved')); await refreshAll(); onUpdate(); }
+      else showToast(t('loc.errRemoveCard'));
+    } catch (err) { console.error(err); showToast(t('loc.errRemoveCardGeneric')); }
   };
 
   // Cards physically in the open container (any compartment).
@@ -671,15 +674,15 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         await refreshAll();
         onUpdate();
       } else {
-        showToast('Failed to update row rules.');
+        showToast(t('loc.errRowRules'));
       }
-    } catch (err) { console.error(err); showToast('Error updating row rules.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errRowRulesGeneric')); }
   };
 
   const handleApplyAll = async () => {
     if (!activeLocationId || unsortedCards.length === 0) return;
     const target = locations.find(l => l.id === activeLocationId);
-    if (!window.confirm(`Auto-file all ${unsortedCards.length} unsorted card(s) into "${target?.name}"? Cards that don't fit its rules or capacity stay unsorted.`)) return;
+    if (!window.confirm(t('loc.confirmAutoFile', { count: unsortedCards.length, name: target?.name }))) return;
     try {
       const res = await fetch(`/api/locations/${activeLocationId}/apply-all`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -688,7 +691,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       const data = await res.json();
       if (res.ok) { showToast(data.message); await refreshAll(); onUpdate(); }
       else showToast(data.error || 'Failed to file batch.');
-    } catch (err) { console.error(err); showToast('Error filing batch.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errFileBatch')); }
   };
 
   const startFilingMode = async () => {
@@ -702,13 +705,13 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry_ids: unsortedCards.map(c => c.entry_id) })
       });
-      if (!res.ok) { showToast('Failed to start filing mode.'); return; }
+      if (!res.ok) { showToast(t('loc.errFilingMode')); return; }
       const data = await res.json();
       const placeable = data.filter(d => d.recommended);
       const noRoom = data.filter(d => !d.recommended);
 
       if (placeable.length === 0) {
-        showToast(`No unsorted card fits "${target?.name}". ${noRoom.length} left unsorted — add space or adjust its filing rules.`);
+        showToast(t('loc.filingNoFit', { name: target?.name, count: noRoom.length }));
         return;
       }
 
@@ -719,9 +722,9 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       setMoveMode(false);
       setPickedEntryId(null);
       if (noRoom.length > 0) {
-        showToast(`Filing ${placeable.length} card(s) into "${target?.name}". ${noRoom.length} don't fit and stay unsorted.`);
+        showToast(t('loc.filingStarted', { count: placeable.length, name: target?.name, left: noRoom.length }));
       }
-    } catch (err) { console.error(err); showToast('Error starting filing mode.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errFilingModeGeneric')); }
   };
 
   // Advance the walkthrough one card; end it when past the last card.
@@ -729,7 +732,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
     if (filingIndex < filingQueue.length - 1) {
       setFilingIndex(filingIndex + 1);
     } else {
-      showToast(filingReadOnly ? 'Re-sort review complete!' : 'Filing complete!');
+      showToast(t(filingReadOnly ? 'loc.resortComplete' : 'loc.filingComplete'));
       setFilingMode(false);
       setFilingReadOnly(false);
       onUpdate();
@@ -776,31 +779,31 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         await refreshAll();
         advanceFiling();
       } else {
-        showToast('Failed to file card.');
+        showToast(t('loc.errFileCard'));
       }
-    } catch (err) { console.error(err); showToast('Error filing card.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errFileCardGeneric')); }
   };
 
   const startResort = async (skipConfirm = false) => {
     if (!selectedLoc) return;
-    if (!skipConfirm && !window.confirm(`Re-sort "${selectedLoc.name}" by its current order? This recomputes where every card goes and gives you a card-by-card guide to re-file them physically.`)) return;
+    if (!skipConfirm && !window.confirm(t('loc.confirmResort', { name: selectedLoc.name }))) return;
     try {
       const res = await fetch(`/api/locations/${selectedLoc.id}/resort`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         await refreshAll();
-        if (!Array.isArray(data) || data.length === 0) { showToast('Nothing to re-sort.'); return; }
+        if (!Array.isArray(data) || data.length === 0) { showToast(t('loc.nothingToResort')); return; }
         setFilingQueue(data);
         setFilingIndex(0);
         setFilingReadOnly(true);
         setFilingMode(true);
         setMobilePane('container'); // keep the binder visible on mobile; guide is the pinned bar
         setActiveLocationId(selectedLoc.id);
-        showToast('Container re-sorted. Follow the guide to re-file.');
+        showToast(t('loc.resorted'));
       } else {
-        showToast('Failed to re-sort container.');
+        showToast(t('loc.errResort'));
       }
-    } catch (err) { console.error(err); showToast('Error re-sorting container.'); }
+    } catch (err) { console.error(err); showToast(t('loc.errResortGeneric')); }
   };
 
   // Save the Container Settings modal: rename, sort/filter rules, and a
@@ -827,7 +830,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         await fetch(`/api/compartments/${compartments[0].id}?updateAll=true`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity: capNum })
         });
-      } catch (err) { console.error(err); showToast('Error resizing rows.'); }
+      } catch (err) { console.error(err); showToast(t('loc.errResizeRows')); }
     }
 
     const targetCount = parseInt(countDraft, 10);
@@ -850,7 +853,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         }
       } catch (err) {
         console.error(err);
-        showToast('Error updating page/row count.');
+        showToast(t('loc.errPageCount'));
       }
     }
 
@@ -859,7 +862,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
     setShowRulesModal(false);
 
     if (sortChanged && newSort !== 'custom' && (selectedLoc.total_cards || 0) > 0) {
-      if (window.confirm('Sort order changed. Re-sort this container now to reorganize its cards and get a re-filing guide?')) {
+      if (window.confirm(t('loc.confirmResortAfterChange'))) {
         startResort(true);
       }
     }
@@ -887,8 +890,8 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
             </p>
             <FilterBuilder value={compRuleDraft} onChange={setCompRuleDraft} setsList={setsList} fieldOptions={filterFieldOptions} />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-              <button className="btn btn-secondary" onClick={() => setRulesComp(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveCompartmentRules}>Save Rules</button>
+              <button className="btn btn-secondary" onClick={() => setRulesComp(null)}>{t('common.cancel')}</button>
+              <button className="btn btn-primary" onClick={saveCompartmentRules}>{t('loc.saveRules')}</button>
             </div>
           </div>
         </div>
@@ -897,13 +900,13 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       {capacityUpdatePending && (
         <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div className="glass-panel" style={{ width: '400px', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', background: 'var(--bg-secondary)' }}>
-            <h3 style={{ margin: 0 }}>Sync Capacity</h3>
+            <h3 style={{ margin: 0 }}>{t('loc.syncCapacity')}</h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
               Do you want to apply the capacity <strong>{capacityUpdatePending.capacity}</strong> to ALL compartments in this container, or just this specific one?
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
-              <button className="btn btn-secondary" onClick={() => { handleSetCapacity(capacityUpdatePending.id, capacityUpdatePending.capacity, false); setCapacityUpdatePending(null); }}>Just This One</button>
-              <button className="btn btn-primary" onClick={() => { handleSetCapacity(capacityUpdatePending.id, capacityUpdatePending.capacity, true); setCapacityUpdatePending(null); }}>Apply To All</button>
+              <button className="btn btn-secondary" onClick={() => { handleSetCapacity(capacityUpdatePending.id, capacityUpdatePending.capacity, false); setCapacityUpdatePending(null); }}>{t('loc.justThisOne')}</button>
+              <button className="btn btn-primary" onClick={() => { handleSetCapacity(capacityUpdatePending.id, capacityUpdatePending.capacity, true); setCapacityUpdatePending(null); }}>{t('loc.applyToAll')}</button>
             </div>
           </div>
         </div>
@@ -912,10 +915,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
       {showRulesModal && selectedLoc && (
         <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
           <div className="glass-panel" style={{ width: '400px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', background: 'var(--bg-secondary)' }}>
-            <h3 style={{ margin: 0 }}>Container Settings</h3>
+            <h3 style={{ margin: 0 }}>{t('loc.containerSettings')}</h3>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-              Container name
+              {t('loc.containerName')}
               <input
                 className="input-control"
                 value={nameDraft}
@@ -927,7 +930,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                Number of {isBinderType ? 'Pages' : 'Rows'}
+                {t(isBinderType ? 'loc.numberOfPages' : 'loc.numberOfRows')}
                 <input
                   type="number"
                   min="1"
@@ -947,7 +950,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   className="input-control"
                   value={capacityDraft}
                   onChange={(e) => setCapacityDraft(e.target.value)}
-                  placeholder="varies"
+                  placeholder={t('loc.varies')}
                   style={{ padding: '0.35rem 0.5rem', fontSize: '0.85rem' }}
                 />
               </label>
@@ -962,21 +965,21 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
               <strong>Changing these reorganizes cards:</strong>
               <ul style={{ margin: '0.35rem 0 0', paddingLeft: '1.1rem' }}>
                 <li>New sort rules re-order how cards display; save prompts a re-sort to match your physical {isBinderType ? 'binder' : 'box'}.</li>
-                <li>Filter rules that a stored card no longer matches move it to <strong>Unsorted</strong>.</li>
-                <li>Removing all sort rules switches to <strong>Custom</strong> and freezes the current order for hand-arranging.</li>
+                <li>{t('loc.ruleNoteFilter')}</li>
+                <li>{t('loc.ruleNoteCustom')}</li>
                 <li>Shrinking capacity below what a {isBinderType ? 'page' : 'row'} holds leaves the extra cards overflowing until re-filed.</li>
               </ul>
             </div>
 
             <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-              How cards order inside this container. Remove all rules for manual (custom) order, then use <strong>Arrange</strong> to place and swap cards by hand.
+              {t('loc.sortHint')}
             </span>
             <SortBuilder value={sortDraft} onChange={setSortDraft} />
             <FilterBuilder value={filterDraft} onChange={setFilterDraft} setsList={setsList} fieldOptions={filterFieldOptions} />
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
-              <button className="btn btn-secondary" onClick={() => setShowRulesModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveContainerSettings}>Save Settings</button>
+              <button className="btn btn-secondary" onClick={() => setShowRulesModal(false)}>{t('common.cancel')}</button>
+              <button className="btn btn-primary" onClick={saveContainerSettings}>{t('admin.saveSettings')}</button>
             </div>
           </div>
         </div>
@@ -988,7 +991,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
           while filing, so it must exit to be shown). */}
       {isStacked && (
         <div className="sub-nav-tabs storage-pane-tabs" style={{ gridColumn: '1 / -1', marginBottom: 0, position: 'sticky', top: 0, zIndex: 50 }}>
-          <button type="button" className={`sub-nav-tab ${mobilePane === 'container' ? 'active' : ''}`} onClick={() => setMobilePane('container')}>Container</button>
+          <button type="button" className={`sub-nav-tab ${mobilePane === 'container' ? 'active' : ''}`} onClick={() => setMobilePane('container')}>{t('loc.paneContainer')}</button>
           <button type="button" className={`sub-nav-tab ${mobilePane === 'unsorted' ? 'active' : ''}`} onClick={() => { if (filingMode) { setFilingMode(false); setFilingReadOnly(false); refreshAll(); } setMobilePane('unsorted'); }}>
             Unsorted <span className={`tab-count-badge ${unsortedCards.length > 0 ? 'has-unsorted' : ''}`}>{unsortedCards.length}</span>
           </button>
@@ -1007,14 +1010,14 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
               onChange={(e) => setActiveLocationId(parseInt(e.target.value, 10))}
               style={{ fontSize: '1rem', fontWeight: 'bold', padding: '0.3rem', width: 'auto', minWidth: '150px' }}
             >
-              <option value="" disabled>Select Container...</option>
+              <option value="" disabled>{t('loc.selectContainer')}</option>
               {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.locked ? '🔒 ' : ''}{loc.name} ({loc.type})</option>)}
             </select>
-            <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => setShowCreate(s => !s)} style={{ width: '28px', height: '28px', padding: 0 }} title="Create Container">
+            <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => setShowCreate(s => !s)} style={{ width: '28px', height: '28px', padding: 0 }} title={t('loc.createContainer')}>
               <Plus size={14} />
             </button>
             {selectedLoc && !!selectedLoc.locked && (
-              <button type="button" onClick={handleToggleContainerLock} title="Container is locked — Sort & File / Auto-File skip it. Click to unlock." style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.62rem', fontWeight: 800, padding: '0.15rem 0.45rem', borderRadius: '999px', cursor: 'pointer', background: 'rgba(255,193,7,0.15)', border: '1px solid var(--accent-yellow)', color: 'var(--accent-yellow)' }}>
+              <button type="button" onClick={handleToggleContainerLock} title={t('loc.lockedBadgeHint')} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.62rem', fontWeight: 800, padding: '0.15rem 0.45rem', borderRadius: '999px', cursor: 'pointer', background: 'rgba(255,193,7,0.15)', border: '1px solid var(--accent-yellow)', color: 'var(--accent-yellow)' }}>
                 <Lock size={11} /> Locked
               </button>
             )}
@@ -1029,9 +1032,9 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 disabled={!!selectedLoc.locked}
                 onClick={() => (storage.selectMode ? storage.exitSelectMode() : storage.setSelectMode(true))}
                 style={{ fontSize: '0.7rem', padding: '0.3rem 0.6rem' }}
-                title={selectedLoc.locked ? 'Container is locked — unlock to select cards' : 'Or long-press a card to start selecting'}
+                title={t(selectedLoc.locked ? 'loc.lockedSelectHint' : 'loc.selectHint')}
               >
-                {storage.selectMode ? 'Done' : 'Select'}
+                {t(storage.selectMode ? 'bulk.done' : 'collection.select')}
               </button>
             )}
             {!filingMode && !storage.selectMode && isCustom && (
@@ -1041,9 +1044,9 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 disabled={!!selectedLoc.locked}
                 onClick={() => { setMoveMode(m => !m); setPickedEntryId(null); }}
                 style={{ fontSize: '0.7rem', padding: '0.3rem 0.6rem' }}
-                title={selectedLoc.locked ? 'Container is locked — unlock to arrange cards' : 'Tap a card, then tap a slot to place or swap it by hand'}
+                title={t(selectedLoc.locked ? 'loc.lockedArrangeHint' : 'loc.arrangeHint')}
               >
-                {moveMode ? 'Done Arranging' : 'Arrange'}
+                {t(moveMode ? 'loc.doneArranging' : 'loc.arrange')}
               </button>
             )}
             <div className="kebab-menu">
@@ -1053,20 +1056,20 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
               {showKebabMenu && (
                 <div className="kebab-dropdown">
                   <button className="kebab-item" disabled={!!selectedLoc.locked} onClick={() => { setShowKebabMenu(false); handleAddCompartment(); }}>
-                    <Plus size={14} /> {isBinderType ? 'Add Page' : 'Add Compartment'}
+                    <Plus size={14} /> {t(isBinderType ? 'loc.addPage' : 'loc.addCompartment')}
                   </button>
                   <button className="kebab-item" 
                           disabled={!!selectedLoc.locked || compartments.length <= 1 || (cardsByCompartment.get(compartments[compartments.length-1]?.id) || []).length > 0} 
                           onClick={() => { setShowKebabMenu(false); handleRemoveCompartment(compartments[compartments.length-1].id); }}
-                          title={selectedLoc.locked ? 'Container is locked' : 'Only the last empty row/page can be removed'}
+                          title={t(selectedLoc.locked ? 'loc.containerLockedShort' : 'loc.removeLastHint')}
                   >
-                    <Trash2 size={14} /> {isBinderType ? 'Remove Last Page' : 'Remove Last Compartment'}
+                    <Trash2 size={14} /> {t(isBinderType ? 'loc.removeLastPage' : 'loc.removeLastCompartment')}
                   </button>
                   <button className="kebab-item" onClick={() => { setShowKebabMenu(false); startResort(); }} disabled={!!selectedLoc.locked || (selectedLoc.total_cards || 0) === 0}>
                     <RefreshCw size={14} /> Re-sort Container
                   </button>
-                  <button className="kebab-item" onClick={() => { setShowKebabMenu(false); handleToggleContainerLock(); }} title="A locked container is skipped by Sort & File / Auto-File">
-                    <Lock size={14} /> {selectedLoc.locked ? 'Unlock Container' : 'Lock Container'}
+                  <button className="kebab-item" onClick={() => { setShowKebabMenu(false); handleToggleContainerLock(); }} title={t('loc.lockKebabHint')}>
+                    <Lock size={14} /> {t(selectedLoc.locked ? 'loc.unlockContainer' : 'loc.lockContainer')}
                   </button>
                   <button className="kebab-item" disabled={!!selectedLoc.locked} onClick={() => {
                     setShowKebabMenu(false);
@@ -1121,36 +1124,36 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
           <div className="glass-panel" style={{ padding: '0.6rem 0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', background: 'rgba(255,71,71,0.08)' }}>
             <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.8rem' }}>{storage.selectedIds.size} selected</span>
             <button className="btn btn-secondary" style={{ fontSize: '0.68rem', padding: '0.25rem 0.5rem' }} onClick={() => storage.setSelectedIds(new Set(cardsInActiveLocation.map(c => c.entry_id)))}>Select all ({cardsInActiveLocation.length})</button>
-            <button className="btn btn-secondary" style={{ fontSize: '0.68rem', padding: '0.25rem 0.5rem' }} onClick={() => storage.setSelectedIds(new Set())}>Clear</button>
+            <button className="btn btn-secondary" style={{ fontSize: '0.68rem', padding: '0.25rem 0.5rem' }} onClick={() => storage.setSelectedIds(new Set())}>{t('bulk.clear')}</button>
             <div style={{ width: '1px', height: '20px', background: 'var(--border-glass)' }} />
             <button
               className="btn btn-primary"
               style={{ fontSize: '0.68rem', padding: '0.25rem 0.6rem' }}
               disabled={!storage.selectedIds.size}
-              onClick={() => storage.runBulk('move', null, `Remove ${storage.selectedIds.size} card(s) from this container? They move to Unsorted.`)}
+              onClick={() => storage.runBulk('move', null, t('loc.confirmRemoveFromStorage', { count: storage.selectedIds.size }))}
             >
-              Remove from Storage
+              {t('loc.removeFromStorage')}
             </button>
             <button
               className="btn btn-danger"
               style={{ fontSize: '0.68rem', padding: '0.25rem 0.6rem' }}
               disabled={!storage.selectedIds.size}
-              onClick={() => storage.runBulk('delete', null, `Delete ${storage.selectedIds.size} card(s) from your collection? This cannot be undone.`)}
+              onClick={() => storage.runBulk('delete', null, t('loc.confirmDeleteFromCollection', { count: storage.selectedIds.size }))}
             >
-              Delete
+              {t('common.delete')}
             </button>
-            <button className="btn btn-secondary" style={{ fontSize: '0.68rem', padding: '0.25rem 0.5rem', marginLeft: 'auto' }} onClick={storage.exitSelectMode}>Done</button>
+            <button className="btn btn-secondary" style={{ fontSize: '0.68rem', padding: '0.25rem 0.5rem', marginLeft: 'auto' }} onClick={storage.exitSelectMode}>{t('bulk.done')}</button>
           </div>
         )}
 
         {!selectedLoc ? (
-          <p style={{ color: 'var(--text-secondary)' }}>Select a container to view its compartments.</p>
+          <p style={{ color: 'var(--text-secondary)' }}>{t('loc.selectPrompt')}</p>
         ) : (
           <>
             {!!selectedLoc.locked && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'rgba(255,193,7,0.12)', border: '1px solid var(--accent-yellow)', padding: '0.55rem 0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.72rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
                 <Lock size={16} color="var(--accent-yellow)" style={{ flexShrink: 0 }} />
-                <span style={{ flex: 1 }}><strong>Container locked.</strong> Sort &amp; File and Auto-File skip this container entirely, including all its rows/pages. Existing cards stay put.</span>
+                <span style={{ flex: 1 }}>{t('loc.lockedBanner')}</span>
                 <button type="button" className="btn btn-secondary" onClick={handleToggleContainerLock} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.68rem', padding: '0.25rem 0.6rem', flexShrink: 0, borderColor: 'var(--accent-yellow)', color: 'var(--accent-yellow)' }}>
                   <Lock size={13} /> Unlock
                 </button>
@@ -1160,9 +1163,9 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
             {isBinderType && !isCustom && !binderTipDismissed && (
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', background: 'rgba(255, 170, 0, 0.1)', border: '1px solid #d97706', padding: '0.6rem 0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.72rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
                 <span style={{ flex: 1 }}>
-                  <strong>Heads up:</strong> Sorting &amp; filing renumber pocket positions, so a new card shifts every card after it and your physical binder drifts out of sync. For a fixed pocket layout, open <strong>Container Settings</strong> and remove all sort rules to switch this binder to <strong>Custom</strong> order, then use <strong>Arrange</strong> to place and swap cards by hand.
+                  {t('loc.binderTip')}
                 </span>
-                <button type="button" onClick={dismissBinderTip} title="Dismiss" aria-label="Dismiss" style={{ flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.1rem', lineHeight: 0 }}>
+                <button type="button" onClick={dismissBinderTip} title={t('loc.dismiss')} aria-label={t('loc.dismiss')} style={{ flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.1rem', lineHeight: 0 }}>
                   <X size={15} />
                 </button>
               </div>
@@ -1171,7 +1174,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
             {moveMode && (
               <div style={{ background: 'rgba(255,71,71,0.1)', border: '1px solid var(--accent-red)', padding: '0.5rem 0.7rem', borderRadius: 'var(--radius-sm)', fontSize: '0.72rem', color: 'var(--text-primary)' }}>
                 {pickedEntryId
-                  ? (isBinderType ? 'Now tap a pocket to place it (tap a filled pocket to swap).' : 'Now tap a card to drop it in front of, or an empty slot.')
+                  ? t(isBinderType ? 'loc.arrangeStepPocket' : 'loc.arrangeStepSlot')
                   : 'Tap a card here or in Unsorted to pick it up.'}
               </div>
             )}
@@ -1216,7 +1219,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   })}
                   style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
                 >
-                  Next &rarr;
+                  {t('loc.next')}
                 </button>
               </div>
             )}
@@ -1317,7 +1320,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           onChange={(e) => { if (e.target.value) handleMoveCard(activeCard.entry_id, parseInt(e.target.value, 10)); }}
                           style={{ fontSize: '0.65rem', padding: '0.15rem 0.3rem', width: '110px', flexShrink: 0 }}
                         >
-                          <option value="">Move to...</option>
+                          <option value="">{t('compartment.moveTo')}</option>
                           {compartments.filter(t => t.id !== activeCard.compartment_id).map(t => (
                             <option key={t.id} value={t.id}>{t.display_label}</option>
                           ))}
@@ -1329,7 +1332,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   </div>
                 );
               })() : (() => {
-                if (compartments.length === 0) return <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No compartments/rows in this location.</p>;
+                if (compartments.length === 0) return <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('loc.noCompartments')}</p>;
 
                 const activeComp = compartments.find(c => c.id === activeCompartmentId) || compartments[0];
                 if (!activeComp) return null;
@@ -1369,10 +1372,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           type="button"
                           className="btn btn-secondary"
                           onClick={() => {
-                            const newLabel = window.prompt(`Rename "${activeComp.display_label}":`, activeComp.label || '');
+                            const newLabel = window.prompt(t('loc.promptRename', { name: activeComp.display_label }), activeComp.label || '');
                             if (newLabel !== null) handleRenameCompartment(activeComp.id, newLabel);
                           }}
-                          title="Rename this row"
+                          title={t('loc.renameRow')}
                           style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.6rem', padding: '0.2rem 0.5rem' }}
                         >
                           <Edit3 size={11} /> Rename
@@ -1381,7 +1384,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           type="button"
                           className="btn btn-secondary"
                           onClick={() => openCompartmentRules(activeComp)}
-                          title="Set which cards this row accepts"
+                          title={t('compartment.acceptsHintRow')}
                           style={{ fontSize: '0.6rem', padding: '0.2rem 0.5rem', ...(activeCompRuleCount > 0 ? { borderColor: 'var(--accent-red)', color: 'var(--text-strong)' } : {}) }}
                         >
                           {activeAcceptsLabel}
@@ -1391,10 +1394,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           className="btn btn-secondary"
                           onClick={() => handleToggleCompartmentLock(activeComp.id, !activeComp.locked)}
                           disabled={!!selectedLoc.locked}
-                          title={selectedLoc.locked ? 'Container is locked — every row is skipped by filing.' : activeComp.locked ? 'Locked — filing skips this row. Click to unlock.' : 'Lock so filing skips this row'}
+                          title={t(selectedLoc.locked ? 'compartment.lockContainerRow' : activeComp.locked ? 'compartment.lockedHintRow' : 'compartment.lockHintRow')}
                           style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.6rem', padding: '0.2rem 0.5rem', opacity: selectedLoc.locked ? 0.5 : 1, ...((activeComp.locked || selectedLoc.locked) ? { borderColor: 'var(--accent-yellow)', color: 'var(--accent-yellow)' } : {}) }}
                         >
-                          <Lock size={12} /> {activeComp.locked ? 'Locked' : 'Lock'}
+                          <Lock size={12} /> {t(activeComp.locked ? 'compartment.locked' : 'compartment.lock')}
                         </button>
                       </div>
                     </div>
@@ -1448,14 +1451,14 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         {filingMode ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', height: '100%' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <strong style={{ fontSize: '0.85rem' }}>{filingReadOnly ? 'Re-sort: Re-file Guide' : 'Filing Mode'}</strong>
+              <strong style={{ fontSize: '0.85rem' }}>{t(filingReadOnly ? 'loc.refileGuide' : 'loc.filingMode')}</strong>
               <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => { setFilingMode(false); setFilingReadOnly(false); refreshAll(); }} style={{ padding: '0.2rem 0.5rem', width: 'auto', fontSize: '0.7rem' }}>
-                {filingReadOnly ? 'Done' : 'Cancel'}
+                {t(filingReadOnly ? 'bulk.done' : 'common.cancel')}
               </button>
             </div>
             {filingReadOnly && (
               <div style={{ textAlign: 'center', fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
-                Cards already re-sorted in the app. Move each physical card to the spot shown, then tap Next.
+                {t('loc.resortGuideHint')}
               </div>
             )}
             
@@ -1481,7 +1484,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           {filingQueue[filingIndex].rejected ? "Doesn't match this container's filing rule" : 'Container Full!'}
                         </strong>
                         <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                          {filingQueue[filingIndex].rejected ? 'Skip it, or change the rule in Container Settings.' : 'Skip it, or add pages/rows to make room.'}
+                          {t(filingQueue[filingIndex].rejected ? 'loc.skipRejected' : 'loc.skipNoRoom')}
                         </div>
                       </div>
                     );
@@ -1492,20 +1495,20 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                       onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 193, 7, 0.25)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 193, 7, 0.15)'; }}
                       onClick={() => locateRecommendedSpot(rec)}
-                      title="Click to snap to this slot in the container"
+                      title={t('loc.snapToSlot')}
                     >
-                      <div style={{ fontSize: '0.7rem', color: '#ffc107', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 'bold', marginBottom: '0.25rem' }}>Click to Locate</div>
+                      <div style={{ fontSize: '0.7rem', color: '#ffc107', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 'bold', marginBottom: '0.25rem' }}>{t('loc.clickToLocate')}</div>
                       <strong style={{ fontSize: '0.9rem', color: 'var(--text-strong)', display: 'block' }}>{rec.label}</strong>
                       <strong style={{ fontSize: '1.2rem', color: '#ffc107', display: 'block', marginTop: '0.25rem' }}>Slot {Math.floor(rec.position / 1000)}</strong>
                       {rec.after ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', marginTop: '0.4rem' }}>
                           {rec.after.image_url && <img src={rec.after.image_url} alt={rec.after.name} style={{ width: '26px', borderRadius: '3px' }} />}
-                          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>File right after <strong style={{ color: 'var(--text-strong)' }}>{rec.after.name}</strong></span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{t('loc.fileAfter')} <strong style={{ color: 'var(--text-strong)' }}>{rec.after.name}</strong></span>
                         </div>
                       ) : rec.before ? (
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>File right before <strong style={{ color: 'var(--text-strong)' }}>{rec.before.name}</strong></div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>{t('loc.fileBefore')} <strong style={{ color: 'var(--text-strong)' }}>{rec.before.name}</strong></div>
                       ) : (
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>First card in this section</div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>{t('loc.firstInSection')}</div>
                       )}
                     </div>
                   );
@@ -1513,7 +1516,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 
                 <div style={{ display: 'flex', gap: '0.5rem', width: '100%', marginTop: '0.5rem' }}>
                   <button type="button" className="btn btn-secondary" onClick={advanceFiling} style={{ flex: 1, padding: '0.6rem' }}>
-                    Skip
+                    {t('loc.skip')}
                   </button>
                   <button
                     type="button"
@@ -1541,10 +1544,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   className={`btn ${unsortedSelectMode ? 'btn-primary' : 'btn-secondary'}`}
                   onClick={() => (unsortedSelectMode ? exitUnsortedSelectMode() : setUnsortedSelectMode(true))}
                   style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', height: '24px' }}
-                  title="Toggle multi-select"
+                  title={t('loc.toggleMultiSelect')}
                 >
                   <MousePointerClick size={12} />
-                  {unsortedSelectMode ? 'Done' : 'Select'}
+                  {t(unsortedSelectMode ? 'bulk.done' : 'collection.select')}
                 </button>
                 <div style={{ display: 'flex', background: 'rgba(0,0,0,0.2)', padding: '2px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                   <button
@@ -1552,7 +1555,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     className={`btn btn-icon-only ${unsortedViewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`}
                     onClick={() => setUnsortedViewMode('grid')}
                     style={{ borderRadius: 'var(--radius-sm)', padding: '0.25rem 0.35rem', width: '28px', height: '24px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                    title="Grid Gallery View"
+                    title={t('loc.gridView')}
                   >
                     <LayoutGrid size={13} />
                   </button>
@@ -1561,7 +1564,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     className={`btn btn-icon-only ${unsortedViewMode === 'detail' ? 'btn-primary' : 'btn-secondary'}`}
                     onClick={() => setUnsortedViewMode('detail')}
                     style={{ borderRadius: 'var(--radius-sm)', padding: '0.25rem 0.35rem', width: '28px', height: '24px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                    title="Detail List View"
+                    title={t('loc.detailView')}
                   >
                     <List size={13} />
                   </button>
@@ -1574,8 +1577,8 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-strong)' }}>{unsortedSelectedIds.size} selected</span>
                   <div style={{ display: 'flex', gap: '0.3rem' }}>
-                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }} onClick={() => setUnsortedSelectedIds(new Set(unsortedCards.map(c => c.entry_id)))}>Select All</button>
-                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }} onClick={clearUnsortedSelection}>Clear</button>
+                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }} onClick={() => setUnsortedSelectedIds(new Set(unsortedCards.map(c => c.entry_id)))}>{t('loc.selectAll')}</button>
+                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }} onClick={clearUnsortedSelection}>{t('bulk.clear')}</button>
                   </div>
                 </div>
 
@@ -1586,7 +1589,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     onChange={(e) => setUnsortedBulkLocation(e.target.value)}
                     style={{ fontSize: '0.7rem', padding: '0.25rem 0.4rem', flex: 1, minWidth: 0 }}
                   >
-                    <option value="">File selected to...</option>
+                    <option value="">{t('loc.fileSelectedTo')}</option>
                     {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </select>
                   <button
@@ -1601,16 +1604,16 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     }}
                     style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', fontWeight: 'bold' }}
                   >
-                    File
+                    {t('loc.file')}
                   </button>
                   <button
                     type="button"
                     className="btn btn-danger"
                     disabled={!unsortedSelectedIds.size}
-                    onClick={() => runUnsortedBulk('delete', null, `Delete ${unsortedSelectedIds.size} selected card(s)? This cannot be undone.`)}
+                    onClick={() => runUnsortedBulk('delete', null, t('bulk.confirmDelete', { count: unsortedSelectedIds.size }))}
                     style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem' }}
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 </div>
               </div>
@@ -1618,15 +1621,15 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
               <input
-                className="input-control" placeholder="Search..." value={unsortedSearch}
+                className="input-control" placeholder={t('loc.searchPlaceholder')} value={unsortedSearch}
                 onChange={(e) => setUnsortedSearch(e.target.value)} style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem' }}
               />
               <select className="select-control" value={unsortedSort} onChange={(e) => setUnsortedSort(e.target.value)} style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem' }}>
                 <option value="scanned-desc">Scanned (Newest First)</option>
                 <option value="scanned-asc">Scanned (Oldest First)</option>
-                <option value="name-asc">A-Z</option>
+                <option value="name-asc">{t('loc.sortAZ')}</option>
                 <option value="price-desc">Value (High-Low)</option>
-                <option value="set-number">Set & Number</option>
+                <option value="set-number">{t('loc.sortSetNumber')}</option>
               </select>
             </div>
 
@@ -1637,20 +1640,20 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   className="btn btn-primary"
                   onClick={startFilingMode}
                   disabled={!activeLocationId}
-                  title={activeLocationId ? 'Walk through filing each fitting card into the open container' : 'Select a container first'}
+                  title={t(activeLocationId ? 'loc.fileWalkHint' : 'loc.selectContainerFirst')}
                   style={{ fontSize: '0.8rem', padding: '0.45rem', width: '100%' }}
                 >
-                  Sort & File (into open container)
+                  {t('loc.sortAndFile')}
                 </button>
                 <button
                   type="button"
                   className="btn btn-secondary"
                   onClick={handleApplyAll}
                   disabled={!activeLocationId}
-                  title={activeLocationId ? 'File every unsorted card into the open container in one go' : 'Select a container first'}
+                  title={t(activeLocationId ? 'loc.autoFileHint' : 'loc.selectContainerFirst')}
                   style={{ fontSize: '0.7rem', padding: '0.35rem', width: '100%' }}
                 >
-                  Auto-File All (into open container)
+                  {t('loc.autoFileAll')}
                 </button>
               </div>
             )}
@@ -1755,7 +1758,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                             textOverflow: 'ellipsis'
                           }}
                         >
-                          {isHighlighted ? '✓ ' : ''}{card.name}
+                          {isHighlighted ? '✓ ' : ''}{displayName(card)}
                         </div>
                         <div style={{ fontSize: '0.62rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.set_name || ''}</span>
@@ -1811,7 +1814,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
 
                       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
                         <div style={{ fontWeight: isHighlighted ? 700 : 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {isHighlighted ? '✓ ' : ''}{card.name}
+                          {isHighlighted ? '✓ ' : ''}{displayName(card)}
                         </div>
                         <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', display: 'flex', gap: '0.4rem', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <span>{card.set_name || 'Unset'} {card.number ? `#${card.number}` : ''}</span>
@@ -1839,7 +1842,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
               </div>
             )}
 
-            {unsortedCards.length === 0 && <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.5rem' }}>Nothing unsorted.</p>}
+            {unsortedCards.length === 0 && <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.5rem' }}>{t('loc.nothingUnsorted')}</p>}
           </>
         )}
       </div>
@@ -1853,7 +1856,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
           <div className="glass-panel" style={{ padding: '0.7rem 0.8rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', background: 'var(--bg-secondary)', boxShadow: '0 -6px 20px rgba(0,0,0,0.5)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
               <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                {filingReadOnly ? 'Re-file' : 'Filing'} {filingIndex + 1} / {filingQueue.length}
+                {t(filingReadOnly ? 'loc.refile' : 'loc.filing')} {filingIndex + 1} / {filingQueue.length}
               </span>
               {filingBarCollapsed && (
                 <span style={{ flex: 1, minWidth: 0, fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1861,10 +1864,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 </span>
               )}
               <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
-                <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => setFilingBarCollapsed(c => !c)} title={filingBarCollapsed ? 'Expand' : 'Collapse (see more of the binder)'} style={{ width: '26px', height: '26px', padding: 0 }}>
+                <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => setFilingBarCollapsed(c => !c)} title={t(filingBarCollapsed ? 'loc.expand' : 'loc.collapse')} style={{ width: '26px', height: '26px', padding: 0 }}>
                   {filingBarCollapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                 </button>
-                <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => { setFilingMode(false); setFilingReadOnly(false); refreshAll(); }} title="Exit filing" style={{ width: '26px', height: '26px', padding: 0 }}>
+                <button type="button" className="btn btn-secondary btn-icon-only" onClick={() => { setFilingMode(false); setFilingReadOnly(false); refreshAll(); }} title={t('loc.exitFiling')} style={{ width: '26px', height: '26px', padding: 0 }}>
                   <X size={13} />
                 </button>
               </div>
@@ -1888,11 +1891,11 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
               <>
                 <div
                   onClick={() => locateRecommendedSpot(currentRecSpot)}
-                  title="Tap to snap the container to this slot"
+                  title={t('loc.tapToSnap')}
                   style={{ background: 'rgba(255,193,7,0.14)', border: '1px solid #ffc107', borderRadius: 'var(--radius-sm)', padding: '0.5rem 0.6rem', cursor: 'pointer' }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.5rem' }}>
-                    <span style={{ fontSize: '0.6rem', color: '#ffc107', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>Tap to locate</span>
+                    <span style={{ fontSize: '0.6rem', color: '#ffc107', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>{t('loc.tapToLocate')}</span>
                     <strong style={{ fontSize: '0.95rem', color: '#ffc107', whiteSpace: 'nowrap' }}>Slot {Math.floor(currentRecSpot.position / 1000)}</strong>
                   </div>
                   {!filingBarCollapsed && (<>
@@ -1902,18 +1905,18 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   {currentRecSpot.after ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.4rem' }}>
                       {currentRecSpot.after.image_url && <img src={currentRecSpot.after.image_url} alt={currentRecSpot.after.name} style={{ width: '26px', borderRadius: '3px', flexShrink: 0 }} />}
-                      <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>File right after <strong style={{ color: 'var(--text-strong)' }}>{currentRecSpot.after.name}</strong></span>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('loc.fileAfter')} <strong style={{ color: 'var(--text-strong)' }}>{currentRecSpot.after.name}</strong></span>
                     </div>
                   ) : currentRecSpot.before ? (
-                    <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '0.4rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>File right before <strong style={{ color: 'var(--text-strong)' }}>{currentRecSpot.before.name}</strong></div>
+                    <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '0.4rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t('loc.fileBefore')} <strong style={{ color: 'var(--text-strong)' }}>{currentRecSpot.before.name}</strong></div>
                   ) : (
-                    <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>First card in this section</div>
+                    <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>{t('loc.firstInSection')}</div>
                   )}
                   </>)}
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button type="button" className="btn btn-secondary" onClick={advanceFiling} style={{ flex: 1, padding: '0.55rem', fontSize: '0.8rem' }}>Skip</button>
+                  <button type="button" className="btn btn-secondary" onClick={advanceFiling} style={{ flex: 1, padding: '0.55rem', fontSize: '0.8rem' }}>{t('loc.skip')}</button>
                   <button
                     type="button"
                     className="btn btn-primary"
@@ -1929,7 +1932,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 <div style={{ fontSize: '0.75rem', color: 'var(--accent-red)', fontWeight: 700, textAlign: 'center' }}>
                   {filingQueue[filingIndex].rejected ? "Doesn't fit this container's rule" : 'Container full'}
                 </div>
-                <button type="button" className="btn btn-secondary" onClick={advanceFiling} style={{ padding: '0.55rem', fontSize: '0.82rem', fontWeight: 700 }}>Skip</button>
+                <button type="button" className="btn btn-secondary" onClick={advanceFiling} style={{ padding: '0.55rem', fontSize: '0.82rem', fontWeight: 700 }}>{t('loc.skip')}</button>
               </>
             )}
           </div>

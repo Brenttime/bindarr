@@ -3,6 +3,7 @@ import { LayoutDashboard, Database, MapPin, Sparkles, Settings as SettingsIcon, 
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
+import { useT } from './utils/i18n';
 
 // View components are code-split so heavy deps (recharts in the chart views)
 // load on demand instead of in the initial bundle.
@@ -29,12 +30,14 @@ class ErrorBoundary extends React.Component {
   }
   render() {
     if (this.state.hasError) {
+      // Class component, so no hook: App hands t down as a prop.
+      const t = this.props.t;
       return (
         <div style={{ padding: '2rem', color: 'var(--text-strong)', background: 'rgba(255,0,0,0.1)', border: '1px solid red', borderRadius: '8px', margin: '2rem' }}>
-          <h2 style={{ fontSize: '1.2rem', marginBottom: '1rem', color: 'var(--accent-red)' }}>Something went wrong.</h2>
+          <h2 style={{ fontSize: '1.2rem', marginBottom: '1rem', color: 'var(--accent-red)' }}>{t('error.crashed')}</h2>
           <pre style={{ whiteSpace: 'pre-wrap', color: '#ff8888', background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '4px', fontSize: '0.85rem' }}>{this.state.error && this.state.error.toString()}</pre>
           <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.75rem', marginTop: '1rem', color: 'var(--text-secondary)' }}>{this.state.error && this.state.error.stack}</pre>
-          <button className="btn btn-primary" style={{ marginTop: '1.5rem' }} onClick={() => window.location.reload()}>Reload Page</button>
+          <button className="btn btn-primary" style={{ marginTop: '1.5rem' }} onClick={() => window.location.reload()}>{t('error.reload')}</button>
         </div>
       );
     }
@@ -44,9 +47,10 @@ class ErrorBoundary extends React.Component {
 
 // Fallback shown while a lazily-loaded view chunk is fetched.
 function ChunkFallback() {
+  const { t } = useT();
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '4rem', color: 'var(--text-secondary)' }}>
-      <div className="spinner" aria-label="Loading" />
+      <div className="spinner" aria-label={t('common.loading')} />
     </div>
   );
 }
@@ -76,6 +80,7 @@ window.fetch = function (input, options = {}) {
 };
 
 function App() {
+  const { t } = useT();
   const [token, setToken] = useState(localStorage.getItem('bindarr_token'));
   const [user, setUser] = useState(() => {
     try {
@@ -138,11 +143,11 @@ function App() {
       setUser(null);
       localStorage.removeItem('bindarr_token');
       localStorage.removeItem('bindarr_user');
-      showToast('Session expired. Please log in again.');
+      showToast(t('toast.sessionExpired'));
     };
     window.addEventListener('bindarr_logout', handleAutoLogout);
     return () => window.removeEventListener('bindarr_logout', handleAutoLogout);
-  }, []);
+  }, [t]);
 
   // Pointer-reactive foil: one delegated listener drives --px/--py (0-100%) on
   // whichever card the pointer is over, so the holo/reverse-holo rainbow tracks
@@ -173,7 +178,7 @@ function App() {
     setUser(newUser);
     localStorage.setItem('bindarr_token', newToken);
     localStorage.setItem('bindarr_user', JSON.stringify(newUser));
-    showToast(`Welcome back, ${newUser.username}!`);
+    showToast(t('toast.welcomeBack', { name: newUser.username }));
     setActiveTab('dashboard');
   };
 
@@ -185,7 +190,7 @@ function App() {
     setUser(null);
     localStorage.removeItem('bindarr_token');
     localStorage.removeItem('bindarr_user');
-    showToast('Logged out successfully.');
+    showToast(t('toast.loggedOut'));
   };
 
   const handleUpdateUser = (updatedUser) => {
@@ -274,35 +279,35 @@ function App() {
             onClick={() => goTab('dashboard')}
           >
             <LayoutDashboard size={18} />
-            <span>Dashboard</span>
+            <span>{t('nav.dashboard')}</span>
           </button>
-          <button 
+          <button
             className={`nav-tab ${activeTab === 'add-cards' ? 'active' : ''}`}
             onClick={() => goTab('add-cards')}
           >
             <Plus size={18} />
-            <span>Add Cards</span>
+            <span>{t('nav.addCards')}</span>
           </button>
-          <button 
+          <button
             className={`nav-tab ${activeTab === 'collection' ? 'active' : ''}`}
             onClick={() => goTab('collection')}
           >
             <Database size={18} />
-            <span>Collection</span>
+            <span>{t('nav.collection')}</span>
           </button>
-          <button 
+          <button
             className={`nav-tab ${activeTab === 'storage' ? 'active' : ''}`}
             onClick={() => goTab('storage')}
           >
             <MapPin size={18} />
-            <span>Storage</span>
+            <span>{t('nav.storage')}</span>
           </button>
-          <button 
+          <button
             className={`nav-tab ${activeTab === 'deckbuilder' ? 'active' : ''}`}
             onClick={() => goTab('deckbuilder')}
           >
             <Swords size={18} />
-            <span>Deck Builder</span>
+            <span>{t('nav.deckBuilder')}</span>
           </button>
 
           <button
@@ -310,7 +315,7 @@ function App() {
             onClick={() => goTab('notes')}
           >
             <StickyNote size={18} />
-            <span>Notes</span>
+            <span>{t('nav.notes')}</span>
           </button>
 
           <button
@@ -318,7 +323,7 @@ function App() {
             onClick={() => goTab('settings')}
           >
             <SettingsIcon size={18} />
-            <span>Settings</span>
+            <span>{t('nav.settings')}</span>
           </button>
           {user.role === 'admin' && (
             <button 
@@ -326,7 +331,7 @@ function App() {
               onClick={() => goTab('admin')}
             >
               <ShieldAlert size={18} style={{ color: 'var(--accent-red)' }} />
-              <span>Admin</span>
+              <span>{t('nav.admin')}</span>
             </button>
           )}
         </nav>
@@ -334,13 +339,13 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
             <Sparkles size={14} style={{ color: 'var(--accent-yellow)' }} />
-            <span>Hello, <strong style={{ color: 'var(--text-strong)' }}>{user.username}</strong> ({user.role})</span>
+            <span>{t('header.greeting')} <strong style={{ color: 'var(--text-strong)' }}>{user.username}</strong> ({t(`role.${user.role}`)})</span>
           </div>
           <button
             onClick={handleLogout}
             className="btn btn-secondary btn-icon-only"
-            title="Log Out"
-            aria-label="Log Out"
+            title={t('header.logOut')}
+            aria-label={t('header.logOut')}
             style={{ padding: '0.4rem 0.5rem', borderRadius: 'var(--radius-sm)' }}
           >
             <LogOut size={14} />
@@ -353,7 +358,7 @@ function App() {
         {/* key on activeTab remounts the boundary per tab, so a crash in one
             view clears when you navigate away instead of persisting until a
             manual reload. */}
-        <ErrorBoundary key={activeTab}>
+        <ErrorBoundary key={activeTab} t={t}>
           <div className="view-transition">
             <Suspense fallback={<ChunkFallback />}>
               {renderContent()}

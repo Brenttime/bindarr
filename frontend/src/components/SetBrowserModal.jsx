@@ -1,13 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, Search, Database, Play, CheckCircle2, Zap } from 'lucide-react';
 import { useBackGuard } from '../utils/useBackGuard';
+import { defaultGame, gameOptions, isGameEnabled, showGamePicker, gameLabel } from '../utils/games';
+import { langName } from '../utils/languages';
+import { useT } from '../utils/i18n';
 
-function formatDate(d) {
+// Month name and field order both come from the locale, so a German reader gets
+// "3. Aug. 2026" rather than "Aug 3, 2026".
+function formatDate(d, locale) {
   if (!d) return '-';
   try {
     const date = new Date(d);
     if (isNaN(date.getTime())) return d;
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    return date.toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' });
   } catch { return d; }
 }
 
@@ -21,8 +26,11 @@ function bareSetCode(id, game) {
 
 const isActive = (p) => p && (p.status === 'fetching' || p.status === 'indexing');
 
-export default function SetBrowserModal({ game: initialGame, onClose, onStartBuild, existingKeys, progress }) {
-  const [game, setGame] = useState(initialGame || 'mtg');
+// `lang` is the language whose indexes this browser is building and reporting on
+// — a set can be indexed once per language, so every key below carries it.
+export default function SetBrowserModal({ game: initialGame, lang = 'en', onClose, onStartBuild, existingKeys, progress }) {
+  const { t, locale } = useT();
+  const [game, setGame] = useState(() => (isGameEnabled(initialGame) ? initialGame : defaultGame()));
   const [sets, setSets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
@@ -37,7 +45,7 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/admin/sets-browse?game=${game}`);
+        const res = await fetch(`/api/admin/sets-browse?game=${game}&lang=${encodeURIComponent(lang)}`);
         if (!res.ok) {
           const d = await res.json().catch(() => ({}));
           throw new Error(d.error || `HTTP ${res.status}`);
@@ -52,30 +60,34 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
     };
     fetchSets();
     return () => { cancelled = true; };
-  }, [game]);
+  }, [game, lang]);
 
   const existingSet = new Set(existingKeys || []);
 
+  // Build keys must match the backend's exactly: it norms the set code the same
+  // way for the index filename, so "sm7.5" and "sm75" are the same build. Without
+  // this the row for a dotted Pokémon set id never flipped to "Indexed".
+  const buildKey = (g, setCode) => `${g}|${String(setCode).toLowerCase().replace(/[^a-z0-9]/g, '')}|${lang}`;
+
   const handleIndex = useCallback(async (g, setCode) => {
-    const key = `${g}|${setCode}`;
-    setBuildingSet(prev => new Set(prev).add(key));
+    setBuildingSet(prev => new Set(prev).add(buildKey(g, setCode)));
     try {
-      await onStartBuild(g, setCode);
+      await onStartBuild(g, setCode, lang);
     } catch {
       // onStartBuild handles its own errors/toasts
     }
     // Don't remove from buildingSet — the polling-driven existingKeys
     // will cause the row to flip to "Indexed" once the build completes.
-  }, [onStartBuild]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onStartBuild, lang]);
 
   const handleIndexAll = () => {
     const unbuilt = sets.filter(s => {
-      const code = bareSetCode(s.id, game);
-      const key = `${game}|${code}`;
+      const key = buildKey(game, bareSetCode(s.id, game));
       return !existingSet.has(key) && !buildingSet.has(key) && !isActive(progress[key]);
     });
     if (unbuilt.length === 0) return;
-    if (!window.confirm(`Index all ${unbuilt.length} unbuilt ${game === 'mtg' ? 'MTG' : 'Pokémon'} sets? This downloads every card image for each set and can take a long time.`)) return;
+    if (!window.confirm(t('sets.confirmIndexAll', { count: unbuilt.length, language: langName(lang), game: gameLabel(game, true) }))) return;
     for (const s of unbuilt) {
       handleIndex(game, bareSetCode(s.id, game));
     }
@@ -87,10 +99,7 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
 
   const logoFor = (s) => s.logo_url || s.symbol_url || null;
 
-  const unbuiltCount = sets.filter(s => {
-    const code = bareSetCode(s.id, game);
-    return !existingSet.has(`${game}|${code}`);
-  }).length;
+  const unbuiltCount = sets.filter(s => !existingSet.has(buildKey(game, bareSetCode(s.id, game)))).length;
 
   return (
     <div
@@ -106,7 +115,7 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Database size={18} style={{ color: 'var(--accent-red)' }} />
-            Browse Sets
+            {t('sets.browseTitle')}
           </h3>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             {unbuiltCount > 0 && (
@@ -116,7 +125,7 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
                 style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
                 onClick={handleIndexAll}
               >
-                <Zap size={14} /> Index All ({unbuiltCount})
+                <Zap size={14} /> {t('sets.indexAll', { count: unbuiltCount })}
               </button>
             )}
             <button className="btn btn-secondary btn-icon-only" onClick={onClose} style={{ width: '28px', height: '28px', padding: 0 }}>
@@ -127,26 +136,28 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
 
         {/* Game selector + search */}
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ display: 'flex', gap: '0.35rem' }}>
-            {['mtg', 'pokemon'].map(g => (
-              <button
-                key={g}
-                type="button"
-                className={`btn ${game === g ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
-                onClick={() => setGame(g)}
-              >
-                {g === 'mtg' ? 'MTG' : 'Pokémon'}
-              </button>
-            ))}
-          </div>
+          {showGamePicker() && (
+            <div style={{ display: 'flex', gap: '0.35rem' }}>
+              {gameOptions().map(({ value, short }) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`btn ${game === value ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                  onClick={() => setGame(value)}
+                >
+                  {short}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: '180px' }}>
             <div style={{ position: 'relative' }}>
               <Search size={14} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
               <input
                 type="text"
                 className="input-control"
-                placeholder="Filter sets..."
+                placeholder={t('sets.filterPlaceholder')}
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 style={{ paddingLeft: '1.8rem' }}
@@ -159,15 +170,15 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
         {loading ? (
           <div style={{ padding: '2rem', textAlign: 'center' }}>
             <div className="spinner" style={{ margin: '0 auto 0.5rem' }}></div>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Loading sets...</p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{t('sets.loading')}</p>
           </div>
         ) : error ? (
           <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--accent-red)', fontSize: '0.85rem' }}>
-            Failed to load sets: {error}
+            {t('sets.errLoad', { error })}
           </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-            {filter.trim() ? 'No sets match your filter.' : 'No sets found for this game.'}
+            {t(filter.trim() ? 'sets.noFilterMatch' : 'sets.noneForGame')}
           </div>
         ) : (
           <div className="collection-table-wrapper" style={{ overflowX: 'auto' }}>
@@ -175,16 +186,16 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
               <thead>
                 <tr>
                   <th style={{ width: '48px' }}></th>
-                  <th>Set</th>
-                  <th>Release</th>
-                  <th>Cards</th>
+                  <th>{t('sets.colSet')}</th>
+                  <th>{t('sets.colRelease')}</th>
+                  <th>{t('sets.colCards')}</th>
                   <th style={{ width: '110px' }}></th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(s => {
                   const setCode = bareSetCode(s.id, game);
-                  const key = `${game}|${setCode}`;
+                  const key = buildKey(game, setCode);
                   const isBuilt = existingSet.has(key);
                   const isIndexing = buildingSet.has(key) || isActive(progress[key]);
                   const logo = logoFor(s);
@@ -204,16 +215,16 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
                         <div style={{ fontWeight: 600, color: 'var(--text-strong)' }}>{s.name}</div>
                         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{setCode}</div>
                       </td>
-                      <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{formatDate(s.release_date)}</td>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{formatDate(s.release_date, locale)}</td>
                       <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{s.printed_total || '-'}</td>
                       <td>
                         {isBuilt ? (
                           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', color: 'var(--accent-green, #4ade80)' }}>
-                            <CheckCircle2 size={14} /> Indexed
+                            <CheckCircle2 size={14} /> {t('sets.indexed')}
                           </span>
                         ) : isIndexing ? (
                           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', color: 'var(--accent-yellow)' }}>
-                            <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div> Indexing...
+                            <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div> {t('sets.indexing')}
                           </span>
                         ) : (
                           <button
@@ -222,7 +233,7 @@ export default function SetBrowserModal({ game: initialGame, onClose, onStartBui
                             style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
                             onClick={() => handleIndex(game, setCode)}
                           >
-                            <Play size={12} /> Index Set
+                            <Play size={12} /> {t('sets.indexSet')}
                           </button>
                         )}
                       </td>

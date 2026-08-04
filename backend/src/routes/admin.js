@@ -8,6 +8,7 @@ const scryfallApi = require('../scryfallApi');
 const setIndex = require('../setIndex');
 const globalIndex = require('../globalIndex');
 const { parseCardRow } = require('../utils/priceHelpers');
+const languages = require('../utils/languages');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { BACKUP_DIR, listBackups, createBackup } = require('../backup');
 
@@ -295,13 +296,14 @@ router.get('/set-indexes', (req, res) => {
 });
 
 // Preview a set's printing count so the UI can warn about size before building.
+// `lang` defaults to English, so every existing caller keeps its behaviour.
 router.get('/set-indexes/preview', async (req, res) => {
-  const { game, set } = req.query;
+  const { game, set, lang } = req.query;
   if (!isGame(game) || !set) return res.status(400).json({ error: 'game (mtg|pokemon) and set are required' });
   try {
-    const cardCount = await setIndex.previewSet(game, set);
-    if (!cardCount) return res.status(404).json({ error: `No cards found for ${game} set "${set}"` });
-    res.json({ game, set, cardCount, estBytes: cardCount * 20 * 1024 });
+    const cardCount = await setIndex.previewSet(game, set, lang);
+    if (!cardCount) return res.status(404).json({ error: `No ${languages.toName(lang)} cards found for ${game} set "${set}"` });
+    res.json({ game, set, lang: languages.toCode(lang), cardCount, estBytes: cardCount * 20 * 1024 });
   } catch (error) {
     res.status(502).json({ error: `Set lookup failed: ${error.message}` });
   }
@@ -309,26 +311,32 @@ router.get('/set-indexes/preview', async (req, res) => {
 
 // Start (or restart) a full-set build. Runs in the background; poll GET for progress.
 router.post('/set-indexes', (req, res) => {
-  const { game, set } = req.body;
+  const { game, set, lang } = req.body;
   if (!isGame(game) || !set) return res.status(400).json({ error: 'game (mtg|pokemon) and set are required' });
-  setIndex.startBuild(game, set);
-  res.status(202).json({ message: `Build started for ${game} ${set}` });
+  setIndex.startBuild(game, set, lang);
+  res.status(202).json({ message: `Build started for ${game} ${set} (${languages.toCode(lang)})` });
 });
 
-// Remove a build's files.
+// Remove a build's files. The language is a query param, not another path
+// segment, so the existing DELETE URLs keep working unchanged.
 router.delete('/set-indexes/:game/:set', (req, res) => {
   const { game, set } = req.params;
   if (!isGame(game)) return res.status(400).json({ error: 'invalid game' });
-  setIndex.deleteBuild(game, set);
+  setIndex.deleteBuild(game, set, req.query.lang);
   res.json({ message: `Removed ${game} ${set} index` });
 });
 
 // Browse sets for the set-index builder modal — returns all known sets with
 // symbol/logo images for the chosen game, newest releases first.
 router.get('/sets-browse', async (req, res) => {
-  const { game } = req.query;
+  const { game, lang } = req.query;
   if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
   try {
+    // Non-English Pokémon sets are a different list (and not in the `sets` table).
+    if (game === 'pokemon' && !languages.isEnglish(lang)) {
+      const sets = await require('../tcgdexApi').listSets(lang);
+      return res.json([...sets].reverse()); // newest first, like the query below
+    }
     // Some older rows may have NULL game (defaults to 'pokemon').
     const sets = await db.all(
       `SELECT id, name, series, printed_total, release_date, symbol_url, logo_url

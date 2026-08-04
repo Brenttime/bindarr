@@ -3,22 +3,15 @@ import { X, Check, Minus, MapPin, Package, AlertTriangle } from 'lucide-react';
 import CompartmentView from './CompartmentView';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { useBackGuard } from '../utils/useBackGuard';
+import { useT } from '../utils/i18n';
 
 // Slot number a stored position encodes (positions are slot * 1000).
 const slotOf = (position) => (position ? Math.floor(position / 1000) : null);
 
-const COPY = {
-  checkout: {
-    title: 'Deck Checked Out',
-    subtitle: 'Grab these cards from your collection.',
-    verb: 'pulled'
-  },
-  checkin: {
-    title: 'Return to Storage',
-    subtitle: 'Put these cards back where they belong.',
-    verb: 'returned'
-  }
-};
+// Both modes say the same things about different directions of travel, and the
+// verb ("pulled" / "returned") is inflected into the middle of a sentence, so each
+// mode gets whole sentences rather than a verb glued into a shared template.
+const MODES = ['checkout', 'checkin'];
 
 // Post-checkout / return locator. A "where does each card go" checklist backed
 // by the locations payload the backend computed. Never mutates the collection
@@ -27,7 +20,8 @@ const COPY = {
 // the cards highlighted by entry_id. Select-all works per page, per container,
 // and globally.
 const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCancel }) => {
-  const copy = COPY[mode] || COPY.checkout;
+  const { t } = useT();
+  const kind = MODES.includes(mode) ? mode : 'checkout';
   const cancel = onCancel || onClose; // X / overlay / back = cancel (revert the toggle)
   const [done, setDone] = useState(new Set());
   const [expanded, setExpanded] = useState({}); // container.key -> user forced open after auto-collapse
@@ -55,7 +49,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
         containerMap.set(cKey, {
           key: cKey,
           unassigned: !p.location_id,
-          location_name: p.location_name || 'Unassigned Pile',
+          location_name: p.location_name || t('bulk.unassignedPile'),
           pageMap: new Map()
         });
       }
@@ -91,7 +85,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
 
     const pagesFlat = containers.filter(c => !c.unassigned).flatMap(c => c.pages);
     return { containers, pagesFlat, missing, totalPulls: pulls.length, allEntryIds: pulls.map(p => p.entry_id) };
-  }, [locationsData]);
+  }, [locationsData, t]);
 
   useEffect(() => {
     fetch('/api/sets').then(r => r.json()).then(setSetsList).catch(() => {});
@@ -147,7 +141,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
   });
   const toggleOne = (id) => setChecked([id], !done.has(id));
 
-  const SelectAll = ({ ids, label = 'Select all' }) => {
+  const SelectAll = ({ ids, label }) => {
     const all = ids.length > 0 && ids.every(id => done.has(id));
     const some = !all && ids.some(id => done.has(id));
     return (
@@ -159,7 +153,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
         <span style={{ width: '16px', height: '16px', borderRadius: '4px', border: all || some ? 'none' : '2px solid var(--text-muted)', background: all ? 'var(--accent-green)' : some ? 'var(--accent-blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', color: all ? '#000' : '#fff' }}>
           {all ? <Check size={11} strokeWidth={3} /> : some ? <Minus size={11} strokeWidth={3} /> : null}
         </span>
-        {label}
+        {label ?? t('wizard.selectAll')}
       </button>
     );
   };
@@ -195,7 +189,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
                 {pull.card_name}
               </div>
               <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
-                {pull.set_name} · #{pull.number}{slot ? ` · Slot ${slot}` : ''}
+                {pull.set_name} · #{pull.number}{slot ? ` · ${t('wizard.slot', { slot })}` : ''}
               </div>
             </div>
             {pull.take > 1 && (
@@ -250,10 +244,10 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
         <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-glass)', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
             <div>
-              <h2 style={{ fontSize: '1.35rem', color: 'var(--text-strong)', fontWeight: 800, margin: '0 0 0.25rem 0' }}>{copy.title}</h2>
-              <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.85rem' }}>{copy.subtitle}</p>
+              <h2 style={{ fontSize: '1.35rem', color: 'var(--text-strong)', fontWeight: 800, margin: '0 0 0.25rem 0' }}>{t(`wizard.${kind}.title`)}</h2>
+              <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.85rem' }}>{t(`wizard.${kind}.subtitle`)}</p>
             </div>
-            <button className="btn btn-secondary btn-icon-only" onClick={cancel} aria-label="Cancel">
+            <button className="btn btn-secondary btn-icon-only" onClick={cancel} aria-label={t('common.cancel')}>
               <X size={16} />
             </button>
           </div>
@@ -261,8 +255,8 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
           {totalPulls > 0 && (
             <div style={{ marginTop: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{doneCount} of {totalPulls} {copy.verb}</span>
-                <SelectAll ids={allEntryIds} label={allComplete ? 'Clear all' : 'Select all'} />
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t(`wizard.${kind}.progress`, { done: doneCount, total: totalPulls })}</span>
+                <SelectAll ids={allEntryIds} label={t(allComplete ? 'wizard.clearAll' : 'wizard.selectAll')} />
               </div>
               <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
                 <div style={{ width: `${pct}%`, height: '100%', background: allComplete ? 'var(--accent-green)' : 'var(--accent-blue)', transition: 'width 0.3s ease' }} />
@@ -274,13 +268,13 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
         {/* Body */}
         <div style={{ padding: '1.25rem 1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {totalPulls === 0 && missing.length === 0 && (
-            <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '1.5rem 0', fontSize: '0.9rem' }}>No cards to move.</div>
+            <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '1.5rem 0', fontSize: '0.9rem' }}>{t('wizard.nothingToMove')}</div>
           )}
 
           {missing.length > 0 && (
             <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 'var(--radius-md)', padding: '0.85rem 1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-red)', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                <AlertTriangle size={16} /> Not enough copies owned
+                <AlertTriangle size={16} /> {t('wizard.notEnoughCopies')}
               </div>
               <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                 {missing.map(m => <div key={m.card_id}>{m.qty}× {m.name}</div>)}
@@ -306,7 +300,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ color: 'var(--text-strong)', fontWeight: 700, fontSize: '0.95rem' }}>{container.location_name}</div>
                     {collapsed ? (
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{container.entryIds.length} {copy.verb} · tap to show</div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{t(`wizard.${kind}.collapsed`, { count: container.entryIds.length })}</div>
                     ) : singlePage && container.pages[0].compartment_display && (
                       <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{container.pages[0].compartment_display}</div>
                     )}
@@ -324,7 +318,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
                   container.pages.map(page => (
                     <div key={page.key} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingLeft: '0.5rem', borderLeft: '2px solid var(--border-glass)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 600 }}>{page.compartment_display || 'Page'}</span>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 600 }}>{page.compartment_display || t('wizard.page')}</span>
                         <SelectAll ids={page.pulls.map(p => p.entry_id)} />
                       </div>
                       {renderGrid(page)}
@@ -339,7 +333,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
 
         {/* Footer */}
         <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid var(--border-glass)', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', flexShrink: 0 }}>
-          <button className="btn btn-primary" onClick={onClose} disabled={totalPulls > 0 && !allComplete}>Done</button>
+          <button className="btn btn-primary" onClick={onClose} disabled={totalPulls > 0 && !allComplete}>{t('bulk.done')}</button>
         </div>
       </div>
     </div>
