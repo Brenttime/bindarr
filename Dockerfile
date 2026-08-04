@@ -35,6 +35,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set environment to production
 ENV NODE_ENV=production
 ENV PORT=3001
+# Card scanning needs a secure context, and a container reached at
+# http://<host>:3001 is not one, so TLS is served alongside HTTP. The cert is
+# self-signed into /app/database/ssl on first start (persisted with the volume)
+# unless SSL_CERT_PATH/SSL_KEY_PATH point at a real one. Set HTTPS_PORT="" to
+# serve plain HTTP only.
+ENV HTTPS_PORT=3443
 # Upgrades from an image that used pokemon_cards.db keep their data: the app
 # renames the old file (and its WAL sidecars) into place on first start.
 ENV DB_PATH=/app/database/bindarr.db
@@ -87,8 +93,8 @@ COPY entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Expose port
-EXPOSE 3001
+# Expose ports (HTTP + the TLS listener used for camera scanning)
+EXPOSE 3001 3443
 
 # Liveness/readiness probe. start-period covers startup (set sync + price job).
 # wget is installed above (slim has no wget by default).

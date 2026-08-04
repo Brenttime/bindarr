@@ -48,6 +48,7 @@ The demo runs the real frontend against baked-in sample data (no backend) so you
 - [Card Scanning & Match Data](#card-scanning--match-data)
 - [Backup, Restore & Recovery](#backup-restore--recovery)
 - [Project Structure](#project-structure)
+- [Translating Bindarr](#translating-bindarr)
 - [License](#license)
 
 ---
@@ -101,6 +102,9 @@ The bundle is a Node Single Executable App with the backend, frontend, and depen
 
 > [!TIP]
 > **Phones:** grab **`Bindarr-Android.apk`** from the same release and install it (allow "install from unknown sources"). iOS is distributed via TestFlight. The mobile apps talk to a Bindarr server, so run one of the options above (or Docker) and point the app at it.
+
+> [!TIP]
+> **Reaching it from another device?** `http://localhost:3001` scans cards fine, but `http://<your-ip>:3001` from a phone or laptop cannot — browsers only allow camera access over HTTPS. Add `HTTPS_PORT=3443` to `app/backend/.env` and the same app is also served at `https://<your-ip>:3443`, with a self-signed certificate to click past once. Details in [Two ports, one app](#two-ports-one-app-pick-the-one-that-matches-your-setup).
 
 Prefer containers, or running as a background service? Use [Docker](#docker-deployment). Want to hack on the code? See [Quick Start (Development)](#quick-start-development).
 
@@ -204,9 +208,13 @@ Prefer containers, or want it running as a restart-on-boot background service? B
        container_name: bindarr
        restart: unless-stopped
        ports:
-         - "3001:3001"
+         - "3001:3001"   # HTTP  — point a reverse proxy here
+         - "3443:3443"   # HTTPS — use this directly when you have no proxy (needed for card scanning)
        environment:
          # All optional. Uncomment and set as needed.
+         # - HTTPS_PORT=3443             # already the image default; set to "" to serve plain HTTP only
+         # - SSL_CERT_PATH=              # your own cert (e.g. /app/database/certs/fullchain.pem); omit for auto self-signed
+         # - SSL_KEY_PATH=               # its private key
          # - POKEMON_TCG_API_KEY=        # free key from dev.pokemontcg.io raises rate limits
          # - PUBLIC_BASE_URL=            # external URL behind a proxy, e.g. https://cards.example.com. Share links + auto-allowed as a CORS origin (proxied logins work with just this)
          # - DEFAULT_ADMIN_PASSWORD=     # pin the initial admin password (else it's auto-generated in the logs)
@@ -228,6 +236,35 @@ Prefer containers, or want it running as a restart-on-boot background service? B
 
 > [!TIP]
 > Update to the newest image any time with `docker compose pull && docker compose up -d`. Your data in the volume is untouched.
+
+### Two ports, one app: pick the one that matches your setup
+
+The container serves the **same Bindarr, same database, same everything** on both ports. They are not two modes or two instances — only the transport differs, and you can hit both at once from different devices.
+
+| Port | Serves | Use it when |
+| --- | --- | --- |
+| `3001` | plain HTTP | **You have a reverse proxy.** Point Caddy / Nginx Proxy Manager / Traefik / Tailscale Serve at this port and let it terminate TLS. Also fine for `http://localhost:3001` on the machine running the container. |
+| `3443` | HTTPS (self-signed by default) | **You have no reverse proxy** and want to reach Bindarr from a phone or another computer — including **card scanning**, which browsers only allow over HTTPS. |
+
+You do not need both published. Publishing only the one you use is fine:
+
+- **With a reverse proxy** — publish `3001`, drop the `3443` line, set `TRUST_PROXY=1`, and use the proxy's `https://` address for everything. Scanning works there because the proxy's certificate is a real one. (Leaving `3443` published costs nothing; it just goes unused.)
+- **Without a reverse proxy** — publish both. Use `https://<server-ip>:3443` from phones and other machines, and `http://localhost:3001` on the host itself if you prefer. Everything except the camera also works fine over plain HTTP from anywhere.
+
+#### Why scanning needs the HTTPS port
+
+Browsers only hand out the camera in a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts). `http://<server-ip>:3001` is not one, so the scanner refuses to open the camera and shows no permission prompt to accept, because the browser never asks. `http://localhost:3001` is the one exception browsers make, which is why scanning works on the host but not from your phone.
+
+#### The self-signed certificate warning
+
+Generated on first start into the data volume (`/app/database/ssl`), not baked into the image. On first visit to `https://<server-ip>:3443` your browser warns that the issuer is unknown — expected, since nobody vouches for a certificate your own server made:
+
+- Tap **Advanced** -> **Proceed** (iOS Safari: **Show Details** -> **Visit this website**). The camera works from then on.
+- The same certificate is reused on every later start, so each device only accepts it once.
+- Already have a real certificate (Let's Encrypt, your own CA)? Mount it and set `SSL_CERT_PATH` + `SSL_KEY_PATH` — no warning at all.
+
+> [!NOTE]
+> While the certificate is self-signed, Bindarr deliberately does not send `Strict-Transport-Security`. That header pins your browser to HTTPS for the host, which makes an untrusted certificate impossible to click past and upgrades `http://…:3001` to HTTPS too — locking you out of both ports. Setting `TRUST_PROXY` (real proxy in front) or `SSL_CERT_PATH` (real certificate) turns it back on.
 
 ### Building from source instead
 
@@ -349,6 +386,30 @@ These download every card image and are **heavy**: several hours of CPU + downlo
         └── workflows/
               └── docker-build.yml   # verify (backend tests) -> build & push to GHCR
 ```
+
+---
+
+## Translating Bindarr
+
+**Bindarr is English-only right now, and translators are wanted.** People collect
+cards in every language; there is no reason the app should only speak one. If you
+are fluent in another language, this is the single most useful thing you can
+contribute, and it does not require knowing how to code.
+
+The interface is translated by the community, and a translation is a single JSON
+file - no account, no tooling, no programming. Copy
+[`frontend/src/locales/en.json`](frontend/src/locales/en.json), translate the text
+on the right of each `:`, and open a pull request. Partial files are welcome:
+anything untranslated falls back to English key by key, and the new language shows
+up in Settings the moment it merges. You do not have to finish a language to be
+useful, and you do not have to be the one who finishes it.
+
+Full instructions, including the rules for `{placeholders}` and plurals, are in
+**[docs/TRANSLATING.md](docs/TRANSLATING.md)**.
+
+Note that this is the language of the *app*. The language a card was printed in is
+recorded per card and is a separate setting, so an app in German and a binder full
+of Japanese cards is a perfectly normal combination.
 
 ---
 

@@ -21,6 +21,7 @@ const settingsRoutes = require('./routes/settings');
 const tagsRoutes = require('./routes/tags');
 const notesRoutes = require('./routes/notes');
 const { getAuditLogs, revertAuditEvent } = require('./utils/auditLogger');
+const { startHttps, selfSignedTls } = require('./utils/tls');
 
 
 const app = express();
@@ -44,13 +45,19 @@ if (process.env.TRUST_PROXY) {
 // scan flow and card images load cleanly under these directives.
 // ponytail: Report-Only ceiling — enforce after a prod verification pass.
 app.use(helmet({
+  // HSTS pins the host to HTTPS in the browser. When we terminate TLS ourselves
+  // with a self-signed certificate that is a lockout: Chrome stops offering the
+  // "proceed anyway" bypass, and http://<host>:3001 gets upgraded too. Left at
+  // helmet's default (on) for every other deployment, including a reverse proxy
+  // with a real certificate.
+  hsts: !selfSignedTls(),
   contentSecurityPolicy: {
     reportOnly: true,
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
       connectSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'blob:', 'https://images.pokemontcg.io', 'https://cards.scryfall.io', 'https://c1.scryfall.com', 'https://img.scryfall.com'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https://images.pokemontcg.io', 'https://cards.scryfall.io', 'https://c1.scryfall.com', 'https://img.scryfall.com', 'https://assets.tcgdex.net'],
       styleSrc: ["'self'", "'unsafe-inline'"],
       fontSrc: ["'self'", 'data:'],
       objectSrc: ["'none'"],
@@ -147,6 +154,10 @@ db.initDb()
     setInterval(() => {
       tcgApi.updateCollectionPrices(true);
       scryfallApi.updateCollectionPrices(true);
+      // Non-English Pokémon cards: their ids 404 on pokemontcg.io, so tcgApi's
+      // sweep skips them and this is their only price refresh. No-op until the
+      // user actually owns one.
+      require('./tcgdexApi').updateCollectionPrices(true);
     }, 1000 * 60 * 60 * 24);
 
     // Shortly after startup, catch up if the last sweep was over a day ago.
@@ -156,6 +167,7 @@ db.initDb()
     setTimeout(() => {
       tcgApi.updateCollectionPrices();
       scryfallApi.updateCollectionPrices();
+      require('./tcgdexApi').updateCollectionPrices();
     }, 30000);
 
     // Periodically purge expired sessions so the table doesn't grow unbounded
@@ -231,6 +243,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Bindarr Server running on port ${PORT}`);
   console.log(`Access local: http://localhost:${PORT}`);
   console.log(`=========================================`);
+  // Camera scanning needs a secure context, so a LAN/Docker install serves TLS
+  // too when HTTPS_PORT is set. Certificates live beside the database.
+  startHttps(app, path.join(path.dirname(db.dbPath), 'ssl'));
   // Warm the scan worker pool so the first set-scoped scan doesn't pay worker
   // spawn + opencv-wasm load. No-op when SCAN_WORKERS=0.
   try { require('./scanPool').getPool(); } catch (e) { console.warn('scanPool warmup skipped:', e.message); }

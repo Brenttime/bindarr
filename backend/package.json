@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node test/sort.test.js && node test/split.test.js && node test/deckrules.test.js && node test/auth.test.js && node test/tcgretry.test.js && node test/e2e/schema.test.js && node test/e2e/cross_feature.test.js && node test/e2e/scenarios.test.js && node test/e2e/scryfall.test.js && node test/e2e/run.js",
+    "test": "node test/sort.test.js && node test/split.test.js && node test/deckrules.test.js && node test/auth.test.js && node test/tcgretry.test.js && node test/languages.test.js && node test/setindexlang.test.js && node test/crop.test.js && node test/tls.test.js && node test/e2e/schema.test.js && node test/e2e/cross_feature.test.js && node test/e2e/scenarios.test.js && node test/e2e/scryfall.test.js && node test/e2e/run.js",
     "test:e2e": "node test/e2e/run.js"
   },
   "dependencies": {
@@ -18,6 +18,7 @@
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "opencv-wasm": "^4.3.0-10",
+    "selfsigned": "^5.5.0",
     "sharp": "^0.33.5",
     "sqlite3": "^6.0.1"
   },
