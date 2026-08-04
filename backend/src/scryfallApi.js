@@ -2,6 +2,8 @@ const axios = require('axios');
 const db = require('./db');
 const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
 const { parseSetList, setSqlFilter } = require('./utils/setQuery');
+const languages = require('./utils/languages');
+const { cacheNormalizedCards } = require('./utils/cardCache');
 
 // Scryfall needs no API key but asks callers to identify themselves and accept
 // JSON. See https://scryfall.com/docs/api. IDs from Scryfall are UUIDs / set-num
@@ -171,6 +173,21 @@ async function scryGetRetried(url, config, retries = 4) {
 const COLOR_NAMES = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
 const CACHE_AGE_LIMIT_MS = 1000 * 60 * 60 * 24 * 3; // 3 days
 
+// Scryfall has NO `lang` query parameter. Language is a search keyword, and
+// non-English printings stay hidden unless include_multilingual is set —
+// verified: `q=!"Lightning Bolt" unique:prints&lang=ja` returns 64 English
+// prints, while `q=!"Lightning Bolt" lang:ja unique:prints` with
+// include_multilingual=true returns the 18 Japanese ones. Passing lang as a
+// parameter (what this file did before) is silently ignored, so every "foreign"
+// search quietly came back in English.
+// English adds nothing to the query: that is already Scryfall's default, and
+// staying on the exact old query string keeps the English path byte-identical.
+function langSearch(q, lang) {
+  const code = languages.resolve(lang).scryfall;
+  if (code === 'en') return { q, params: '' };
+  return { q: `${q} lang:${code}`, params: '&include_multilingual=true' };
+}
+
 // Maps a raw Scryfall card onto the card_cache shape the rest of the app (and
 // the Pokémon path) already speaks. Double-faced cards carry their art/type on
 // card_faces[0] instead of the top level, so fall back to the front face.
@@ -178,6 +195,10 @@ function normalizeCard(raw, lang) {
   const face = (!raw.image_uris && Array.isArray(raw.card_faces) && raw.card_faces.length)
     ? raw.card_faces[0]
     : raw;
+  // The response's own `lang` is authoritative — a printing only exists in one
+  // language, and trusting the requested one mislabels the English fallbacks
+  // Scryfall returns when a card was never printed in the language asked for.
+  const language = languages.toName(raw.lang || lang);
   const imgSrc = raw.image_uris || face.image_uris || {};
   const typeLine = raw.type_line || face.type_line || '';
   const colors = raw.colors || face.colors || [];
@@ -210,43 +231,40 @@ function normalizeCard(raw, lang) {
     cmc: cmc,
     color_identity: colorIdentity.map(c => COLOR_NAMES[c] || c),
     game: 'mtg',
-    // Transient (not a card_cache column) — the printing's language, used by the
-    // scanner/quick-add form. Defaults to English.
-    language: (lang && lang.toLowerCase() === 'ja') ? 'Japanese' : 'English'
+    // Which printing this row IS. The quick-add form defaults the copy's language
+    // to it, so adding a Japanese card no longer files it as English.
+    language,
+    // The name as actually printed on a non-English card ("稲妻"). `name` above
+    // stays English on purpose: it is what deck lists, marketplace links and the
+    // next Scryfall lookup need. Null for English printings, which have none.
+    printed_name: raw.printed_name || face.printed_name || null,
+    // Scryfall's own marketplace links for THIS printing. Worth storing rather
+    // than rebuilding: they search the English name, which is what TCGplayer and
+    // Cardmarket actually index, so they resolve for a Japanese printing too.
+    tcgplayer_url: raw.purchase_uris?.tcgplayer || null,
+    cardmarket_url: raw.purchase_uris?.cardmarket || null
   };
 }
 
-// A page of results is now up to 250 cards, and one round trip per card made
-// the INSERTs cost more than the Scryfall fetch. Batch them; chunked so the
-// bound-parameter count stays well inside SQLite's limit.
-const CACHE_INSERT_CHUNK = 50;
-const CARD_CACHE_ROW = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)';
-async function cacheCards(cards) {
-  for (let i = 0; i < cards.length; i += CACHE_INSERT_CHUNK) {
-    const chunk = cards.slice(i, i + CACHE_INSERT_CHUNK);
-    const params = [];
-    for (const c of chunk) {
-      params.push(
-        c.id, c.name, c.supertype,
-        JSON.stringify(c.subtypes || []), JSON.stringify(c.types || []),
-        c.rarity, c.set_id, c.set_name, c.number, c.image_url,
-        c.price_trend, c.price_normal, c.price_holofoil, c.price_reverse_holofoil, c.cmc, JSON.stringify(c.color_identity || []), 'mtg'
-      );
-    }
-    await db.run(
-      `INSERT OR REPLACE INTO card_cache
-       (id, name, supertype, subtypes, types, rarity, set_id, set_name, number, image_url, price_trend, price_normal, price_holofoil, price_reverse_holofoil, cmc, color_identity, game, last_updated)
-       VALUES ${chunk.map(() => CARD_CACHE_ROW).join(', ')}`,
-      params
-    );
-  }
-}
+const cacheCards = (cards) => cacheNormalizedCards(cards, 'mtg');
 
 
-// Look up many known cards in as few requests as possible. Rows need set_id +
-// number (preferred) or a name. Returns normalized cards plus, for each, the row
-// it came from, so callers can write back against their own ids without
-// trusting the response to preserve order.
+// Look up many known cards in as few requests as possible. Rows are matched by
+// Scryfall id when we hold one, else set_id + number, else name. Returns
+// normalized cards plus, for each, the row it came from, so callers can write
+// back against their own ids without trusting the response to preserve order.
+//
+// The id form matters for more than precision: /cards/collection identifiers
+// have no language field, so a {set, collector_number} lookup always answers
+// with the ENGLISH printing. Every row here came from card_cache, whose id IS
+// that printing's own Scryfall id — including for a Japanese card — so asking by
+// id is the only way a non-English row gets its own prices refreshed instead of
+// silently re-fetching the English one.
+const scryfallUuid = (id) => {
+  const raw = String(id || '').replace(/^mtg-/, '');
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw) ? raw : null;
+};
+
 async function bulkFetchByIdentifier(rows) {
   const cards = [];
   const pairs = [];
@@ -256,6 +274,11 @@ async function bulkFetchByIdentifier(rows) {
     const chunk = rows.slice(i, i + COLLECTION_BATCH);
     const byKey = new Map();
     const identifiers = chunk.map(row => {
+      const uuid = scryfallUuid(row.id || row.card_id);
+      if (uuid) {
+        byKey.set(`id:${uuid.toLowerCase()}`, row);
+        return { id: uuid };
+      }
       const setId = row.set_id != null ? String(row.set_id).toLowerCase() : '';
       const num = row.number != null ? String(row.number) : '';
       if (setId && num) {
@@ -271,7 +294,8 @@ async function bulkFetchByIdentifier(rows) {
     for (const raw of (resp.data && resp.data.data) || []) {
       const norm = normalizeCard(raw);
       cards.push(norm);
-      const row = byKey.get(`sn:${String(norm.set_id).toLowerCase()}|${String(norm.number).toLowerCase()}`)
+      const row = byKey.get(`id:${String(raw.id).toLowerCase()}`)
+        || byKey.get(`sn:${String(norm.set_id).toLowerCase()}|${String(norm.number).toLowerCase()}`)
         || byKey.get(`n:${String(norm.name).toLowerCase()}`);
       if (row) pairs.push({ row, card: norm });
     }
@@ -280,9 +304,9 @@ async function bulkFetchByIdentifier(rows) {
 }
 
 async function fetchFromScryfall(q, lang, retries = 3) {
-  let url = `/cards/search?q=${encodeURIComponent(q)}`;
-  if (lang) url += `&lang=${lang.toLowerCase() === 'ja' ? 'ja' : encodeURIComponent(lang)}`;
-  
+  const scoped = langSearch(q, lang);
+  const url = `/cards/search?q=${encodeURIComponent(scoped.q)}${scoped.params}`;
+
   for (let i = 0; i < retries; i++) {
     try {
       const resp = await scryGet(url);
@@ -306,10 +330,10 @@ async function fetchWindow(q, lang, offset, limit, order) {
   const out = [];
   let hasMore = false;
   let total = null;
+  const scoped = langSearch(q, lang);
   while (out.length < limit) {
-    let url = `/cards/search?q=${encodeURIComponent(q)}&page=${page}`;
+    let url = `/cards/search?q=${encodeURIComponent(scoped.q)}&page=${page}${scoped.params}`;
     if (order) url += `&order=${order}`;
-    if (lang) url += `&lang=${lang.toLowerCase() === 'ja' ? 'ja' : encodeURIComponent(lang)}`;
     const resp = await scryGetRetried(url);
     if (resp.data && resp.data.total_cards != null) total = resp.data.total_cards;
     out.push(...(((resp.data && resp.data.data) || []).slice(skip)));
@@ -361,9 +385,11 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
       // No exact-name match / error — fall through to the normal search below.
     }
   }
-  // A non-English request must bypass the cache: a cached English printing would
-  // otherwise shadow the localized card the caller asked for.
-  const isForeign = lang && !['en', 'english'].includes(lang.toLowerCase());
+  // Every cache read below is scoped to the requested language, so a cached
+  // English printing can't shadow the localized card that was asked for — and,
+  // unlike bypassing the cache outright, a repeat Japanese search still gets to
+  // answer locally.
+  const langName = languages.toName(lang);
 
   // 1. Collection-only search
   if (scope === 'collection') {
@@ -375,7 +401,11 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
       WHERE c.user_id = ? AND c.list_type = 'collection' AND cc.game = 'mtg'
     `;
     const params = [userId];
-    if (cleanName) { sql += ` AND cc.name LIKE ?`; params.push(`%${cleanName}%`); }
+    // Collection scope searches what the user owns, in every language they own it
+    // in — filtering by the picker's language here would hide their Japanese
+    // copies from a deck search. A name typed in any language still matches:
+    // printed_name carries the localized one.
+    if (cleanName) { sql += ` AND (cc.name LIKE ? OR cc.printed_name LIKE ?)`; params.push(`%${cleanName}%`, `%${cleanName}%`); }
     if (cleanNumber) { sql += ` AND (cc.number = ? OR CAST(cc.number AS INTEGER) = CAST(? AS INTEGER))`; params.push(cleanNumber, cleanNumber); }
     const collSetFilter = setSqlFilter(setList, 'cc');
     if (collSetFilter) { sql += ` AND ${collSetFilter.clause}`; params.push(...collSetFilter.params); }
@@ -387,9 +417,11 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
   // 2. Local cache first. Kept as a closure because an internet-scope search
   // skips it here but still needs it as a fallback when Scryfall is unreachable.
   const queryLocal = async () => {
-    let sql = `SELECT * FROM card_cache WHERE game = 'mtg'`;
-    const params = [];
-    if (cleanName) { sql += ` AND name LIKE ?`; params.push(`%${cleanName}%`); }
+    // language is part of the identity of a cached printing, so a Japanese search
+    // must not be answered with the English rows sitting next to it.
+    let sql = `SELECT * FROM card_cache WHERE game = 'mtg' AND language = ?`;
+    const params = [langName];
+    if (cleanName) { sql += ` AND (name LIKE ? OR printed_name LIKE ?)`; params.push(`%${cleanName}%`, `%${cleanName}%`); }
     if (cleanNumber) { sql += ` AND (number = ? OR CAST(number AS INTEGER) = CAST(? AS INTEGER))`; params.push(cleanNumber, cleanNumber); }
     const localSetFilter = setSqlFilter(setList);
     if (localSetFilter) { sql += ` AND ${localSetFilter.clause}`; params.push(...localSetFilter.params); }
@@ -399,7 +431,7 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
   };
 
   let localResults = [];
-  if (scope !== 'internet' && !isForeign) {
+  if (scope !== 'internet') {
     localResults = await queryLocal();
     if (localResults.length > 0) {
       // Refresh stale prices in the background; return the cached rows instantly.
@@ -513,7 +545,7 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
     // cached, say the upstream is down rather than "no such card" — a throttled
     // or broken Scryfall is indistinguishable from an empty result otherwise,
     // and reporting it as "no results" is what made #22 look like a search bug.
-    const cached = (scope === 'internet' && !isForeign) ? await queryLocal() : localResults;
+    const cached = scope === 'internet' ? await queryLocal() : localResults;
     if (cached.length > 0) {
       console.warn(`Scryfall unavailable — serving ${cached.length} cached match(es).`);
       return cached.map(parseCardRow);

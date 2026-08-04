@@ -61,7 +61,7 @@ async function extract(rgba, width, height) {
 // Verify the given card `indices` of a set across the pool. qDesc/qKp are plain
 // typed arrays (structured-cloned to each worker). Returns merged scored[]
 // (unsorted), or null if the pool is disabled so the caller can run inline.
-async function verify(game, set, qDesc, qRows, qKp, indices) {
+async function verify(game, set, qDesc, qRows, qKp, indices, lang) {
   const workers = getPool();
   if (workers.length === 0) return null;
   const n = workers.length;
@@ -70,7 +70,9 @@ async function verify(game, set, qDesc, qRows, qKp, indices) {
   for (let i = 0; i < n; i++) {
     const chunk = indices.slice(i * per, i * per + per);
     if (chunk.length === 0) break;
-    jobs.push(job(workers[i], { game, set, qDesc, qRows, qKp, indices: chunk }));
+    // `lang` picks which language's index the worker loads — the wrong one would
+    // verify a Japanese scan against English art and match nothing.
+    jobs.push(job(workers[i], { game, set, lang, qDesc, qRows, qKp, indices: chunk }));
   }
   const results = await Promise.all(jobs);
   return results.flat();

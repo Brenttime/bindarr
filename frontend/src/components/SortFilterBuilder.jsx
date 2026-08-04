@@ -2,6 +2,8 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, X, Plus } from 'lucide-react';
+import { LANGUAGE_NAMES } from '../utils/languages';
+import { useT } from '../utils/i18n';
 
 // Sortable item wrapper
 function SortableItem({ id, children }) {
@@ -30,26 +32,14 @@ function SortableItem({ id, children }) {
   );
 }
 
-// label = dropdown name. asc/desc = what each direction actually does for that
-// field, so the user isn't guessing what "Asc" means (e.g. cheapest-first vs
-// A-Z vs common-first).
-const SORT_OPTIONS = [
-  { value: 'favorite', label: 'Favorite (Starred)', asc: 'Favorites last', desc: 'Favorites first' },
-  { value: 'name', label: 'Alphabetical (Name)', asc: 'A → Z', desc: 'Z → A' },
-  { value: 'price', label: 'Price / Value', asc: 'Cheapest first', desc: 'Priciest first' },
-  { value: 'set', label: 'Set', asc: 'Oldest set first', desc: 'Newest set first' },
-  { value: 'number', label: 'Card Number', asc: 'Low → high', desc: 'High → low' },
-  { value: 'printing', label: 'Foil / Printing', asc: 'Non-foil first', desc: 'Foil first' },
-  { value: 'type', label: 'Type', asc: 'Standard order', desc: 'Reversed' },
-  { value: 'color', label: 'Color Identity', asc: 'W → U → B → R → G', desc: 'G → R → B → U → W' },
-  { value: 'cmc', label: 'Mana Value (CMC)', asc: 'Low → high', desc: 'High → low' },
-  { value: 'rarity', label: 'Rarity', asc: 'Common first', desc: 'Rarest first' },
-  { value: 'language', label: 'Language', asc: 'English first', desc: 'English last' },
-  { value: 'added_at', label: 'Date Added', asc: 'Oldest first', desc: 'Newest first' },
-  { value: 'entry_id', label: 'Entry Order', asc: 'Oldest first', desc: 'Newest first' }
-];
+// Stored sort keys. The dropdown name and the two direction labels are looked up
+// per key ("sort.by.price", "sort.dir.price.asc"), because what a direction
+// actually does differs per field and nobody should be guessing what "Asc" means
+// — cheapest-first, A-Z and common-first are all "ascending".
+const SORT_KEYS = ['favorite', 'name', 'price', 'set', 'number', 'printing', 'type', 'color', 'cmc', 'rarity', 'language', 'added_at', 'entry_id'];
 
 export function SortBuilder({ value, onChange }) {
+  const { t } = useT();
   const items = Array.isArray(value) ? value : [];
   
   // activationConstraint: touch needs a short press so a tap/scroll on the handle
@@ -105,8 +95,8 @@ export function SortBuilder({ value, onChange }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-      <label style={{ fontSize: '0.75rem', fontWeight: 'bold' }}>Sort Priority List</label>
-      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Top rule applies first, falling back to subsequent rules on ties. Check Divider to group items by this field.</span>
+      <label style={{ fontSize: '0.75rem', fontWeight: 'bold' }}>{t('sort.title')}</label>
+      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{t('sort.hint')}</span>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
           {items.map((item, idx) => (
@@ -117,10 +107,12 @@ export function SortBuilder({ value, onChange }) {
                 value={item.by}
                 onChange={(e) => updateCriteria(item.id, { by: e.target.value })}
               >
-                {SORT_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                {SORT_KEYS.map(key => <option key={key} value={key}>{t(`sort.by.${key}`)}</option>)}
               </select>
               {(() => {
-                const opt = SORT_OPTIONS.find(o => o.value === item.by) || {};
+                // An unknown stored key (an old container, a hand-edited rule) has
+                // no per-field wording, so fall back to plain asc/desc.
+                const known = SORT_KEYS.includes(item.by);
                 return (
                   <select
                     className="select-control"
@@ -128,13 +120,13 @@ export function SortBuilder({ value, onChange }) {
                     value={item.dir}
                     onChange={(e) => updateCriteria(item.id, { dir: e.target.value })}
                   >
-                    <option value="asc">{opt.asc || 'Asc'}</option>
-                    <option value="desc">{opt.desc || 'Desc'}</option>
+                    <option value="asc">{known ? t(`sort.dir.${item.by}.asc`) : t('sort.dir.asc')}</option>
+                    <option value="desc">{known ? t(`sort.dir.${item.by}.desc`) : t('sort.dir.desc')}</option>
                   </select>
                 );
               })()}
               <label
-                title="Divide the groups on this field."
+                title={t('sort.dividerHint')}
                 style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.65rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', cursor: 'pointer' }}
               >
                 <input
@@ -143,14 +135,14 @@ export function SortBuilder({ value, onChange }) {
                   onChange={() => toggleDivider(item.id, idx)}
                   style={{ width: '14px', height: '14px', cursor: 'pointer' }}
                 />
-                Divider
+                {t('sort.divider')}
               </label>
               {isDividerOn(item, idx) && (
                 <input 
                   type="color" 
                   value={item.dividerColor || '#6b7280'}
                   onChange={(e) => updateDividerColor(item.id, e.target.value)}
-                  title="Divider Color"
+                  title={t('sort.dividerColor')}
                   style={{ width: '24px', height: '24px', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
                 />
               )}
@@ -167,44 +159,42 @@ export function SortBuilder({ value, onChange }) {
         </SortableContext>
       </DndContext>
       <button type="button" className="btn btn-secondary" style={{ alignSelf: 'flex-start', padding: '0.3rem 0.6rem', fontSize: '0.7rem' }} onClick={addCriteria}>
-        <Plus size={14} style={{ marginRight: '4px' }} /> Add Sort Rule
+        <Plus size={14} style={{ marginRight: '4px' }} /> {t('sort.addRule')}
       </button>
     </div>
   );
 }
 
-const FILTER_FIELDS = [
-  { value: 'name', label: 'Name' },
-  { value: 'supertype', label: 'Supertype' },
-  { value: 'types', label: 'Types' },
-  { value: 'subtypes', label: 'Subtypes' },
-  { value: 'color_identity', label: 'Color Identity' },
-  { value: 'cmc', label: 'Mana Value (CMC)' },
-  { value: 'set_name', label: 'Set Name' },
-  { value: 'set_id', label: 'Set Code' },
-  { value: 'rarity', label: 'Rarity' },
-  { value: 'printing', label: 'Printing' }
-];
+// Stored field names; labels come from "filter.field.<name>".
+// Language is a per-copy field (like printing), so a container can be reserved for
+// one language — "Japanese only" is the whole point of a JP binder. The filing
+// engine reads rule fields generically and storage.js already stamps the entry's
+// language onto the metadata it evaluates.
+const FILTER_FIELDS = ['name', 'supertype', 'types', 'subtypes', 'color_identity', 'cmc', 'set_name', 'set_id', 'rarity', 'printing', 'language'];
 
+// `value` is what gets stored and evaluated; `key` exists because '>=' cannot be
+// part of a translation key.
 const FILTER_OPERATORS = [
-  { value: 'equals', label: 'Equals' },
-  { value: 'contains', label: 'Contains' },
-  { value: '>', label: 'Greater Than' },
-  { value: '<', label: 'Less Than' },
-  { value: '>=', label: 'Greater/Eq' },
-  { value: '<=', label: 'Less/Eq' },
-  { value: 'exists', label: 'Exists' }
+  { value: 'equals', key: 'equals' },
+  { value: 'contains', key: 'contains' },
+  { value: '>', key: 'gt' },
+  { value: '<', key: 'lt' },
+  { value: '>=', key: 'gte' },
+  { value: '<=', key: 'lte' },
+  { value: 'exists', key: 'exists' }
 ];
 
 const KNOWN_OPTIONS = {
   supertype: ['Pokémon', 'Trainer', 'Energy', 'Basic', 'Legendary', 'Snow', 'World', 'Vanguard', 'Plane', 'Scheme', 'Phenomenon', 'Ongoing'],
   types: ['Grass', 'Fire', 'Water', 'Lightning', 'Psychic', 'Fighting', 'Darkness', 'Metal', 'Fairy', 'Dragon', 'Colorless', 'White', 'Blue', 'Black', 'Red', 'Green', 'Multicolor', 'Artifact', 'Creature', 'Enchantment', 'Instant', 'Sorcery', 'Planeswalker', 'Land', 'Battle', 'Tribal'],
   printing: ['Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo'],
+  language: LANGUAGE_NAMES,
   rarity: ['Common', 'Uncommon', 'Rare', 'Mythic', 'Special', 'Bonus', 'Promo', 'Rare Holo', 'Rare Ultra', 'Rare Secret', 'Amazing Rare', 'Radiant Rare', 'Illustration Rare', 'Special Illustration Rare', 'Hyper Rare', 'Classic Collection'],
   color_identity: ['W', 'U', 'B', 'R', 'G', 'Colorless']
 };
 
 export function FilterBuilder({ value, onChange, setsList = [], fieldOptions = {} }) {
+  const { t } = useT();
   const rules = Array.isArray(value) ? value : [];
 
   const addRule = () => {
@@ -221,12 +211,12 @@ export function FilterBuilder({ value, onChange, setsList = [], fieldOptions = {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', borderTop: '1px solid var(--border-glass)', paddingTop: '1rem' }}>
-      <label style={{ fontSize: '0.75rem', fontWeight: 'bold' }}>Filing Rules (Allow/Deny List)</label>
-      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Defines which cards are allowed in this container.</span>
-      
+      <label style={{ fontSize: '0.75rem', fontWeight: 'bold' }}>{t('filter.title')}</label>
+      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{t('filter.hint')}</span>
+
       {rules.length === 0 && (
         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic', padding: '0.5rem 0' }}>
-          No rules set. Any matching game card is allowed.
+          {t('filter.noRules')}
         </div>
       )}
 
@@ -248,8 +238,8 @@ export function FilterBuilder({ value, onChange, setsList = [], fieldOptions = {
               value={rule.action}
               onChange={(e) => updateRule(rule.id, { action: e.target.value })}
             >
-              <option value="exclude">Exclude</option>
-              <option value="include">Require</option>
+              <option value="exclude">{t('filter.exclude')}</option>
+              <option value="include">{t('filter.require')}</option>
             </select>
             <select
               className="select-control"
@@ -257,7 +247,7 @@ export function FilterBuilder({ value, onChange, setsList = [], fieldOptions = {
               value={rule.field}
               onChange={(e) => updateRule(rule.id, { field: e.target.value })}
             >
-              {FILTER_FIELDS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+              {FILTER_FIELDS.map(f => <option key={f} value={f}>{t(`filter.field.${f}`)}</option>)}
             </select>
             <select
               className="select-control"
@@ -265,7 +255,7 @@ export function FilterBuilder({ value, onChange, setsList = [], fieldOptions = {
               value={rule.operator}
               onChange={(e) => updateRule(rule.id, { operator: e.target.value })}
             >
-              {FILTER_OPERATORS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {FILTER_OPERATORS.map(o => <option key={o.value} value={o.value}>{t(`filter.op.${o.key}`)}</option>)}
             </select>
             {rule.operator !== 'exists' && (
               // Equals on an enumerable field: real <select> so the choices
@@ -278,7 +268,7 @@ export function FilterBuilder({ value, onChange, setsList = [], fieldOptions = {
                   value={rule.value || ''}
                   onChange={(e) => updateRule(rule.id, { value: e.target.value })}
                 >
-                  <option value="">Select value…</option>
+                  <option value="">{t('filter.selectValue')}</option>
                   {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               ) : (
@@ -286,7 +276,7 @@ export function FilterBuilder({ value, onChange, setsList = [], fieldOptions = {
                   <input
                     className="input-control"
                     style={{ flex: 1, minWidth: '100px', padding: '0.2rem' }}
-                    placeholder="Value"
+                    placeholder={t('filter.value')}
                     list={`opts-${rule.id}`}
                     value={rule.value || ''}
                     onChange={(e) => updateRule(rule.id, { value: e.target.value })}
@@ -311,7 +301,7 @@ export function FilterBuilder({ value, onChange, setsList = [], fieldOptions = {
         );
       })}
       <button type="button" className="btn btn-secondary" style={{ alignSelf: 'flex-start', padding: '0.3rem 0.6rem', fontSize: '0.7rem' }} onClick={addRule}>
-        <Plus size={14} style={{ marginRight: '4px' }} /> Add Rule
+        <Plus size={14} style={{ marginRight: '4px' }} /> {t('filter.addRule')}
       </button>
     </div>
   );

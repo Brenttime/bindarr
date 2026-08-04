@@ -7,6 +7,8 @@ import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass } fro
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { useMultiSelect } from '../utils/useMultiSelect';
+import { defaultGameFilter, gameOptions, isGameEnabled, showGamePicker } from '../utils/games';
+import { useT } from '../utils/i18n';
 import CardInspectorModal from './CardInspectorModal';
 import AddToDeckSelect from './AddToDeckSelect';
 import PackPriceSplitter from './PackPriceSplitter';
@@ -43,6 +45,7 @@ function Field({ label, children }) {
 }
 
 function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter, setSelectedCardFilter, onNavigate, setSelectedLocationId, setFocusEntryId }) {
+  const { t } = useT();
   const [collection, setCollection] = useState([]);
   const [locations, setLocations] = useState([]);
   const [setsList, setSetsList] = useState([]);
@@ -66,7 +69,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
 
   // Search & Filter state
   const [searchFilter, setSearchFilter] = useState('');
-  const [gameFilter, setGameFilter] = useState(() => localStorage.getItem('default_game') || ''); // '' | 'pokemon' | 'mtg'
+  // '' | 'pokemon' | 'mtg'. Falls back to a visible game if the Settings default
+  // has since been hidden.
+  const [gameFilter, setGameFilter] = useState(() => (isGameEnabled(localStorage.getItem('default_game')) ? localStorage.getItem('default_game') : defaultGameFilter()));
   const [locationFilter, setLocationFilter] = useState('');
   const [rarityFilter, setRarityFilter] = useState('');
   const [conditionFilter, setConditionFilter] = useState('');
@@ -118,7 +123,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       }
     } catch (err) {
       console.error(err);
-      showToast('Error loading collection.');
+      showToast(t('collection.errLoad'));
     } finally {
       setLoading(false);
     }
@@ -146,7 +151,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   };
 
   const handleDelete = async (entryId, cardName) => {
-    if (!window.confirm(`Are you sure you want to delete ${cardName} from your collection?`)) {
+    if (!window.confirm(t('collection.confirmDeleteCard', { name: cardName }))) {
       return;
     }
 
@@ -156,14 +161,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       });
 
       if (response.ok) {
-        showToast(`${cardName} removed from collection.`);
+        showToast(t('collection.cardRemoved', { name: cardName }));
         onUpdate();
       } else {
-        showToast('Failed to delete card.');
+        showToast(t('collection.errDelete'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error connecting to backend.');
+      showToast(t('common.errBackend'));
     }
   };
 
@@ -236,14 +241,22 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // Filter + sort
   const filteredCollection = useMemo(() => {
     const translatedSearch = searchFilter ? (translateJapaneseName(searchFilter) || searchFilter).toLowerCase() : '';
+    // The raw query is matched against the localized name as well as the
+    // translated one: a Japanese Magic card is stored under its English `name`,
+    // so typing 稲妻 only finds it via printed_name.
+    const rawSearch = searchFilter.toLowerCase();
     const result = collection.filter(item => {
       const matchesSearch = item.name.toLowerCase().includes(translatedSearch) ||
+                            (item.printed_name || '').toLowerCase().includes(rawSearch) ||
                             (item.set_name || '').toLowerCase().includes(translatedSearch) ||
                             (item.number || '').includes(searchFilter);
       const matchesLocation = locationFilter === '' ? true :
                               locationFilter === 'unassigned' ? !item.location_id :
                               item.location_id == locationFilter;
-      const matchesGame = gameFilter === '' ? true : (item.game || 'pokemon') === gameFilter;
+      // "All games" still means only the games the user has chosen to see: a hidden
+      // game's cards stay in the collection (and in exports) but are out of view.
+      const itemGame = item.game || 'pokemon';
+      const matchesGame = gameFilter === '' ? isGameEnabled(itemGame) : itemGame === gameFilter;
       const matchesRarity = rarityFilter === '' ? true : item.rarity === rarityFilter;
       const matchesCondition = conditionFilter === '' ? true : item.condition === conditionFilter;
       const matchesPrinting = printingFilter === '' ? true : item.printing === printingFilter;
@@ -309,14 +322,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             onClick={() => setSubTab('collection')}
             style={{ fontSize: '0.85rem', padding: '0.45rem 1.25rem', borderRadius: 'var(--radius-sm)' }}
           >
-            Collection
+            {t('nav.collection')}
           </button>
           <button
             className={`btn ${subTab === 'wishlist' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => setSubTab('wishlist')}
             style={{ fontSize: '0.85rem', padding: '0.45rem 1.25rem', borderRadius: 'var(--radius-sm)' }}
           >
-            Wishlist
+            {t('collection.wishlist')}
           </button>
         </div>
 
@@ -326,10 +339,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             className={`btn ${selectMode ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
             style={{ fontSize: '0.8rem', padding: '0.4rem 0.9rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
-            title="Or long-press any card to start selecting"
+            title={t('collection.selectHint')}
           >
             <MousePointerClick size={14} />
-            {selectMode ? 'Done' : 'Select'}
+            {t(selectMode ? 'bulk.done' : 'collection.select')}
           </button>
 
           {/* View Toggle */}
@@ -338,7 +351,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               className={`btn btn-icon-only ${viewMode === 'gallery' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setViewMode('gallery')}
               style={{ borderRadius: 'var(--radius-sm)', padding: '0.4rem 0.5rem', width: '32px', height: '32px' }}
-              title="Gallery View"
+              title={t('collection.galleryView')}
             >
               <LayoutGrid size={14} />
             </button>
@@ -346,7 +359,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               className={`btn btn-icon-only ${viewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setViewMode('list')}
               style={{ borderRadius: 'var(--radius-sm)', padding: '0.4rem 0.5rem', width: '32px', height: '32px' }}
-              title="List Table View"
+              title={t('collection.listView')}
             >
               <List size={14} />
             </button>
@@ -358,12 +371,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       <div className="glass-panel" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
         {/* Always-visible top bar: search + sort + filters toggle */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2.5fr) minmax(150px, 1fr) auto', gap: '0.75rem', alignItems: 'flex-end' }}>
-          <Field label="Search Cards">
+          <Field label={t('collection.searchLabel')}>
             <div style={{ position: 'relative' }}>
               <input
                 type="text"
                 className="input-control"
-                placeholder="Search name, set, card number..."
+                placeholder={t('collection.searchPlaceholder')}
                 value={searchFilter}
                 onChange={(e) => setSearchFilter(e.target.value)}
                 style={{ width: '100%', paddingLeft: '2.5rem' }}
@@ -372,22 +385,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             </div>
           </Field>
 
-          <Field label="Sort By">
+          <Field label={t('collection.sortBy')}>
             <select className="select-control" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-              <option value="added-newest">Added (Newest)</option>
-              <option value="added-oldest">Added (Oldest)</option>
-              <option value="name-asc">Name (A-Z)</option>
-              <option value="name-desc">Name (Z-A)</option>
-              <option value="price-desc">Value (High-Low)</option>
-              <option value="price-asc">Value (Low-High)</option>
-              <option value="qty-desc">Quantity (High-Low)</option>
-              <option value="set-asc">Set</option>
-              <option value="number-asc">Card Number</option>
-              <option value="type-asc">Type / Color</option>
-              <option value="rarity-desc">Rarity (High-Low)</option>
-              <option value="rarity-asc">Rarity (Low-High)</option>
-              <option value="language-asc">Language</option>
-              <option value="favorite-first">Favorites First</option>
+              {['added-newest', 'added-oldest', 'name-asc', 'name-desc', 'price-desc', 'price-asc', 'qty-desc', 'set-asc', 'number-asc', 'type-asc', 'rarity-desc', 'rarity-asc', 'language-asc', 'favorite-first']
+                .map(key => <option key={key} value={key}>{t(`collection.sort.${key}`)}</option>)}
             </select>
           </Field>
 
@@ -397,7 +398,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             style={{ padding: '0.5rem 0.9rem', height: '40px', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}
           >
             <SlidersHorizontal size={15} />
-            Filters
+            {t('collection.filters')}
             {activeFilterCount > 0 && (
               <span style={{ background: 'var(--accent-red)', color: 'var(--text-strong)', fontSize: '0.65rem', fontWeight: 900, borderRadius: '999px', padding: '1px 7px', minWidth: '18px', textAlign: 'center' }}>
                 {activeFilterCount}
@@ -410,90 +411,92 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>
             {/* Selector filters grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.75rem' }}>
-              <Field label="Game">
-                <select className="select-control" value={gameFilter} onChange={(e) => setGameFilter(e.target.value)}>
-                  <option value="">All Games</option>
-                  <option value="pokemon">Pokémon</option>
-                  <option value="mtg">Magic: The Gathering</option>
-                </select>
-              </Field>
+              {/* Nothing to filter when only one game is shown. */}
+              {showGamePicker() && (
+                <Field label={t('collection.fGame')}>
+                  <select className="select-control" value={gameFilter} onChange={(e) => setGameFilter(e.target.value)}>
+                    <option value="">{t('collection.allGames')}</option>
+                    {gameOptions().map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+                  </select>
+                </Field>
+              )}
 
-              <Field label="Location">
+              <Field label={t('collection.fLocation')}>
                 <select className="select-control" value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)}>
-                  <option value="">All Locations</option>
-                  <option value="unassigned">Unassigned Pile</option>
+                  <option value="">{t('collection.allLocations')}</option>
+                  <option value="unassigned">{t('bulk.unassignedPile')}</option>
                   {locations.map(loc => (
                     <option key={loc.id} value={loc.id}>{loc.name}</option>
                   ))}
                 </select>
               </Field>
 
-              <Field label="Set">
+              <Field label={t('collection.fSet')}>
                 <select className="select-control" value={setFilter} onChange={(e) => setSetFilter(e.target.value)}>
-                  <option value="">All Sets</option>
+                  <option value="">{t('collection.allSets')}</option>
                   {uniqueSets.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </Field>
 
-              <Field label="Supertype">
+              <Field label={t('collection.fSupertype')}>
                 <select className="select-control" value={supertypeFilter} onChange={(e) => setSupertypeFilter(e.target.value)}>
-                  <option value="">All Supertypes</option>
+                  <option value="">{t('collection.allSupertypes')}</option>
                   {uniqueSupertypes.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </Field>
 
-              <Field label="Type / Color">
+              <Field label={t('collection.fType')}>
                 <select className="select-control" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-                  <option value="">All Types</option>
+                  <option value="">{t('collection.allTypes')}</option>
                   {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </Field>
 
-              <Field label="Rarity">
+              <Field label={t('collection.fRarity')}>
                 <select className="select-control" value={rarityFilter} onChange={(e) => setRarityFilter(e.target.value)}>
-                  <option value="">All Rarities</option>
+                  <option value="">{t('collection.allRarities')}</option>
                   {uniqueRarities.map(rarity => (
                     <option key={rarity} value={rarity}>{rarity}</option>
                   ))}
                 </select>
               </Field>
 
-              <Field label="Condition">
+              <Field label={t('card.condition')}>
                 <select className="select-control" value={conditionFilter} onChange={(e) => setConditionFilter(e.target.value)}>
-                  <option value="">All Conditions</option>
+                  <option value="">{t('collection.allConditions')}</option>
                   {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
 
-              <Field label="Printing">
+              <Field label={t('card.printing')}>
                 <select className="select-control" value={printingFilter} onChange={(e) => setPrintingFilter(e.target.value)}>
-                  <option value="">All Printings</option>
+                  <option value="">{t('collection.allPrintings')}</option>
                   {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </Field>
 
               {uniqueCmcs.length > 0 && (
-                <Field label="Mana Value">
+                <Field label={t('collection.fManaValue')}>
                   <select className="select-control" value={cmcFilter} onChange={(e) => setCmcFilter(e.target.value)}>
-                    <option value="">All Mana Values</option>
+                    <option value="">{t('collection.allManaValues')}</option>
                     {uniqueCmcs.map(c => <option key={c} value={String(c)}>{c}</option>)}
                   </select>
                 </Field>
               )}
 
-              <Field label="Language">
+              <Field label={t('card.language')}>
                 <select className="select-control" value={languageFilter} onChange={(e) => setLanguageFilter(e.target.value)}>
-                  <option value="">All Languages</option>
+                  <option value="">{t('collection.allLanguages')}</option>
                   {uniqueLanguages.map(l => <option key={l} value={l}>{l}</option>)}
                 </select>
               </Field>
 
-              <Field label="Min Price">
-                <input type="number" className="input-control" placeholder="Min $" value={minPriceFilter} onChange={(e) => setMinPriceFilter(e.target.value)} />
+              <Field label={t('collection.fMinPrice')}>
+                <input type="number" className="input-control" placeholder={t('collection.minPricePlaceholder')} value={minPriceFilter} onChange={(e) => setMinPriceFilter(e.target.value)} />
               </Field>
 
-              <Field label="Max Price">
-                <input type="number" className="input-control" placeholder="Max $" value={maxPriceFilter} onChange={(e) => setMaxPriceFilter(e.target.value)} />
+              <Field label={t('collection.fMaxPrice')}>
+                <input type="number" className="input-control" placeholder={t('collection.maxPricePlaceholder')} value={maxPriceFilter} onChange={(e) => setMaxPriceFilter(e.target.value)} />
               </Field>
             </div>
 
@@ -502,7 +505,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <input type="checkbox" id="stackCardsOpt" checked={stackCards} onChange={(e) => setStackCards(e.target.checked)} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
                 <label htmlFor="stackCardsOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)' }}>
-                  Stack Duplicates
+                  {t('collection.stackDuplicates')}
                 </label>
               </div>
 
@@ -511,14 +514,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <input type="checkbox" id="stackByConditionOpt" checked={stackByCondition} onChange={(e) => setStackByCondition(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                     <label htmlFor="stackByConditionOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      Split by Condition
+                      {t('collection.splitByCondition')}
                     </label>
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <input type="checkbox" id="stackByPrintingOpt" checked={stackByPrinting} onChange={(e) => setStackByPrinting(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                     <label htmlFor="stackByPrintingOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      Split by Holo/Printing
+                      {t('collection.splitByPrinting')}
                     </label>
                   </div>
                 </>
@@ -527,20 +530,20 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <input type="checkbox" id="tradeOnlyOpt" checked={tradeOnly} onChange={(e) => setTradeOnly(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                 <label htmlFor="tradeOnlyOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--accent-yellow)', fontWeight: 600 }}>
-                  For Trade Only
+                  {t('collection.tradeOnly')}
                 </label>
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <input type="checkbox" id="favoriteOnlyOpt" checked={favoriteOnly} onChange={(e) => setFavoriteOnly(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                 <label htmlFor="favoriteOnlyOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: '#facc15', fontWeight: 600 }}>
-                  Favorites Only
+                  {t('collection.favoritesOnly')}
                 </label>
               </div>
 
               {activeFilterCount > 0 && (
                 <button className="btn btn-secondary" onClick={clearAllFilters} style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '0.3rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                  <X size={13} /> Clear filters
+                  <X size={13} /> {t('collection.clearFilters')}
                 </button>
               )}
             </div>
@@ -551,29 +554,29 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       {/* Result summary bar */}
       {!loading && !selectMode && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', fontSize: '0.78rem', color: 'var(--text-secondary)', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <span><strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {displayCards.length === 1 ? 'card' : 'cards'}</span>
-          <span>Total value <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
+          <span><strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {t('collection.cardUnit', { count: displayCards.length })}</span>
+          <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
         </div>
       )}
 
       {/* Bulk action bar */}
       {selectMode && (
         <div className="glass-panel" style={{ marginBottom: '1rem', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', position: 'sticky', top: '0.5rem', zIndex: 30 }}>
-          <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.85rem' }}>{selectedIds.size} selected</span>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={() => setSelectedIds(new Set(filteredCollection.map(i => i.entry_id)))}>Select all ({filteredCollection.length})</button>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={clearSelection}>Clear</button>
+          <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.85rem' }}>{t('bulk.selected', { count: selectedIds.size })}</span>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={() => setSelectedIds(new Set(filteredCollection.map(i => i.entry_id)))}>{t('bulk.selectAll', { count: filteredCollection.length })}</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={clearSelection}>{t('bulk.clear')}</button>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
-          <button className="btn btn-danger" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('delete', null, `Delete ${selectedIds.size} selected card(s)? This cannot be undone.`)}>Delete</button>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('trade', null)}>Mark Trade</button>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('untrade', null)}>Untrade</button>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('list_type', subTab === 'wishlist' ? 'collection' : 'wishlist', null)}>{subTab === 'wishlist' ? 'Move to Collection' : 'Move to Wishlist'}</button>
+          <button className="btn btn-danger" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('delete', null, t('bulk.confirmDelete', { count: selectedIds.size }))}>{t('bulk.delete')}</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('trade', null)}>{t('bulk.markTrade')}</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('untrade', null)}>{t('bulk.untrade')}</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('list_type', subTab === 'wishlist' ? 'collection' : 'wishlist', null)}>{t(subTab === 'wishlist' ? 'bulk.moveToCollection' : 'bulk.moveToWishlist')}</button>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <select className="select-control" value="" disabled={!selectedIds.size} onChange={(e) => { if (e.target.value) runBulk('condition', e.target.value); e.target.value = ''; }} style={{ fontSize: '0.72rem', maxWidth: '150px', padding: '0.3rem 0.4rem' }}>
-            <option value="">Set condition…</option>
+            <option value="">{t('bulk.setCondition')}</option>
             {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select className="select-control" value="" disabled={!selectedIds.size} onChange={(e) => { if (e.target.value) runBulk('printing', e.target.value); e.target.value = ''; }} style={{ fontSize: '0.72rem', maxWidth: '150px', padding: '0.3rem 0.4rem' }}>
-            <option value="">Set printing…</option>
+            <option value="">{t('bulk.setPrinting')}</option>
             {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
@@ -583,18 +586,18 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             onApplied={() => { clearSelection(); onUpdate(); fetchCollection(); }}
           />
           <select className="select-control" value={bulkMoveTarget} onChange={(e) => setBulkMoveTarget(e.target.value)} style={{ fontSize: '0.72rem', maxWidth: '170px', padding: '0.3rem 0.4rem' }}>
-            <option value="">Move to container…</option>
-            <option value="unassign">Unassigned Pile</option>
+            <option value="">{t('bulk.moveToContainer')}</option>
+            <option value="unassign">{t('bulk.unassignedPile')}</option>
             {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
-          <button className="btn btn-primary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!bulkMoveTarget || !selectedIds.size} onClick={() => runBulk('move', bulkMoveTarget === 'unassign' ? null : bulkMoveTarget)}>Apply Move</button>
+          <button className="btn btn-primary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!bulkMoveTarget || !selectedIds.size} onClick={() => runBulk('move', bulkMoveTarget === 'unassign' ? null : bulkMoveTarget)}>{t('bulk.applyMove')}</button>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <AddToDeckSelect
             onAdd={(id) => runBulk('add_to_deck', id)}
             disabled={!selectedIds.size}
             style={{ fontSize: '0.72rem', maxWidth: '160px', padding: '0.3rem 0.4rem' }}
           />
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem', marginLeft: 'auto' }} onClick={exitSelectMode}>Done</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem', marginLeft: 'auto' }} onClick={exitSelectMode}>{t('bulk.done')}</button>
         </div>
       )}
 
@@ -602,7 +605,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         <div className="spinner"></div>
       ) : displayCards.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '3rem 1.5rem' }}>
-          <p>No cards matched your filters. {activeFilterCount > 0 ? 'Try clearing some filters.' : 'Add some cards!'}</p>
+          <p>{t('collection.noMatches')} {t(activeFilterCount > 0 ? 'collection.noMatchesFiltered' : 'collection.noMatchesEmpty')}</p>
         </div>
       ) : viewMode === 'gallery' ? (
         /* Visual Cards Grid Gallery View */
@@ -690,7 +693,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                   </div>
                 </div>
                 <div className="tcg-card-info">
-                  <div className="tcg-card-name">{getCardDisplayName(item.name, item.language)}</div>
+                  <div className="tcg-card-name">{getCardDisplayName(item.name, item.language, item.printed_name)}</div>
                   <div className="tcg-card-meta">
                     <span style={{ fontSize: '0.7rem' }}>{item.set_name} • #{item.number}</span>
                     <span className="tcg-card-price">${formatPrice(item.price_trend)}</span>
@@ -707,8 +710,8 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             <table className="collection-table" style={{ minWidth: 0 }}>
               <thead>
                 <tr>
-                  <th>Card</th>
-                  <th style={{ width: '70px', textAlign: 'right' }}>Qty / Value</th>
+                  <th>{t('collection.colCard')}</th>
+                  <th style={{ width: '70px', textAlign: 'right' }}>{t('collection.colQtyValue')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -737,7 +740,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                           )}
                         </div>
                         <div style={{ minWidth: 0, flex: 1 }}>
-                          <div onClick={(e) => activateCard(item, e)} {...pressHandlers(item.entry_id)} style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>{getCardDisplayName(item.name, item.language)}</div>
+                          <div onClick={(e) => activateCard(item, e)} {...pressHandlers(item.entry_id)} style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>{getCardDisplayName(item.name, item.language, item.printed_name)}</div>
                           <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                             <span>{item.set_name} • #{item.number}</span>
                             <span style={{ fontSize: '0.55rem', fontWeight: 800, padding: '1px 3px', borderRadius: '3px', flexShrink: 0, ...getRarityBadgeStyle(item.rarity) }}>
@@ -749,10 +752,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                           </div>
                           {!selectMode && (
                             <div style={{ display: 'flex', gap: '0.35rem', marginTop: '2px' }}>
-                              <button className="btn btn-secondary btn-icon-only" style={{ width: '18px', height: '18px', padding: 0, borderRadius: '3px' }} onClick={() => openEdit(item)} title="Edit">
+                              <button className="btn btn-secondary btn-icon-only" style={{ width: '18px', height: '18px', padding: 0, borderRadius: '3px' }} onClick={() => openEdit(item)} title={t('common.edit')}>
                                 <Edit2 size={9} />
                               </button>
-                              <button className="btn btn-danger btn-icon-only" style={{ width: '18px', height: '18px', padding: 0, borderRadius: '3px' }} onClick={() => handleDelete(item.entry_id, item.name)} title="Delete">
+                              <button className="btn btn-danger btn-icon-only" style={{ width: '18px', height: '18px', padding: 0, borderRadius: '3px' }} onClick={() => handleDelete(item.entry_id, item.name)} title={t('common.delete')}>
                                 <Trash2 size={9} />
                               </button>
                             </div>

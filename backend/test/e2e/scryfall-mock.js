@@ -66,6 +66,20 @@ axios.Axios.prototype.get = async function(url, config) {
     let type_line = 'Artifact';
     let rarity = 'rare';
     let image_uris = { normal: 'https://images.scryfall.com/lotus.png' };
+    // Real Scryfall reports the language of the printing it returned, and only
+    // returns a non-English one when asked with the `lang:` KEYWORD plus
+    // include_multilingual — there is no `lang` query parameter. `printed_name`
+    // is the localized name; `name` stays English on every printing.
+    let lang = 'en';
+    let printed_name = null;
+    // Matches the encoded form of `lang:ja` inside q. Deliberately NOT `lang=ja`:
+    // that parameter is ignored by the real API, so accepting it here would let a
+    // broken query keep passing this suite (it did — see issue #25).
+    const askedForJapanese = /lang%3Aja\b/i.test(fullUrl);
+    if (askedForJapanese && !/include_multilingual=true/.test(fullUrl)) {
+      // Scryfall hides non-English printings without this flag.
+      return { data: { object: 'list', total_cards: 0, has_more: false, data: [] } };
+    }
 
     if (fullUrl.includes('Lightning') || fullUrl.includes('146')) {
       name = 'Lightning Bolt';
@@ -77,8 +91,12 @@ axios.Axios.prototype.get = async function(url, config) {
       type_line = 'Instant';
       rarity = 'common';
       image_uris = { normal: 'https://images.scryfall.com/bolt.png' };
-    } else if (fullUrl.includes('jp123') || fullUrl.includes('lang=ja') || fullUrl.includes('%e9%bb%92%e3%81%8d%e8%93%ae')) {
-      name = '黒き蓮';
+    } else if (askedForJapanese || fullUrl.includes('jp123') || fullUrl.includes('%e9%bb%92%e3%81%8d%e8%93%ae')) {
+      // The Japanese printing is its own card object: own id, own art, English
+      // `name` plus the localized `printed_name`.
+      name = 'Black Lotus';
+      printed_name = '黒き蓮';
+      lang = 'ja';
       id = 'jp123';
       set = 'lea';
       num = '232';
@@ -142,6 +160,8 @@ axios.Axios.prototype.get = async function(url, config) {
           {
             id,
             name,
+            lang,
+            ...(printed_name ? { printed_name } : {}),
             type_line,
             rarity,
             set,

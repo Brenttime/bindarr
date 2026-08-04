@@ -1,7 +1,16 @@
-// Single source of truth for Pokémon English<->Japanese name display and search.
+// Fallback Pokémon English<->Japanese name mapping, for cards that carry no
+// printed name of their own.
+//
+// This used to be the only way a Japanese name could ever appear. It no longer
+// is: a card fetched in a language now stores its real localized name in
+// printed_name (Scryfall's printed_name for Magic, TCGdex's name for Pokémon),
+// and getCardDisplayName below prefers that. What is left here still matters for
+// the case the providers cannot cover — an English card the user has recorded as
+// a Japanese copy, where no localized row was ever fetched.
+//
 // Covers only ~45 popular species; anything unmapped falls back to English.
 // ponytail: hardcoded micro-dictionary, not a real localization source — do not
-// hand-expand it. If broad coverage is needed, replace it with a JP card dataset.
+// hand-expand it. Cards added through search/scan get printed_name instead.
 export const POKEMON_EN_TO_JP = {
   'Dragonite': 'カイリュー',
   'Dragonair': 'ハクリュー',
@@ -73,9 +82,12 @@ const EN_JP_PREFIX = {
   "Blaine's ": 'カツラの'
 };
 
-// English card name shown in Japanese when the entry's language is Japanese.
-// Unmapped names (or a non-Japanese language) return the English name unchanged.
-export const getCardDisplayName = (englishName, language) => {
+// The name to show for a card. A printed name from the provider always wins — it
+// is what is actually on the card, in any language. Failing that, an entry marked
+// Japanese falls back to the dictionary above, and everything else shows the
+// English name unchanged.
+export const getCardDisplayName = (englishName, language, printedName) => {
+  if (printedName) return printedName;
   if (language !== 'Japanese') return englishName;
   for (const [en, jp] of Object.entries(EN_JP_PREFIX)) {
     if (englishName.startsWith(en)) {

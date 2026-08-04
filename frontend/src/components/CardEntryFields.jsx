@@ -1,4 +1,5 @@
 import { CONDITIONS, getPrintings, LANGUAGES } from '../utils/cardOptions';
+import { useT } from '../utils/i18n';
 
 // Shared quantity / purchase-price / condition / printing / language inputs for
 // the add-card and edit-card flows. Presentational only: the parent owns the
@@ -12,6 +13,7 @@ export default function CardEntryFields({
   onQuantity, onPurchasePrice, onCondition, onPrinting, onLanguage,
   variant = 'grid', game,
 }) {
+  const { t } = useT();
   const stacked = variant === 'stacked';
   const printings = getPrintings(game);
   const groupStyle = stacked ? { marginBottom: 0 } : undefined;
@@ -21,28 +23,28 @@ export default function CardEntryFields({
     // Scanner quick-add: quantity is the most-changed field, so give it big
     // tap targets instead of a bare number input.
     <div className="form-group quick-add-full-width" style={groupStyle}>
-      <label>Quantity</label>
+      <label>{t('card.quantity')}</label>
       <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'stretch' }}>
-        <button type="button" className="btn btn-secondary" onClick={() => stepQty(-1)} aria-label="Decrease quantity" style={{ padding: '0 1.1rem', fontSize: '1.3rem', flexShrink: 0 }}>&minus;</button>
+        <button type="button" className="btn btn-secondary" onClick={() => stepQty(-1)} aria-label={t('card.quantityDown')} style={{ padding: '0 1.1rem', fontSize: '1.3rem', flexShrink: 0 }}>&minus;</button>
         <input type="number" className="input-control" min="1" value={quantity} onChange={(e) => onQuantity(e.target.value)} required style={{ flex: 1, minWidth: 0, textAlign: 'center', fontWeight: 700 }} />
-        <button type="button" className="btn btn-secondary" onClick={() => stepQty(1)} aria-label="Increase quantity" style={{ padding: '0 1.1rem', fontSize: '1.3rem', flexShrink: 0 }}>+</button>
+        <button type="button" className="btn btn-secondary" onClick={() => stepQty(1)} aria-label={t('card.quantityUp')} style={{ padding: '0 1.1rem', fontSize: '1.3rem', flexShrink: 0 }}>+</button>
       </div>
     </div>
   ) : (
     <div className="form-group" style={groupStyle}>
-      <label>Quantity</label>
+      <label>{t('card.quantity')}</label>
       <input type="number" className="input-control" min="1" value={quantity} onChange={(e) => onQuantity(e.target.value)} required />
     </div>
   );
   const Price = (
     <div className="form-group" style={groupStyle}>
-      <label>Purchase Price ($)</label>
+      <label>{t('card.purchasePrice')}</label>
       <input type="number" step="0.01" className="input-control" value={purchasePrice} onChange={(e) => onPurchasePrice(e.target.value)} placeholder="0.00" />
     </div>
   );
   const Condition = (
     <div className="form-group" style={groupStyle}>
-      <label>Condition</label>
+      <label>{t('card.condition')}</label>
       <select className="select-control" value={condition} onChange={(e) => onCondition(e.target.value)}>
         {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
       </select>
@@ -50,7 +52,7 @@ export default function CardEntryFields({
   );
   const Printing = (
     <div className="form-group" style={groupStyle}>
-      <label>Printing</label>
+      <label>{t('card.printing')}</label>
       <select className="select-control" value={printing} onChange={(e) => onPrinting(e.target.value)}>
         {printings.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
       </select>
@@ -58,7 +60,8 @@ export default function CardEntryFields({
   );
   const Language = (
     <div className={stacked ? 'form-group quick-add-full-width' : 'form-group'} style={groupStyle}>
-      <label>Language</label>
+      {/* The language the card was printed in — not the app's language. */}
+      <label>{t('card.language')}</label>
       <select className="select-control" value={language} onChange={(e) => onLanguage(e.target.value)}>
         {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
       </select>

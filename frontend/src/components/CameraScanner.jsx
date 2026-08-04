@@ -9,7 +9,10 @@ import CardEntryFields from './CardEntryFields';
 import CardInspectorModal from './CardInspectorModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useMultiSelect } from '../utils/useMultiSelect';
+import { LANGUAGES, langName, isEnglish } from '../utils/languages';
+import { defaultGame, gameOptions, showGamePicker } from '../utils/games';
 import { isNative } from '../apiBase';
+import { useT } from '../utils/i18n';
 // Centered card-shaped guide box, styled in CSS (.scan-card-guide): card ratio
 // with margin, centered by the overlay's flex. The crop maps the box's on-screen
 // rect (getBoundingClientRect) into the frame, so its size is driven by CSS.
@@ -30,6 +33,7 @@ const SCAN_PROFILES = [
 ];
 
 function CameraScanner({ onAddSuccess, showToast }) {
+  const { t } = useT();
 
   const [stream, setStream] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -65,7 +69,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
   
   // Camera active states
   const [cameraActive, setCameraActive] = useState(false);
-  const [hasCameraError, setHasCameraError] = useState(false);
+  const [cameraErrorKey, setCameraErrorKey] = useState('');
   const [autoScan, setAutoScan] = useState(false);
   const [showScanSettings, setShowScanSettings] = useState(false);
   // Scan detail level: index into SCAN_PROFILES. Persisted; default Balanced.
@@ -80,20 +84,32 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // exposureCompensation, else null (slider hidden). value = current setting.
   const [exposureCaps, setExposureCaps] = useState(null);
   const [exposure, setExposure] = useState(0);
-  const [cardLayout, setCardLayout] = useState(() => localStorage.getItem('default_game') === 'mtg' ? 'mtg' : 'modern');
+  const [cardLayout, setCardLayout] = useState(() => (defaultGame() === 'mtg' ? 'mtg' : 'modern'));
   // Per-set index prep state for MTG set-scoped matching: 'idle'|'building'|'ready'.
   const [setPrep, setSetPrep] = useState('idle');
   // Build progress while status==='building': { total, done, status } or null.
   const [setBuildProgress, setSetBuildProgress] = useState(null);
+  // Why a set index could not be built, when setPrep === 'error'.
+  const [setBuildError, setSetBuildError] = useState(null);
   // Which game the current layout belongs to. 'mtg' is its own layout; every
   // other layout value is a Pokémon sub-layout.
   const scanGame = cardLayout === 'mtg' ? 'mtg' : 'pokemon';
+  // Which language of card is being fed in. Card art is language-specific, so
+  // this selects which set index the scan is matched against — and it becomes the
+  // language each added copy is recorded as. Remembered across sessions because
+  // people scan a language at a time.
+  const [scanLang, setScanLangState] = useState(() => localStorage.getItem('scanner_lang') || 'en');
+  const setScanLang = (code) => { setScanLangState(code); localStorage.setItem('scanner_lang', code); };
   // Set-scoped scanning across one OR MORE sets (both games). Persisted per game
   // as a comma-joined code list so switching Pokémon<->MTG restores that game's
   // sets. Scanning within the chosen sets (~300 cards each) is far more accurate
   // than a global search.
   const [scanSetCodes, setScanSetCodesState] = useState([]);
-  const persistSets = (arr) => { setScanSetCodesState(arr); localStorage.setItem(`scanner_set_${scanGame}`, arr.join(',')); };
+  // Set codes do not carry across languages (Japan has sets the West never got),
+  // so they are remembered per game AND language. English keeps the original key
+  // so an existing scanner setup is not forgotten.
+  const setsKey = (game, lang) => (lang === 'en' ? `scanner_set_${game}` : `scanner_set_${game}_${lang}`);
+  const persistSets = (arr) => { setScanSetCodesState(arr); localStorage.setItem(setsKey(scanGame, scanLang), arr.join(',')); };
   const addSetCode = (code) => { const c = (code || '').trim(); if (c && !scanSetCodes.some(x => x.toLowerCase() === c.toLowerCase())) persistSets([...scanSetCodes, c]); };
   const removeSetCode = (code) => persistSets(scanSetCodes.filter(c => c !== code));
   const scanSetParam = scanSetCodes.join(',');
@@ -254,7 +270,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const [quantity, setQuantity] = useState(1);
   const [condition, setCondition] = useState('Near Mint');
   const [printing, setPrinting] = useState('Normal');
-  const [language, setLanguage] = useState('English');
+  // Language of the copy being added. Defaults to whatever is being scanned, so a
+  // Japanese run does not have to be corrected card by card.
+  const [language, setLanguage] = useState(() => langName(localStorage.getItem('scanner_lang') || 'en'));
   const [purchasePrice, setPurchasePrice] = useState(0);
 
   // Keep a ref mirroring the latest stream so the unmount cleanup below (whose
@@ -273,35 +291,40 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // On game switch: restore that game's remembered set and load its set list
   // (for the search autocomplete).
   useEffect(() => {
-    setScanSetCodesState((localStorage.getItem(`scanner_set_${scanGame}`) || '').split(',').map(s => s.trim()).filter(Boolean));
+    setScanSetCodesState((localStorage.getItem(setsKey(scanGame, scanLang)) || '').split(',').map(s => s.trim()).filter(Boolean));
     setSetInput('');
     setSetSearchOpen(false);
-    fetch(`/api/sets?game=${scanGame}`).then(r => r.ok ? r.json() : []).then(setSetList).catch(() => setSetList([]));
-  }, [scanGame]);
+    fetch(`/api/sets?game=${scanGame}&lang=${encodeURIComponent(scanLang)}`).then(r => r.ok ? r.json() : []).then(setSetList).catch(() => setSetList([]));
+  }, [scanGame, scanLang]);
 
   // When a set code is set, build/verify that set's index on the server so scans
   // match within just that set (~300 cards) — accurate and fast. Polls until the
   // one-time build finishes.
   useEffect(() => {
-    if (!scanSetParam) { setSetPrep('idle'); setSetBuildProgress(null); return; }
+    if (!scanSetParam) { setSetPrep('idle'); setSetBuildProgress(null); setSetBuildError(null); return; }
     let cancelled = false, timer, debounce;
     const poll = async () => {
       try {
         const r = await fetch('/api/prepare-set', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ game: scanGame, set: scanSetParam }),
+          body: JSON.stringify({ game: scanGame, set: scanSetParam, lang: scanLang }),
         });
         const d = await r.json();
         if (cancelled) return;
-        if (d.ready) { setSetPrep('ready'); setSetBuildProgress(null); return; }
+        if (d.ready) { setSetPrep('ready'); setSetBuildProgress(null); setSetBuildError(null); return; }
+        // Unbuildable (no such set in this language, or the provider has no card
+        // data for it). Stop polling and say so — retrying cannot help, and the
+        // silent "fetching card list" spinner is what made this look like a hang.
+        if (d.failed) { setSetPrep('error'); setSetBuildProgress(null); setSetBuildError(d.error || 'This set could not be indexed.'); return; }
         setSetPrep('building');
         setSetBuildProgress(d.progress || null);
+        setSetBuildError(d.failures && d.failures.length ? d.failures[0].error : null);
         timer = setTimeout(poll, 1000);
       } catch { if (!cancelled) setSetPrep('idle'); }
     };
     debounce = setTimeout(() => { setSetPrep('building'); poll(); }, 200);
     return () => { cancelled = true; clearTimeout(debounce); if (timer) clearTimeout(timer); };
-  }, [scanGame, scanSetParam]);
+  }, [scanGame, scanSetParam, scanLang]);
 
   // Detect manual-exposure support on the live track. Present on most Android
   // Chrome back cameras; absent on iOS Safari and many desktop webcams (slider
@@ -429,10 +452,10 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // so those users get a clear "not supported" instead of a dead button.
   const toggleTorch = async () => {
     const track = stream?.getVideoTracks()[0];
-    if (!track) { showToast('Camera not ready — start the camera first.'); return; }
+    if (!track) { showToast(t('scan.errCameraNotReady')); return; }
     const caps = typeof track.getCapabilities === 'function' ? track.getCapabilities() : {};
     if (!caps.torch) {
-      showToast('Flashlight not available on this device/browser (iPhone Safari has no web torch).');
+      showToast(t('scan.errNoTorch'));
       return;
     }
     const next = !isTorchOn;
@@ -440,7 +463,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
       await track.applyConstraints({ advanced: [{ torch: next }] });
       setIsTorchOn(next);
     } catch (err) {
-      showToast(`Flashlight failed: ${err.name || err.message || 'unknown error'}`);
+      showToast(t('scan.errTorch', { error: err.name || err.message || t('scan.unknownError') }));
     }
   };
 
@@ -454,12 +477,21 @@ function CameraScanner({ onAddSuccess, showToast }) {
   };
 
   const startCamera = async () => {
-    setHasCameraError(false);
+    setCameraErrorKey('');
     setScanMatches([]);
     setScanStatus('');
     setDebugHashImg('');
     setDebugCandidates([]);
     setDebugScoped(null);
+    // getUserMedia only exists in a secure context. Served over plain HTTP on a
+    // LAN address (the usual Docker setup, http://host:3001) navigator.mediaDevices
+    // is undefined, and the browser never shows a permission prompt at all — so
+    // "check your permissions" sends people hunting for a setting that is fine.
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setCameraErrorKey('scan.errCameraInsecure');
+      showToast(t('scan.errCameraInsecure', { origin: window.location.origin, port: window.location.port || '80' }));
+      return;
+    }
     try {
       const constraints = {
         video: {
@@ -475,8 +507,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
       setCameraActive(true);
     } catch (err) {
       console.error('Error opening camera:', err);
-      setHasCameraError(true);
-      showToast('Camera access denied or unavailable.');
+      setCameraErrorKey('scan.errCameraPermissions');
+      showToast(t('scan.errCameraAccess'));
     }
   };
 
@@ -505,6 +537,10 @@ function CameraScanner({ onAddSuccess, showToast }) {
     try {
       const autoPrinting = overrides?.printing || ((card.rarity || '').toLowerCase().includes('holo') ? 'Holofoil' : 'Normal');
       const autoCondition = overrides?.condition || 'Near Mint';
+      // The card's own language when the provider reported one, else the language
+      // being scanned. Auto-add used to hard-code English, which quietly filed
+      // every Japanese card as an English copy.
+      const autoLanguage = card.language || langName(scanLang);
       const response = await fetch('/api/collection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -513,7 +549,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
           quantity: qty,
           condition: autoCondition,
           printing: autoPrinting,
-          language: 'English',
+          language: autoLanguage,
           // price_trend is whichever finish the TCG API returned first (usually
           // Normal), not necessarily the Holofoil finish just chosen above —
           // resolve against the printing actually being recorded.
@@ -527,11 +563,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
         const qtyLabel = qty > 1 ? `${qty}× ` : '';
         const placementLabel = data.placement?.label || null;
         if (placementLabel) {
-          showToast(`Added: ${qtyLabel}${card.name} → ${placementLabel}`);
+          showToast(t('scan.addedTo', { qty: qtyLabel, name: card.name, place: placementLabel }));
         } else if (data.container_full) {
-          showToast(`Added: ${qtyLabel}${card.name} — container full, left Unsorted`);
+          showToast(t('scan.addedFull', { qty: qtyLabel, name: card.name }));
         } else {
-          showToast(`Auto-Added: ${qtyLabel}${card.name} (${card.set_name})`);
+          showToast(t('scan.autoAdded', { qty: qtyLabel, name: card.name, set: card.set_name }));
         }
 
         // Append to recent scans history log. entry_id (the last inserted row)
@@ -540,7 +576,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         setRecentScans(prev => [{
           ...card, card_id: card.id, placementLabel, entry_id: data.id,
           quantity: qty, condition: autoCondition, printing: autoPrinting,
-          language: 'English', purchase_price: resolveCardPrice(card, autoPrinting), location_id: null,
+          language: autoLanguage, purchase_price: resolveCardPrice(card, autoPrinting), location_id: null,
         }, ...prev].slice(0, 10));
 
         // Brief confetti blast for ultra-rares
@@ -551,12 +587,12 @@ function CameraScanner({ onAddSuccess, showToast }) {
         
         onAddSuccess(); // Refresh stats
       } else {
-        showToast(`Failed to auto-add ${card.name}`);
+        showToast(t('scan.errAutoAdd', { name: card.name }));
         signal('error');
       }
     } catch (err) {
       console.error('Auto-add error:', err);
-      showToast('Error auto-adding card.');
+      showToast(t('scan.errAutoAddGeneric'));
       signal('error');
     }
   };
@@ -731,15 +767,22 @@ function CameraScanner({ onAddSuccess, showToast }) {
             const resp = await fetch('/api/scan-match', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ game: scanGame, image: imageData, set: scanSetParam, recallK: profile.recallK, orb: profile.orb }),
+              body: JSON.stringify({ game: scanGame, image: imageData, set: scanSetParam, lang: scanLang, recallK: profile.recallK, orb: profile.orb }),
             });
             if (scanId !== currentScanId.current) return;
             if (resp.ok) {
-              const { game: matchGame, verified, candidates, crop, scoped } = await resp.json();
-              console.log('Scan candidates:', matchGame, scoped ? `(set-scoped ${scanSetParam})` : '(GLOBAL)', verified ? 'ORB' : 'CLIP', candidates);
+              const { game: matchGame, verified, candidates, crop, scoped, englishOnly } = await resp.json();
+              console.log('Scan candidates:', matchGame, scanLang, scoped ? `(set-scoped ${scanSetParam})` : '(GLOBAL)', verified ? 'ORB' : 'CLIP', candidates);
               if (crop) setDebugHashImg(crop); // show the server's auto-cropped card
               setDebugScoped(scoped ? scanSetParam : false);
               setDebugCandidates((candidates || []).map(c => ({ ...c, verified })));
+              // The whole-game indexes only exist in English, so a non-English scan
+              // needs a set selected (its index builds on demand). Say that plainly
+              // instead of leaving the user re-scanning a card that cannot match.
+              if (englishOnly) {
+                setScanStatus(`${langName(scanLang)} scanning needs a set selected — pick the set you are feeding in above.`);
+                return;
+              }
               const top = candidates && candidates[0];
               const confident = top && (verified ? top.inliers >= SCAN_MATCH_MIN_INLIERS : top.score >= SCAN_MATCH_MIN_SCORE);
               // Printing ambiguity: basic lands (and other low-art cards) share one
@@ -764,7 +807,10 @@ function CameraScanner({ onAddSuccess, showToast }) {
                   // Query the MATCHED card's exact set + number (top.set/top.number),
                   // not just its name — otherwise search returns some other printing
                   // of the same name instead of the card ORB actually identified.
-                  const exact = new URLSearchParams({ game: matchGame });
+                  // `lang` keeps the lookup on the printing that was scanned: the
+                  // matched name may itself be localized (稲妻), and the English row
+                  // for the same set+number is a different card.
+                  const exact = new URLSearchParams({ game: matchGame, lang: scanLang });
                   if (top.name) exact.append('name', top.name);
                   if (top.set) exact.append('set', top.set);
                   if (top.number) exact.append('number', top.number);
@@ -774,7 +820,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                   // Fallback: exact set/number isn't cached/known — offer all
                   // printings by name so the user can still pick.
                   if (matches.length === 0) {
-                    const byName = new URLSearchParams({ game: matchGame, prints: '1' });
+                    const byName = new URLSearchParams({ game: matchGame, lang: scanLang, prints: '1' });
                     if (top.name) byName.append('name', top.name);
                     searchResponse = await fetch(`/api/search?${byName.toString()}`);
                     if (scanId !== currentScanId.current) return;
@@ -797,7 +843,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 const fullCandidates = await Promise.all(
                   candidates.slice(0, 8).map(async cand => {
                     if (cand.card) return cand.card;
-                    const p = new URLSearchParams({ game: matchGame });
+                    const p = new URLSearchParams({ game: matchGame, lang: scanLang });
                     if (cand.set) p.append('set', cand.set);
                     if (cand.number) p.append('number', cand.number);
                     if (cand.name) p.append('name', cand.name);
@@ -852,7 +898,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
     } else {
       setPrinting('Normal');
     }
-    setLanguage('English');
+    setLanguage(card.language || langName(scanLang));
     setIsDrawerOpen(true);
   };
 
@@ -863,7 +909,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
     setQuantity(1);
     setCondition('Near Mint');
     setPrinting('Normal');
-    setLanguage('English');
+    setLanguage(langName(scanLang));
     setPurchasePrice(0);
     // Restart camera on close only if stream was stopped
     if (!stream || !cameraActive) {
@@ -903,11 +949,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
         const data = await response.json();
         const placementLabel = data.placement?.label || null;
         if (placementLabel) {
-          showToast(`Added: ${selectedCard.name} → ${placementLabel}`);
+          showToast(t('scan.addedToPlain', { name: selectedCard.name, place: placementLabel }));
         } else if (data.container_full) {
-          showToast(`Added: ${selectedCard.name} — container full, left Unsorted`);
+          showToast(t('scan.addedFullPlain', { name: selectedCard.name }));
         } else {
-          showToast(`${selectedCard.name} added to collection!`);
+          showToast(t('search.addedToCollection', { name: selectedCard.name }));
         }
 
         // Append to recent scans history. Carry entry_id + saved fields so the
@@ -931,11 +977,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
         onAddSuccess();
         closeDrawer();
       } else {
-        showToast('Failed to add card.');
+        showToast(t('search.errAddCard'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error saving card.');
+      showToast(t('scan.errSaveCard'));
     }
   };
 
@@ -951,11 +997,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
           style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
           onClick={startCamera}
         >
-          {hasCameraError ? (
+          {cameraErrorKey ? (
             <div style={{ textAlign: 'center', padding: '2rem' }}>
               <AlertTriangle size={48} style={{ color: 'var(--accent-yellow)', marginBottom: '1rem' }} />
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                Could not access camera. Please make sure camera permissions are enabled in your browser/phone settings.
+                {t(cameraErrorKey, { origin: window.location.origin, port: window.location.port || '80' })}
               </p>
               <button className="btn btn-primary" onClick={startCamera}>
                 <RefreshCw size={14} /> Retry Camera
@@ -964,10 +1010,10 @@ function CameraScanner({ onAddSuccess, showToast }) {
           ) : (
             <div style={{ textAlign: 'center', padding: '2rem' }}>
               <Camera size={48} style={{ color: 'var(--accent-red)', marginBottom: '1rem', opacity: 0.8 }} />
-              <p style={{ fontSize: '0.95rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>Ready to Scan</p>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Works best in well-lit environments</p>
+              <p style={{ fontSize: '0.95rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>{t('scan.readyTitle')}</p>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>{t('scan.readyHint')}</p>
               <button className="btn btn-primary">
-                Activate Camera
+                {t('scan.activateCamera')}
               </button>
             </div>
           )}
@@ -1064,7 +1110,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                   onClick={resetGuide}
                   style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', pointerEvents: 'auto', zIndex: 10, fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-strong)', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.4)', borderRadius: 999, padding: '0.25rem 0.7rem', cursor: 'pointer' }}
                 >
-                  Reset box
+                  {t('scan.resetBox')}
                 </button>
               )}
             </div>
@@ -1074,18 +1120,48 @@ function CameraScanner({ onAddSuccess, showToast }) {
               scan detail, exposure. Kept off the camera view so it stays clean. */}
           {showScanSettings && (
           <div className="glass-panel" style={{ width: '100%', padding: '1rem', background: 'rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.25rem', order: 2, position: 'relative', zIndex: setSearchOpen ? 40 : undefined }}>
-            <div className="sub-nav-tabs" style={{ marginBottom: 0 }}>
-              {[['pokemon', 'Pokémon'], ['mtg', 'MTG']].map(([g, label]) => (
-                <button
-                  key={g}
-                  type="button"
-                  className={`sub-nav-tab ${scanGame === g ? 'active' : ''}`}
-                  style={{ padding: '0.5rem', fontSize: '0.8rem', fontWeight: 700 }}
-                  onClick={() => setCardLayout(g === 'mtg' ? 'mtg' : 'modern')}
-                >
-                  {label}
-                </button>
-              ))}
+            {showGamePicker() && (
+              <div className="sub-nav-tabs" style={{ marginBottom: 0 }}>
+                {gameOptions().map(({ value, short }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`sub-nav-tab ${scanGame === value ? 'active' : ''}`}
+                    style={{ padding: '0.5rem', fontSize: '0.8rem', fontWeight: 700 }}
+                    onClick={() => setCardLayout(value === 'mtg' ? 'mtg' : 'modern')}
+                  >
+                    {short}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Scan language. Card art is language-specific, so this picks which
+                set index the scan is matched against — and the language each
+                added copy is recorded as. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              <label htmlFor="scan-language" style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                {t('scan.cardLanguage')}
+              </label>
+              <select
+                id="scan-language"
+                className="select-control"
+                value={scanLang}
+                onChange={(e) => {
+                  const code = e.target.value;
+                  setScanLang(code);
+                  setLanguage(langName(code));
+                }}
+                style={{ fontSize: '0.8rem' }}
+              >
+                {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+              </select>
+              {!isEnglish(scanLang) && (
+                <p style={{ fontSize: '0.7rem', color: 'var(--accent-yellow)', margin: 0, lineHeight: 1.35 }}>
+                  {langName(scanLang)} scanning needs a set selected below — the whole-game
+                  index only covers English art.
+                </p>
+              )}
             </div>
 
             {/* Set search (both games): pick a set to build a per-set index
@@ -1107,14 +1183,27 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     : `Indexing ${setLabelJoined}: ${bp.done}/${bp.total} cards (${pct}%). Scans work meanwhile.`;
                 } else if (setPrep === 'ready') {
                   text = `${setLabelJoined} ready: exact matches within your set${scanSetCodes.length > 1 ? 's' : ''}.`;
+                } else if (setPrep === 'error') {
+                  text = setBuildError || `${setLabelJoined} could not be indexed.`;
                 } else {
                   text = setLabelJoined;
                 }
+                const textColor = setPrep === 'error' ? 'var(--accent-red)'
+                  : !scanSetCodes.length ? 'var(--accent-yellow)'
+                  : setPrep === 'ready' ? 'var(--type-grass)'
+                  : 'var(--text-secondary)';
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                    <p style={{ fontSize: '0.75rem', color: !scanSetCodes.length ? 'var(--accent-yellow)' : setPrep === 'ready' ? 'var(--type-grass)' : 'var(--text-secondary)', margin: 0, textAlign: 'center', fontWeight: 600 }}>
+                    <p style={{ fontSize: '0.75rem', color: textColor, margin: 0, textAlign: 'center', fontWeight: 600 }}>
                       {text}
                     </p>
+                    {/* A set that failed but sits alongside ones still building:
+                        the bar below keeps reporting the buildable ones. */}
+                    {setPrep === 'building' && setBuildError && (
+                      <p style={{ fontSize: '0.7rem', color: 'var(--accent-red)', margin: 0, textAlign: 'center' }}>
+                        {setBuildError}
+                      </p>
+                    )}
                     {setPrep === 'building' && (
                       <div style={{ padding: '0.45rem 0.65rem', background: 'rgba(0,0,0,0.35)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-strong)' }}>
@@ -1147,7 +1236,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Add set</label>
+                <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{t('scan.addSet')}</label>
                 <input
                   type="text"
                   value={setInput}
@@ -1172,11 +1261,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     const m = setList.find(s => [s.id, s.ptcgo_code, s.name].some(v => (v || '').toLowerCase() === q));
                     if (m) { addSetCode(setScanCode(m)); setSetInput(''); }
                   }, 150)}
-                  placeholder={scanGame === 'mtg' ? 'Search set name or code (e.g. Foundations, FDN)' : 'Search set name or id (e.g. Surging Sparks, sv8)'}
+                  placeholder={t(scanGame === 'mtg' ? 'scan.setSearchMtg' : 'scan.setSearchPokemon')}
                   style={{ flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.75rem', background: 'rgba(255,255,255,0.06)', border: `1px solid ${scanSetCodes.length ? 'var(--type-grass)' : 'var(--border-glass)'}`, borderRadius: 'var(--radius-sm)', color: 'var(--text-strong)' }}
                 />
                 {scanSetCodes.length > 0 && (
-                  <button type="button" className="btn btn-secondary" style={{ fontSize: '0.6rem', padding: '0.2rem 0.4rem' }} onClick={() => { persistSets([]); setSetInput(''); setSetSearchOpen(false); }}>Clear</button>
+                  <button type="button" className="btn btn-secondary" style={{ fontSize: '0.6rem', padding: '0.2rem 0.4rem' }} onClick={() => { persistSets([]); setSetInput(''); setSetSearchOpen(false); }}>{t('bulk.clear')}</button>
                 )}
               </div>
               {setSearchOpen && setSuggestions.length > 0 && (
@@ -1200,7 +1289,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 shorter cooldown, shallower server match; higher = more accurate. */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'rgba(0,0,0,0.2)', padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Scan Detail</span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('scan.detail')}</span>
                 <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--accent-red)' }}>{profile.label}</span>
               </div>
               <input
@@ -1213,8 +1302,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 style={{ width: '100%', accentColor: 'var(--accent-red)' }}
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', color: 'var(--text-muted)' }}>
-                <span>Quick &amp; less accurate</span>
-                <span>Slow &amp; accurate</span>
+                <span>{t('scan.detailQuick')}</span>
+                <span>{t('scan.detailSlow')}</span>
               </div>
             </div>
 
@@ -1224,7 +1313,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
             {exposureCaps && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'rgba(0,0,0,0.2)', padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Exposure</span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('scan.exposure')}</span>
                   <button
                     type="button"
                     className="btn btn-secondary"
@@ -1236,7 +1325,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       setExposure(typeof cur === 'number' ? cur : 0);
                     }}
                   >
-                    Auto
+                    {t('scan.auto')}
                   </button>
                 </div>
                 <input
@@ -1249,8 +1338,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
                   style={{ width: '100%', accentColor: 'var(--accent-red)' }}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', color: 'var(--text-muted)' }}>
-                  <span>Darker</span>
-                  <span>Brighter</span>
+                  <span>{t('scan.darker')}</span>
+                  <span>{t('scan.brighter')}</span>
                 </div>
               </div>
             )}
@@ -1266,7 +1355,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 <div style={{ display: 'flex', gap: '0.75rem', background: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginTop: '0.25rem' }}>
                   {debugHashImg && (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
-                      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Hashed Crop</span>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{t('scan.hashedCrop')}</span>
                       <img src={debugHashImg} style={{ width: '52px', maxHeight: '80px', objectFit: 'contain', background: '#111', borderRadius: '3px', border: '1px solid var(--border-glass-hover)' }} alt="Hashed crop" />
                     </div>
                   )}
@@ -1278,7 +1367,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     )}
                     <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Top matches ({debugCandidates[0]?.verified ? 'ORB inliers' : 'similarity'}, higher = closer)</span>
                     {debugCandidates.length === 0 ? (
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>No candidates.</span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{t('scan.noCandidates')}</span>
                     ) : debugCandidates.slice(0, 3).map((cd, i) => {
                       const pass = cd.verified ? cd.inliers >= SCAN_MATCH_MIN_INLIERS : cd.score >= SCAN_MATCH_MIN_SCORE;
                       const label = cd.verified ? `${cd.inliers} inl` : (cd.score != null ? cd.score.toFixed(2) : '?');
@@ -1296,8 +1385,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
           )}
 
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'stretch' }}>
-            <button className="btn btn-secondary" onClick={stopCamera} style={{ flex: 1 }} title="Stop camera">
-              Stop
+            <button className="btn btn-secondary" onClick={stopCamera} style={{ flex: 1 }} title={t('scan.stopCamera')}>
+              {t('scan.stop')}
             </button>
             <button
               type="button"
@@ -1306,29 +1395,29 @@ function CameraScanner({ onAddSuccess, showToast }) {
               className="btn btn-secondary"
               onClick={() => setAutoScan(!autoScan)}
               style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0 0.7rem', borderColor: autoScan ? 'var(--type-grass)' : undefined, color: autoScan ? 'var(--type-grass)' : undefined }}
-              title="Auto-capture: scan repeatedly without tapping"
+              title={t('scan.autoCaptureHint')}
             >
               <ScanLine size={15} />
-              <span style={{ fontSize: '0.72rem', fontWeight: 700 }}>Auto</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700 }}>{t('scan.auto')}</span>
               <span style={{ width: 28, height: 15, borderRadius: 999, background: autoScan ? 'var(--type-grass)' : 'rgba(255,255,255,0.22)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
                 <span style={{ position: 'absolute', top: 2, left: autoScan ? 15 : 2, width: 11, height: 11, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
               </span>
             </button>
             {loading ? (
               <button className="btn btn-primary" onClick={handleCancelScan} style={{ flex: 2, backgroundColor: 'var(--accent-red)', borderColor: 'var(--accent-red)' }}>
-                Cancel Scan
+                {t('scan.cancelScan')}
               </button>
             ) : (
               <button className="btn btn-primary" onClick={handleCapture} style={{ flex: 2 }}>
-                Capture & Identify
+                {t('scan.captureIdentify')}
               </button>
             )}
             <button
               type="button"
               className={`btn ${showScanSettings ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setShowScanSettings(s => !s)}
-              title="Scan settings (game, set, detail, exposure)"
-              aria-label="Scan settings"
+              title={t('scan.settingsHint')}
+              aria-label={t('scan.settings')}
               style={{ flexShrink: 0, padding: '0 0.7rem', position: 'relative' }}
             >
               <Settings size={16} />
@@ -1365,7 +1454,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         >
           <div className="glass-panel animate-fade-in" style={{ maxWidth: '420px', width: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center', textAlign: 'center', border: '1px solid var(--accent-red)' }}>
             <div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 800 }}>{autoAddEditing ? 'Adjust & Add' : 'Exact Match Identified!'}</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 800 }}>{t(autoAddEditing ? 'scan.adjustAndAdd' : 'scan.exactMatch')}</span>
               <h3 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', margin: '0.25rem 0 0.5rem 0' }}>{autoAddTargetCard.name}</h3>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>{autoAddTargetCard.set_name} • #{autoAddTargetCard.number}</p>
             </div>
@@ -1409,13 +1498,13 @@ function CameraScanner({ onAddSuccess, showToast }) {
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <div style={{ display: 'flex', gap: '0.6rem' }}>
                   <div className="form-group" style={{ marginBottom: 0, flex: 1, textAlign: 'left' }}>
-                    <label>Condition</label>
+                    <label>{t('card.condition')}</label>
                     <select className="select-control" value={autoAddCond} onChange={(e) => setAutoAddCond(e.target.value)}>
                       {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div className="form-group" style={{ marginBottom: 0, flex: 1, textAlign: 'left' }}>
-                    <label>Printing</label>
+                    <label>{t('card.printing')}</label>
                     <select className="select-control" value={autoAddPrint} onChange={(e) => setAutoAddPrint(e.target.value)}>
                       {getPrintings(autoAddTargetCard.game || autoAddTargetCard.supertype).map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                     </select>
@@ -1435,7 +1524,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     }}
                     style={{ flex: 1.5, fontSize: '0.75rem', padding: '0.45rem 0' }}
                   >
-                    Add to Collection
+                    {t('search.addToCollection')}
                   </button>
                   <button
                     type="button"
@@ -1444,18 +1533,18 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       setAutoAddTargetCard(null);
                       setAutoAddCountdown(null);
                       setAutoAddEditing(false);
-                      showToast('Auto-add cancelled.');
+                      showToast(t('scan.autoAddCancelled'));
                     }}
                     style={{ flex: 1, fontSize: '0.75rem', padding: '0.45rem 0' }}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                 </div>
               </div>
             ) : (
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Auto-adding to collection in {autoAddCountdown}s...</span>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Tap the card to change condition/foil</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{t('scan.tapToChange')}</span>
                 <div style={{ display: 'flex', gap: '0.5rem', width: '100%', marginTop: '0.5rem' }}>
                   <button
                     type="button"
@@ -1468,7 +1557,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     }}
                     style={{ flex: 1.5, fontSize: '0.75rem', padding: '0.45rem 0' }}
                   >
-                    Add Now
+                    {t('scan.addNow')}
                   </button>
                   <button
                     type="button"
@@ -1476,11 +1565,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     onClick={() => {
                       setAutoAddTargetCard(null);
                       setAutoAddCountdown(null);
-                      showToast('Auto-add cancelled.');
+                      showToast(t('scan.autoAddCancelled'));
                     }}
                     style={{ flex: 1, fontSize: '0.75rem', padding: '0.45rem 0' }}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                 </div>
               </div>
@@ -1507,7 +1596,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         >
           <div className="glass-panel animate-fade-in" style={{ maxWidth: '420px', width: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center', textAlign: 'center', border: '1px solid var(--accent-yellow)' }}>
             <div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--accent-yellow)', textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 800 }}>Same card scanned again</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--accent-yellow)', textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 800 }}>{t('scan.sameCardAgain')}</span>
               <h3 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', margin: '0.25rem 0 0.5rem 0' }}>{dupConfirmCard.name}</h3>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>{dupConfirmCard.set_name} • #{dupConfirmCard.number}</p>
             </div>
@@ -1515,7 +1604,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
             <img src={dupConfirmCard.image_url} alt={dupConfirmCard.name} style={{ width: '110px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '6px', boxShadow: 'var(--shadow-glow)' }} />
 
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
-              Just added this card. Still holding it in front of the camera? If this is another physical copy, choose how many more to add. Otherwise discard it as a repeat scan.
+              {t('scan.repeatHint')}
             </p>
 
             {/* Quantity stepper: number of ADDITIONAL copies to add now. */}
@@ -1557,7 +1646,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 onClick={() => {
                   resolvedDupIdRef.current = dupConfirmCard.id;
                   setDupConfirmCard(null);
-                  showToast('Discarded repeat scan — same card.');
+                  showToast(t('scan.discardedRepeat'));
                 }}
                 style={{ width: '100%', fontSize: '0.8rem', padding: '0.45rem 0' }}
               >
@@ -1570,7 +1659,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                   resolvedDupIdRef.current = dupConfirmCard.id;
                   setDupConfirmCard(null);
                   setAutoScan(false);
-                  showToast('Done — that was a second photo of the same card.');
+                  showToast(t('scan.secondPhoto'));
                 }}
                 style={{ width: '100%', fontSize: '0.8rem', padding: '0.45rem 0' }}
               >
@@ -1596,7 +1685,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         }}>
           <div className="glass-panel" style={{ maxWidth: '560px', width: '100%', padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-              <h3 style={{ fontSize: '1.1rem', color: 'var(--text-strong)', margin: 0 }}>Identified Cards Found</h3>
+              <h3 style={{ fontSize: '1.1rem', color: 'var(--text-strong)', margin: 0 }}>{t('scan.identifiedTitle')}</h3>
               <button 
                 className="btn btn-secondary btn-icon-only" 
                 onClick={() => {
@@ -1605,7 +1694,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                   if (!stream || !cameraActive) startCamera();
                 }} 
                 style={{ borderRadius: '50%' }}
-                title="Close and Rescan"
+                title={t('scan.closeRescan')}
               >
                 <X size={16} />
               </button>
@@ -1613,21 +1702,21 @@ function CameraScanner({ onAddSuccess, showToast }) {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
-                Select the correct card to add to your collection.
+                {t('scan.selectCorrect')}
               </p>
               
               {/* Manual search fallback within the modal */}
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <input 
                   type="text" 
-                  placeholder="Manual search (e.g. FDN 540 or Pikachu)" 
+                  placeholder={t('scan.manualSearchPlaceholder')} 
                   className="input-control"
                   style={{ flex: 1, padding: '0.4rem 0.5rem', fontSize: '0.8rem' }}
                   onKeyDown={async (e) => {
                     if (e.key === 'Enter' && e.target.value.trim()) {
                       const q = e.target.value.trim();
-                      const p = new URLSearchParams({ game: scanGame });
-                      
+                      const p = new URLSearchParams({ game: scanGame, lang: scanLang });
+
                       if (scanGame === 'mtg') {
                         // Very simple fallback: try to parse set code and number if format looks like "SET 123"
                         const match = q.match(/^([A-Z0-9]{3,5})\s+(\d+[A-Z★]?)$/i);
@@ -1649,7 +1738,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                         if (m.length) {
                           setScanMatches(m);
                         } else {
-                          showToast('No cards found for manual search.');
+                          showToast(t('scan.errManualSearch'));
                         }
                       }
                     }
@@ -1684,7 +1773,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
               >
                 <RefreshCw size={14} />
-                <span>Rescan / Try Again</span>
+                <span>{t('scan.rescan')}</span>
               </button>
               <button
                 className="btn btn-secondary"
@@ -1696,7 +1785,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 }}
                 style={{ flex: 1 }}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
           </div>
@@ -1707,19 +1796,19 @@ function CameraScanner({ onAddSuccess, showToast }) {
       {recentScans.length > 0 && (
         <div className="glass-panel" style={{ width: '100%', marginTop: '1rem' }}>
           <h3 style={{ fontSize: '1rem', color: 'var(--text-strong)', marginBottom: '0.85rem', borderLeft: '3px solid var(--accent-red)', paddingLeft: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>Recent Scans</span>
+            <span>{t('scan.recentScans')}</span>
             {recentSelect.selectMode
-              ? <button className="btn btn-secondary" style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }} onClick={recentSelect.exitSelectMode}>Done</button>
-              : <button className="btn btn-secondary" style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }} onClick={() => setRecentScans([])}>Clear History</button>}
+              ? <button className="btn btn-secondary" style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }} onClick={recentSelect.exitSelectMode}>{t('bulk.done')}</button>
+              : <button className="btn btn-secondary" style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }} onClick={() => setRecentScans([])}>{t('scan.clearHistory')}</button>}
           </h3>
 
           {/* Bulk action bar (select mode). Same actions/endpoint as the collection page. */}
           {recentSelect.selectMode && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center', marginBottom: '0.6rem' }}>
               <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.8rem', marginRight: '0.25rem' }}>{recentSelect.selectedIds.size} selected</span>
-              <button className="btn btn-danger" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!recentSelect.selectedIds.size} onClick={() => recentSelect.runBulk('delete', null, `Delete ${recentSelect.selectedIds.size} selected card(s)? This cannot be undone.`)}>Delete</button>
-              <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!recentSelect.selectedIds.size} onClick={() => recentSelect.runBulk('trade', null)}>Mark Trade</button>
-              <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!recentSelect.selectedIds.size} onClick={() => recentSelect.runBulk('list_type', 'wishlist')}>Move to Wishlist</button>
+              <button className="btn btn-danger" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!recentSelect.selectedIds.size} onClick={() => recentSelect.runBulk('delete', null, t('bulk.confirmDelete', { count: recentSelect.selectedIds.size }))}>{t('bulk.delete')}</button>
+              <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!recentSelect.selectedIds.size} onClick={() => recentSelect.runBulk('trade', null)}>{t('bulk.markTrade')}</button>
+              <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!recentSelect.selectedIds.size} onClick={() => recentSelect.runBulk('list_type', 'wishlist')}>{t('bulk.moveToWishlist')}</button>
             </div>
           )}
 
@@ -1733,7 +1822,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 key={idx}
                 onClick={() => activateRecent(item)}
                 {...recentSelect.pressHandlers(item.entry_id)}
-                title="Tap to edit • hold to select"
+                title={t('scan.tapEditHoldSelect')}
                 style={{ flex: '0 0 auto', width: '76px', display: 'flex', flexDirection: 'column', gap: '0.25rem', cursor: 'pointer', userSelect: 'none', WebkitTouchCallout: 'none', opacity: recentSelect.selectMode && !selected ? 0.55 : 1 }}
               >
                 <img
@@ -1770,8 +1859,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
               <div>
-                <h3 style={{ color: 'var(--text-strong)', fontSize: '1.25rem', margin: 0 }}>Add Scanned Card</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>{getCardDisplayName(selectedCard.name, language)} ({selectedCard.set_name} • #{selectedCard.number})</p>
+                <h3 style={{ color: 'var(--text-strong)', fontSize: '1.25rem', margin: 0 }}>{t('scan.addScannedTitle')}</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>{getCardDisplayName(selectedCard.name, language, selectedCard.printed_name)} ({selectedCard.set_name} • #{selectedCard.number})</p>
               </div>
               <button className="btn btn-secondary btn-icon-only" onClick={closeDrawer} style={{ borderRadius: '50%' }}>
                 <X size={18} />
@@ -1802,7 +1891,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
 
                 {/* Column 2: Card Properties Form */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                  <div className="quick-add-section-title">Card Properties</div>
+                  <div className="quick-add-section-title">{t('scan.cardProperties')}</div>
                   
                   <CardEntryFields
                     variant="stacked"
@@ -1815,8 +1904,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
 
               {/* Submit Buttons */}
               <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', borderTop: '1px solid var(--border-glass)', paddingTop: '1rem', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={closeDrawer} style={{ padding: '0.5rem 1.5rem' }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 2rem' }}>Add to Collection</button>
+                <button type="button" className="btn btn-secondary" onClick={closeDrawer} style={{ padding: '0.5rem 1.5rem' }}>{t('common.cancel')}</button>
+                <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 2rem' }}>{t('search.addToCollection')}</button>
               </div>
             </form>
           </div>

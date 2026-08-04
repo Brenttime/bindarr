@@ -310,7 +310,12 @@ async function runTests() {
       throw err;
     }
 
-    // F3-TC9: Verify foreign language mappings
+    // F3-TC9: Verify foreign language mappings.
+    // The contract changed with issue #25: `name` stays ENGLISH (deck lists,
+    // marketplace links and the next Scryfall lookup all need it) and the
+    // localized name lives in `printed_name`. The mock only answers in Japanese
+    // when the request uses the real syntax — `lang:ja` in q plus
+    // include_multilingual — so this also guards the query construction.
     try {
       port = getNextPort();
       const serverLang = spawn('node', ['-r', mockScript, serverScript], {
@@ -322,11 +327,21 @@ async function runTests() {
       });
       await waitForServer(port);
 
-      const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lotus&lang=ja`, { headers: authHeaders });
+      const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lotus&lang=ja&scope=internet`, { headers: authHeaders });
       const data = await res.json();
-      assert.ok(data.length > 0);
+      assert.ok(data.length > 0, 'a Japanese search must return the Japanese printing');
       assert.strictEqual(data[0].language, 'Japanese');
-      assert.strictEqual(data[0].name, '黒き蓮');
+      assert.strictEqual(data[0].printed_name, '黒き蓮', 'localized name is carried for display');
+      assert.strictEqual(data[0].name, 'Black Lotus', 'name stays English for search/links');
+      assert.strictEqual(data[0].id, 'mtg-jp123', 'the Japanese printing is its own cache row');
+
+      // An English search must still be answered in English — the language-scoped
+      // cache read is what stops the Japanese row above from shadowing it.
+      const resEn = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lotus&scope=internet`, { headers: authHeaders });
+      const dataEn = await resEn.json();
+      assert.ok(dataEn.length > 0);
+      assert.strictEqual(dataEn[0].language, 'English');
+      assert.strictEqual(dataEn[0].name, 'Black Lotus');
       console.log('PASS: F3-TC9');
       await stopServer(serverLang, port);
     } catch (err) {

@@ -8,33 +8,30 @@ import CardImageZoom from './CardImageZoom';
 import { translateJapaneseName } from '../utils/langHelper';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { CONDITIONS, PRINTINGS } from '../utils/cardOptions';
+import { LANGUAGES, langName, isEnglish, displayName, translatedName, setReference, setCode } from '../utils/languages';
+import { defaultGame, gameOptions, showGamePicker, gameLabel } from '../utils/games';
+import { useT } from '../utils/i18n';
 
 // Search failures worth explaining in-page rather than only as a toast. `keyHint`
-// marks the ones a user API key actually fixes; an upstream 5xx does not.
+// marks the ones a user API key actually fixes; an upstream 5xx does not. Title
+// and body are looked up as searchErr.<code>.title / .body.
 const SEARCH_ERRORS = {
-  'invalid-key': {
-    title: 'Invalid API Key',
-    body: 'Your custom Pokémon TCG API key is invalid or unauthorized.',
-    keyHint: true
-  },
-  'rate-limit': {
-    title: 'Rate Limit Exceeded',
-    body: 'You have exceeded the unauthenticated search rate limits.',
-    keyHint: true
-  },
-  upstream: {
-    title: 'Card API Unavailable',
-    body: 'The card API returned an error. That is upstream of Bindarr and usually clears within a moment, so search again.',
-    keyHint: false
-  }
+  'invalid-key': { keyHint: true },
+  'rate-limit': { keyHint: true },
+  upstream: { keyHint: false },
 };
 
 function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
+  const { t } = useT();
   const [query, setQuery] = useState('');
   const [numberQuery, setNumberQuery] = useState('');
   const [setCodeQuery, setSetCodeQuery] = useState('');
-  // Honour the default game from Settings, like the scanner and collection do.
-  const [game, setGame] = useState(() => localStorage.getItem('default_game') === 'mtg' ? 'mtg' : 'pokemon');
+  // Honour the default game from Settings, like the scanner and collection do —
+  // and never open on a game the user has hidden.
+  const [game, setGame] = useState(() => defaultGame());
+  // Which language's printings to search. Magic comes from Scryfall in every
+  // language; non-English Pokémon comes from TCGdex (pokemontcg.io is English-only).
+  const [searchLang, setSearchLang] = useState('en');
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -96,9 +93,11 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
   // Set codes for the autocomplete. The sets table already holds every set for
   // both games, so nobody has to know that "ltr" means Tales of Middle-earth.
   // MTG ids are stored prefixed ("mtg-ltr"); the search wants the bare code.
+  // `lang` matters here: Japan gets Pokémon sets the West never sees, so the set
+  // list is per-language (the route reads it from TCGdex for those).
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/sets?game=${game}`)
+    fetch(`/api/sets?game=${game}&lang=${encodeURIComponent(searchLang)}`)
       .then(r => (r.ok ? r.json() : []))
       .then(rows => {
         if (cancelled) return;
@@ -110,7 +109,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [game]);
+  }, [game, searchLang]);
 
   const fetchLocations = async () => {
     try {
@@ -144,13 +143,17 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     }
     try {
       const params = new URLSearchParams();
-      // Japanese-name translation is a Pokémon-only helper; MTG names go through as typed.
-      const finalQuery = query ? (game === 'mtg' ? query : (translateJapaneseName(query) || query)) : '';
+      // The Japanese-name micro-dictionary only ever existed because the English
+      // Pokémon API can't be searched in Japanese. With a real Japanese source
+      // selected, the typed name goes straight through — it IS the card's name.
+      const translate = game === 'pokemon' && isEnglish(searchLang);
+      const finalQuery = query ? (translate ? (translateJapaneseName(query) || query) : query) : '';
       if (finalQuery) params.append('name', finalQuery);
       if (numberQuery) params.append('number', numberQuery);
       if (setCodeQuery) params.append('set', setCodeQuery);
       params.append('scope', 'internet');
       params.append('game', game);
+      params.append('lang', searchLang);
       params.append('page', pageNum);
       params.append('limit', size);
 
@@ -180,11 +183,11 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
         } else if (response.status === 503) {
           setSearchError('upstream');
         }
-        showToast(errData.error || 'Search request failed.');
+        showToast(errData.error || t('search.errRequest'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error connecting to search API.');
+      showToast(t('search.errApi'));
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -279,7 +282,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
 
   const handleBulkAdd = async () => {
     const ids = filteredAndSortedCards.filter(c => selectedIds.has(c.id)).map(c => c.id);
-    if (ids.length === 0) { showToast('No cards selected.'); return; }
+    if (ids.length === 0) { showToast(t('search.errNoneSelected')); return; }
     setBulkAdding(true);
     try {
       const response = await fetch('/api/collection/bulk-add', {
@@ -297,7 +300,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       });
       const data = await response.json().catch(() => ({}));
       if (response.ok) {
-        showToast(data.message || `Added ${ids.length} cards.`);
+        showToast(data.message || t('search.addedCards', { count: ids.length }));
         // Reflect the new owned counts without re-running the search.
         const added = parseInt(quantity, 10) || 1;
         setCards(prev => prev.map(c => (selectedIds.has(c.id)
@@ -306,11 +309,11 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
         exitSelectMode();
         onAddSuccess();
       } else {
-        showToast(data.error || 'Bulk add failed.');
+        showToast(data.error || t('search.errBulkAdd'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error adding cards to collection.');
+      showToast(t('search.errAddCards'));
     } finally {
       setBulkAdding(false);
     }
@@ -336,7 +339,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       })
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Failed to add card.');
+    if (!response.ok) throw new Error(data.error || t('search.errAddCard'));
     return data;
   };
 
@@ -346,16 +349,16 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
   const handleRapidAdd = async () => {
     const number = rapidNumber.trim();
     if (!number || rapidBusy) return;
-    if (!setCodeQuery.trim()) { showToast('Enter a set code first.'); return; }
+    if (!setCodeQuery.trim()) { showToast(t('search.errNoSetCode')); return; }
     setRapidBusy(true);
     try {
       const params = new URLSearchParams({
-        number, set: setCodeQuery, scope: 'internet', game, page: '1', limit: '10'
+        number, set: setCodeQuery, scope: 'internet', game, lang: searchLang, page: '1', limit: '10'
       });
       const res = await fetch(`/api/search?${params.toString()}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        showToast(err.error || 'Lookup failed.');
+        showToast(err.error || t('search.errLookup'));
         return;
       }
       const matches = await res.json();
@@ -364,12 +367,12 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
 
       if (!hit) {
         if (matches.length === 0) {
-          showToast(`No card #${number} in ${setCodeQuery.toUpperCase()}.`);
+          showToast(t('search.errNoSuchNumber', { number, set: setCodeQuery.toUpperCase() }));
         } else {
           // Ambiguous: show them and let the user pick, keeping the number typed.
           setCards(matches);
           setSearching(true);
-          showToast(`${matches.length} printings of #${number} — pick one.`);
+          showToast(t('search.pickPrinting', { count: matches.length, number }));
         }
         return;
       }
@@ -384,7 +387,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       onAddSuccess();
     } catch (err) {
       console.error(err);
-      showToast(err.message || 'Error adding card.');
+      showToast(err.message || t('search.errAddCardGeneric'));
     } finally {
       setRapidBusy(false);
       // Focus never leaves the field, so the next number can just be typed.
@@ -395,22 +398,25 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
   const undoRapidAdd = async (entry) => {
     try {
       const res = await fetch(`/api/collection/${entry.entryId}`, { method: 'DELETE' });
-      if (!res.ok) { showToast('Could not undo that add.'); return; }
+      if (!res.ok) { showToast(t('search.errUndo')); return; }
       setRapidLog(prev => prev.filter(e => e.entryId !== entry.entryId));
       setCards(prev => prev.map(c => (c.id === entry.card.id
         ? { ...c, owned_qty: Math.max(0, (c.owned_qty || 0) - entry.qty) }
         : c)));
-      showToast(`Removed ${entry.card.name}.`);
+      showToast(t('search.removed', { name: entry.card.name }));
       onAddSuccess();
     } catch (err) {
       console.error(err);
-      showToast('Error undoing that add.');
+      showToast(t('search.errUndoGeneric'));
     }
   };
 
   const openQuickAdd = (card) => {
     setSelectedCard(card);
     setPurchasePrice(0); // Default to 0 purchase spend
+    // The card itself knows which printing it is, so the copy is recorded in that
+    // language rather than defaulting to English and needing a manual correction.
+    setLanguage(card.language || langName(searchLang));
     // Guess printing based on rarity
     const rarity = (card.rarity || '').toLowerCase();
     if (rarity.includes('holo') || rarity.includes('secret') || rarity.includes('ultra') || rarity.includes('shining')) {
@@ -429,7 +435,9 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     setQuantity(1);
     setCondition('Near Mint');
     setPrinting('Normal');
-    setLanguage('English');
+    // Back to the searched language, not hard-coded English: someone adding a run
+    // of Japanese cards should not have to re-pick it for every card.
+    setLanguage(langName(searchLang));
     setPurchasePrice(0);
   };
 
@@ -453,7 +461,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       });
 
       if (response.ok) {
-        showToast(`${selectedCard.name} added to collection!`);
+        showToast(t('search.addedToCollection', { name: selectedCard.name }));
         
         // Trigger confetti for rare/valuable cards!
         const rarity = (selectedCard.rarity || '').toLowerCase();
@@ -469,11 +477,11 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
         onAddSuccess(); // Update stats
         closeDrawer();
       } else {
-        showToast('Failed to add card to database.');
+        showToast(t('search.errAddDb'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error saving to collection.');
+      showToast(t('search.errSave'));
     }
   };
 
@@ -483,30 +491,32 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       {/* Search Header Panel */}
       <div className="glass-panel" style={{ marginBottom: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
-          <h2 style={{ fontSize: '1.25rem', margin: 0, color: 'var(--text-strong)' }}>Search {game === 'mtg' ? 'Magic: The Gathering' : 'Pokémon'} Cards</h2>
-          <div className="sub-nav-tabs" style={{ margin: 0 }}>
-            {[['pokemon', 'Pokémon'], ['mtg', 'MTG']].map(([val, label]) => (
-              <button
-                key={val}
-                type="button"
-                className={`sub-nav-tab ${game === val ? 'active' : ''}`}
-                style={{ padding: '0.4rem 0.9rem', fontSize: '0.8rem' }}
-                onClick={() => setGame(val)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <h2 style={{ fontSize: '1.25rem', margin: 0, color: 'var(--text-strong)' }}>{t('search.title', { game: gameLabel(game) })}</h2>
+          {showGamePicker() && (
+            <div className="sub-nav-tabs" style={{ margin: 0 }}>
+              {gameOptions().map(({ value, short }) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`sub-nav-tab ${game === value ? 'active' : ''}`}
+                  style={{ padding: '0.4rem 0.9rem', fontSize: '0.8rem' }}
+                  onClick={() => setGame(value)}
+                >
+                  {short}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <form onSubmit={handleSearch} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.75rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>CARD NAME</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.cardName')}</label>
               <div style={{ position: 'relative' }}>
-                <input 
-                  type="text" 
-                  className="input-control" 
-                  placeholder={game === 'mtg' ? 'e.g. Black Lotus, Lightning Bolt...' : 'e.g. Charizard, Pikachu, Mewtwo...'}
+                <input
+                  type="text"
+                  className="input-control"
+                  placeholder={t(game === 'mtg' ? 'search.namePlaceholderMtg' : 'search.namePlaceholderPokemon')}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   style={{ width: '100%', paddingLeft: '2.5rem' }}
@@ -516,24 +526,46 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
+          {/* auto-fit rather than a fixed 2 columns: language made this row three
+              fields wide, and they have to stay usable on a phone. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>CARD NUMBER (OPTIONAL)</label>
-              <input 
-                type="text" 
-                className="input-control" 
-                placeholder="e.g. 58/102, 150" 
+              {/* The language of the cards being searched for, not the app's. */}
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.language')}</label>
+              <select
+                className="select-control"
+                value={searchLang}
+                onChange={(e) => {
+                  const code = e.target.value;
+                  setSearchLang(code);
+                  // The copy being added is almost always in the language just
+                  // searched, so make that the entry default instead of English.
+                  setLanguage(langName(code));
+                  // Set codes do not carry across languages (JP has sets the West
+                  // never got), so a stale code would search a set that is not there.
+                  setSetCodeQuery('');
+                }}
+              >
+                {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.cardNumber')}</label>
+              <input
+                type="text"
+                className="input-control"
+                placeholder={t('search.numberPlaceholder')}
                 value={numberQuery}
                 onChange={(e) => setNumberQuery(e.target.value)}
               />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>SET(S) - COMMA FOR MULTIPLE (OPTIONAL)</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.sets')}</label>
               <input
                 type="text"
                 className="input-control"
                 list="known-set-codes"
-                placeholder={game === 'mtg' ? 'e.g. ltr  or  ltr, ltc' : 'e.g. Base  or  sv1, sv2'}
+                placeholder={t(game === 'mtg' ? 'search.setsPlaceholderMtg' : 'search.setsPlaceholderPokemon')}
                 value={setCodeQuery}
                 onChange={(e) => setSetCodeQuery(e.target.value)}
               />
@@ -548,7 +580,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
             <button type="submit" className="btn btn-primary" style={{ flex: '1 1 220px' }}>
               <Search size={18} />
-              Search Internet API
+              {t('search.submit')}
             </button>
             <button
               type="button"
@@ -558,11 +590,11 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                 setRapidMode(next);
                 if (next) setTimeout(() => rapidInputRef.current?.focus(), 0);
               }}
-              title="Pin a set, then type card numbers and press Enter"
+              title={t('search.rapidHint')}
               style={{ flex: '0 1 auto' }}
             >
               <Zap size={18} />
-              {rapidMode ? 'Rapid add on' : 'Rapid add'}
+              {t(rapidMode ? 'search.rapidOn' : 'search.rapid')}
             </button>
           </div>
         </form>
@@ -574,12 +606,10 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <Zap size={18} style={{ color: 'var(--accent-yellow)' }} />
             <strong style={{ color: 'var(--text-strong)', fontSize: '0.95rem' }}>
-              Rapid add {setCodeQuery ? `to ${setCodeQuery.toUpperCase()}` : ''}
+              {setCodeQuery ? t('search.rapidToSet', { set: setCodeQuery.toUpperCase() }) : t('search.rapid')}
             </strong>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              {setCodeQuery
-                ? 'Type a card number and press Enter. The field stays focused for the next one.'
-                : 'Set a set code above first.'}
+              {t(setCodeQuery ? 'search.rapidReady' : 'search.rapidNeedsSet')}
             </span>
           </div>
 
@@ -589,7 +619,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
               type="text"
               inputMode="numeric"
               className="input-control"
-              placeholder="Card number, then Enter"
+              placeholder={t('search.rapidNumberPlaceholder')}
               value={rapidNumber}
               // Never disabled mid-add: disabling blurs the field, and the
               // refocus would land on a still-disabled element, forcing a click
@@ -611,16 +641,16 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
               className="input-control"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
-              title="Copies added per Enter"
+              title={t('search.copiesPerEnter')}
               style={{ width: '80px', fontSize: '0.75rem' }}
             />
-            {rapidBusy && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Adding…</span>}
+            {rapidBusy && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('search.adding')}</span>}
           </div>
 
           {rapidLog.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '220px', overflowY: 'auto' }}>
               <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                Added this session ({rapidLog.length})
+                {t('search.addedThisSession', { count: rapidLog.length })}
               </div>
               {rapidLog.map(entry => (
                 <div key={entry.entryId} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'rgba(255,255,255,0.02)', padding: '0.35rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
@@ -634,7 +664,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                     style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }}
                     onClick={() => undoRapidAdd(entry)}
                   >
-                    <Undo2 size={12} /> Undo
+                    <Undo2 size={12} /> {t('search.undo')}
                   </button>
                 </div>
               ))}
@@ -647,13 +677,13 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
         <div className="glass-panel" style={{ borderLeft: '4px solid var(--accent-red)', background: 'rgba(239, 68, 68, 0.08)', padding: '1.25rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--accent-red)', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
             <ShieldAlert size={18} />
-            {SEARCH_ERRORS[searchError].title}
+            {t(`searchErr.${searchError}.title`)}
           </h3>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
-            {SEARCH_ERRORS[searchError].body}
+            {t(`searchErr.${searchError}.body`)}
             {/* Scryfall needs no API key, so never point an MTG search at pokemontcg.io. */}
             {SEARCH_ERRORS[searchError].keyHint && game === 'pokemon' && (
-              <> Get a free API key at <a href="https://dev.pokemontcg.io/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)', textDecoration: 'underline' }}>pokemontcg.io</a> and configure it in your Settings.</>
+              <> {t('searchErr.keyHint')} <a href="https://dev.pokemontcg.io/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)', textDecoration: 'underline' }}>pokemontcg.io</a></>
             )}
           </p>
           {setActiveTab && SEARCH_ERRORS[searchError].keyHint && game === 'pokemon' && (
@@ -663,7 +693,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
               onClick={() => setActiveTab('settings')}
               style={{ width: 'fit-content', padding: '0.35rem 0.75rem', fontSize: '0.75rem', marginTop: '0.25rem' }}
             >
-              Go to Settings
+              {t('searchErr.goToSettings')}
             </button>
           )}
         </div>
@@ -677,44 +707,39 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
         <div className="glass-panel" style={{ marginBottom: '1.5rem', padding: '1rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', alignItems: 'end' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>FILTER BY TYPE</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.filterType')}</label>
               <select className="select-control" value={filterType} onChange={e => setFilterType(e.target.value)}>
-                <option value="">All Types</option>
-                {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                <option value="">{t('collection.allTypes')}</option>
+                {uniqueTypes.map(type => <option key={type} value={type}>{type}</option>)}
               </select>
             </div>
-            
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>FILTER BY RARITY</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.filterRarity')}</label>
               <select className="select-control" value={filterRarity} onChange={e => setFilterRarity(e.target.value)}>
-                <option value="">All Rarities</option>
+                <option value="">{t('collection.allRarities')}</option>
                 {uniqueRarities.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>FILTER BY SUPERTYPE</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.filterSupertype')}</label>
               <select className="select-control" value={filterSupertype} onChange={e => setFilterSupertype(e.target.value)}>
-                <option value="">All Supertypes</option>
+                <option value="">{t('collection.allSupertypes')}</option>
                 {uniqueSupertypes.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>SORT BY</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.sortBy')}</label>
               <select className="select-control" value={sortBy} onChange={e => setSortBy(e.target.value)}>
-                <option value="relevance">Relevance</option>
-                <option value="name-asc">Name (A-Z)</option>
-                <option value="name-desc">Name (Z-A)</option>
-                <option value="price-asc">Price (Low to High)</option>
-                <option value="price-desc">Price (High to Low)</option>
-                <option value="number-asc">Number (Ascending)</option>
-                <option value="number-desc">Number (Descending)</option>
+                {['relevance', 'name-asc', 'name-desc', 'price-asc', 'price-desc', 'number-asc', 'number-desc']
+                  .map(key => <option key={key} value={key}>{t(`search.sort.${key}`)}</option>)}
               </select>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>CARDS PER PAGE</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.cardsPerPage')}</label>
               <select className="select-control" value={pageSize} onChange={e => changePageSize(parseInt(e.target.value, 10))}>
                 {[30, 60, 120, 250].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
@@ -722,8 +747,8 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           </div>
           <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Showing {filteredAndSortedCards.length} of {total != null ? total.toLocaleString() : cards.length} match{(total != null ? total : cards.length) === 1 ? '' : 'es'}
-              {total != null && cards.length < total ? ` (${cards.length} loaded)` : ''}
+              {t('search.showingMatches', { shown: filteredAndSortedCards.length, count: total != null ? total : cards.length })}
+              {total != null && cards.length < total ? ` ${t('search.loadedSuffix', { loaded: cards.length })}` : ''}
             </span>
             {/* Same control, label and icon as the collection's select toggle. */}
             <button
@@ -731,10 +756,10 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
               className={`btn ${selectMode ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
               style={{ fontSize: '0.8rem', padding: '0.4rem 0.9rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
-              title="Or long-press any card to start selecting"
+              title={t('collection.selectHint')}
             >
               <MousePointerClick size={14} />
-              {selectMode ? 'Done' : 'Select'}
+              {t(selectMode ? 'bulk.done' : 'collection.select')}
             </button>
           </div>
         </div>
@@ -743,9 +768,9 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       {/* Bulk add bar — sticky single row, matching the collection's bulk bar. */}
       {selectMode && (
         <div className="glass-panel" style={{ marginBottom: '1rem', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', position: 'sticky', top: '0.5rem', zIndex: 30 }}>
-          <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.85rem' }}>{selectedIds.size} selected</span>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={() => setSelectedIds(new Set(filteredAndSortedCards.map(c => c.id)))}>Select all ({filteredAndSortedCards.length})</button>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={clearSelection}>Clear</button>
+          <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.85rem' }}>{t('bulk.selected', { count: selectedIds.size })}</span>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={() => setSelectedIds(new Set(filteredAndSortedCards.map(c => c.id)))}>{t('bulk.selectAll', { count: filteredAndSortedCards.length })}</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={clearSelection}>{t('bulk.clear')}</button>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <select className="select-control" value={condition} onChange={(e) => setCondition(e.target.value)} style={{ fontSize: '0.72rem', maxWidth: '150px', padding: '0.3rem 0.4rem' }}>
             {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
@@ -759,7 +784,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
             className="input-control"
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
-            title="Copies of each selected card"
+            title={t('search.copiesEachSelected')}
             style={{ fontSize: '0.72rem', width: '70px', padding: '0.3rem 0.4rem' }}
           />
           <button
@@ -768,9 +793,9 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
             disabled={bulkAdding || selectedIds.size === 0}
             onClick={handleBulkAdd}
           >
-            {bulkAdding ? 'Adding…' : `Add ${selectedIds.size}`}
+            {bulkAdding ? t('search.adding') : t('search.addN', { count: selectedIds.size })}
           </button>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem', marginLeft: 'auto' }} onClick={exitSelectMode}>Done</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem', marginLeft: 'auto' }} onClick={exitSelectMode}>{t('bulk.done')}</button>
         </div>
       )}
 
@@ -804,12 +829,25 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                   {!selectMode && (
                     <div style={{ position: 'absolute', bottom: '8px', right: '8px', background: 'rgba(0,0,0,0.85)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-glass-hover)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <Plus size={10} style={{ color: 'var(--accent-red)' }} />
-                      <span style={{ fontSize: '0.65rem', fontWeight: 700 }}>Quick Add</span>
+                      <span style={{ fontSize: '0.65rem', fontWeight: 700 }}>{t('search.quickAdd')}</span>
                     </div>
                   )}
                 </div>
                 <div className="tcg-card-info">
-                  <div className="tcg-card-name">{card.name}</div>
+                  <div className="tcg-card-name">{displayName(card)}</div>
+                  {/* Second line only when the localized name needs help: the
+                      English name where a provider gives us one (Magic always
+                      does), otherwise the set code — language-independent, and the
+                      only handle you have on a card whose name you can't read. */}
+                  {translatedName(card) ? (
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {translatedName(card)}
+                    </div>
+                  ) : !isEnglish(card.language) && setReference(card) ? (
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {setReference(card)}
+                    </div>
+                  ) : null}
                   <div className="tcg-card-meta">
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>{card.set_name}</span>
                     <span className="tcg-card-price">${formatPrice(card.price_trend)}</span>
@@ -838,7 +876,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       {/* Filtered Empty State */}
       {!loading && cards.length > 0 && filteredAndSortedCards.length === 0 && (
         <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '3rem 1.5rem', marginBottom: '2rem' }}>
-          <p>No cards matched your active filters. Try clearing your selection above.</p>
+          <p>{t('search.noFilterMatches')}</p>
         </div>
       )}
 
@@ -858,8 +896,15 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
-                <h3 style={{ color: 'var(--text-strong)', fontSize: '1.25rem' }}>Add Card to Collection</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{selectedCard.name} ({selectedCard.set_name} • #{selectedCard.number})</p>
+                <h3 style={{ color: 'var(--text-strong)', fontSize: '1.25rem' }}>{t('search.addCardTitle')}</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  {displayName(selectedCard)}
+                  {translatedName(selectedCard) && <span style={{ color: 'var(--text-muted)' }}> ({translatedName(selectedCard)})</span>}
+                  {' '}({selectedCard.set_name}
+                  {/* Code only where the set name isn't readable to an English speaker. */}
+                  {!isEnglish(selectedCard.language) && setCode(selectedCard) ? ` / ${setCode(selectedCard)}` : ''}
+                  {' • '}#{selectedCard.number})
+                </p>
               </div>
               <button className="btn btn-secondary btn-icon-only" onClick={closeDrawer} style={{ borderRadius: '50%' }}>
                 <X size={18} />
@@ -870,7 +915,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
               {/* Tap the art to enlarge, same as the collection inspector. */}
               <div
                 onClick={() => setIsFullScreen(true)}
-                title="Click to view full screen"
+                title={t('inspector.zoomHint')}
                 style={{ position: 'relative', flexShrink: 0, cursor: 'pointer', lineHeight: 0 }}
               >
                 <img src={selectedCard.image_url} alt={selectedCard.name} style={{ width: '80px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }} />
@@ -900,8 +945,8 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
 
 
               <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={closeDrawer} style={{ flex: 1 }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 2 }}>Add to Collection</button>
+                <button type="button" className="btn btn-secondary" onClick={closeDrawer} style={{ flex: 1 }}>{t('common.cancel')}</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 2 }}>{t('search.addToCollection')}</button>
               </div>
             </form>
           </div>

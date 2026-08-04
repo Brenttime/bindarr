@@ -222,6 +222,8 @@ async function initDb() {
       cmc REAL,
       color_identity TEXT,
       game TEXT DEFAULT 'pokemon',
+      language TEXT DEFAULT 'English',
+      printed_name TEXT,
       last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -357,6 +359,31 @@ async function initDb() {
   }
   if (!appSettingsCols.some(c => c.name === 'pokemon_prices_swept_at')) {
     await run(`ALTER TABLE app_settings ADD COLUMN pokemon_prices_swept_at DATETIME`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'tcgdex_prices_swept_at')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN tcgdex_prices_swept_at DATETIME`);
+  }
+
+  // A non-English printing is its own card, not a display variant of the English
+  // one: it has its own provider id, its own art and its own name. `language`
+  // records which printing a cached row IS (collection.language still records
+  // what the user OWNS), and `printed_name` holds the localized name — `name`
+  // stays English so search, deck lists and marketplace links keep working.
+  const cardCacheCols = await all(`PRAGMA table_info(card_cache)`);
+  if (!cardCacheCols.some(c => c.name === 'language')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN language TEXT DEFAULT 'English'`);
+  }
+  if (!cardCacheCols.some(c => c.name === 'printed_name')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN printed_name TEXT`);
+  }
+  // Marketplace links as the PROVIDER gives them. Building them from name+set+number
+  // only works for English cards: searching TCGplayer for "ヒトカゲ ポケモンカード151"
+  // returns nothing, because those sites index English names. Scryfall and
+  // pokemontcg.io both hand us a real product/search URL per card, so store it.
+  for (const col of ['tcgplayer_url', 'cardmarket_url']) {
+    if (!cardCacheCols.some(c => c.name === col)) {
+      await run(`ALTER TABLE card_cache ADD COLUMN ${col} TEXT`);
+    }
   }
 
   const collectionCols = await all(`PRAGMA table_info(collection)`);

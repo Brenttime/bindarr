@@ -1,0 +1,421 @@
+// Non-English Pokémon cards, via TCGdex (https://tcgdex.dev).
+//
+// Why a second Pokémon provider exists: pokemontcg.io v2 is English-only. Its
+// 174 sets are the Western releases, and Japan-exclusive sets are simply not in
+// it — sv2a (ポケモンカード151) returns nothing. No parameter fixes that, so
+// every non-English Pokémon lookup comes from here instead. TCGdex carries 11
+// languages with localized names, localized art and Cardmarket prices.
+//
+// Shape of this module deliberately mirrors tcgApi.js: searchCards returns
+// { cards, total } of card_cache-shaped rows, so routes/collection.js can pick a
+// provider and treat the answer identically.
+const axios = require('axios');
+const db = require('./db');
+const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
+const { parseSetList, setSqlFilter } = require('./utils/setQuery');
+const { cacheNormalizedCards } = require('./utils/cardCache');
+const languages = require('./utils/languages');
+
+const API_BASE_URL = 'https://api.tcgdex.net/v2';
+
+const client = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 10000,
+  headers: { 'User-Agent': 'Bindarr/1.0', Accept: 'application/json' },
+});
+
+// TCGdex publishes no rate limit, but a search hydrates one request per result,
+// so cap the fan-out rather than firing 60 sockets at someone else's free API.
+const HYDRATE_CONCURRENCY = 6;
+const CACHE_AGE_LIMIT_MS = 1000 * 60 * 60 * 24 * 3; // 3 days, same as the other providers
+
+// Ids must carry the language: the SAME set id exists in several languages
+// (sv03 is published in en, fr, de, ...), so "SV2a-004" alone is ambiguous and
+// would make a German card overwrite the Japanese one in card_cache.
+const cardId = (lang, id) => `tcgdex-${lang}-${id}`;
+
+// TCGdex serves art from a CDN path with no extension; the size is the last
+// segment. `low` is ~245px like pokemontcg.io's `small`, which is what the card
+// grids want — the inspector's zoom is still served the same URL, so keep the
+// cheap one rather than pushing 210 high-res PNGs through a set browse.
+const imageUrl = (image) => (image ? `${image}/low.png` : '');
+
+// Cardmarket quotes in EUR while TCGplayer quotes USD, and TCGdex hands back
+// whichever it has (non-English cards are Cardmarket-only). Both land in the same
+// price columns the app already mixes them in — tcgApi has always fallen back to
+// Cardmarket's trendPrice the same way — and the UI renders one currency symbol.
+// ponytail: prices are stored unit-less as before; a per-row currency column and
+// a formatPrice unit are the upgrade path if mixed currencies start to matter.
+function extractPrices(pricing) {
+  const cm = (pricing && pricing.cardmarket) || {};
+  const tp = (pricing && pricing.tcgplayer) || {};
+  const market = (v) => (v && (v.marketPrice ?? v.midPrice)) || null;
+
+  const normal = market(tp.normal) ?? cm.avg ?? cm.trend ?? null;
+  const holofoil = market(tp.holofoil) ?? cm['avg-holo'] ?? cm['trend-holo'] ?? null;
+  // Cardmarket does not split reverse-holo on the cards TCGdex exposes; read the
+  // keys anyway so the day it does, they land in the right column.
+  const reverse = market(tp.reverseHolofoil) ?? cm['avg-reverse'] ?? cm['trend-reverse'] ?? null;
+
+  return {
+    price_trend: normal ?? holofoil ?? reverse ?? 0,
+    price_normal: normal,
+    price_holofoil: holofoil,
+    price_reverse_holofoil: reverse,
+    // Cardmarket's rolling averages are real computed sales data — the same
+    // series tcgApi stores for English cards, so the price charts keep working.
+    price_avg1: cm.avg1 > 0 ? cm.avg1 : null,
+    price_avg7: cm.avg7 > 0 ? cm.avg7 : null,
+    price_avg30: cm.avg30 > 0 ? cm.avg30 : null,
+  };
+}
+
+// pokemontcg.io writes "Pokémon" with the accent and spaces its stages; matching
+// it keeps one set of supertype/subtype filter values across both providers
+// instead of splitting every filter dropdown in two.
+const SUPERTYPES = { Pokemon: 'Pokémon', Trainer: 'Trainer', Energy: 'Energy' };
+const spaceStage = (s) => String(s || '').replace(/(Stage)(\d)/, '$1 $2');
+
+// A full TCGdex card -> the card_cache shape the rest of the app speaks.
+function normalizeCard(card, lang) {
+  const code = languages.toCode(lang);
+  const name = card.name || '';
+  const cardmarketId = card.pricing && card.pricing.cardmarket ? card.pricing.cardmarket.idProduct : null;
+  return {
+    id: cardId(code, card.id),
+    // Unlike Scryfall, TCGdex has no English name to fall back on for a
+    // Japan-exclusive card — the localized name is the only name there is. So it
+    // goes in BOTH columns: `name` so search/sort keep working, `printed_name` so
+    // the UI knows it is already localized and shows it as-is.
+    name,
+    printed_name: name,
+    supertype: SUPERTYPES[card.category] || card.category || '',
+    subtypes: card.stage ? [spaceStage(card.stage)] : [],
+    types: card.types || [],
+    rarity: card.rarity || 'Common',
+    set_id: (card.set && card.set.id) || '',
+    set_name: (card.set && card.set.name) || '',
+    number: card.localId != null ? String(card.localId) : '',
+    image_url: imageUrl(card.image),
+    ...extractPrices(card.pricing),
+    cmc: null,
+    color_identity: [],
+    game: 'pokemon',
+    language: languages.toName(code),
+    // Cardmarket link built from the idProduct the price itself came from, so it
+    // opens the exact product rather than a search — which matters here more than
+    // anywhere, since a search on a Japanese name finds nothing on a site that
+    // indexes English.
+    //
+    // The `Products?idProduct=` form is not guessed: it is what Scryfall emits for
+    // Magic (`cardmarket.com/en/Magic/Products?idProduct=89216`), swapping the game
+    // segment the same way this codebase already does elsewhere. Cardmarket blocks
+    // automated requests, so it could not be probed directly.
+    tcgplayer_url: null, // TCGdex carries no TCGplayer id for non-English cards
+    cardmarket_url: cardmarketId ? `https://www.cardmarket.com/en/Pokemon/Products?idProduct=${cardmarketId}` : null,
+  };
+}
+
+const cacheCards = (cards, opts) => cacheNormalizedCards(cards, 'pokemon', opts);
+
+// Fill in a row cached from a set brief (name/number/image only). Safe to call for
+// any TCGdex id: it no-ops when the row already has full card data.
+//
+// Thinness is detected from the ROW, not from its timestamp. A stale stamp only
+// marks rows written after that behaviour existed, and the freshness check in
+// getCardById would happily hand a brief-shaped row straight back — which is
+// exactly how a scanned card kept its defaulted rarity and $0.00. `supertype` is
+// the tell: every hydrated card has one, no brief does.
+async function hydrateCard(id) {
+  const row = await db.get(`SELECT supertype, last_updated FROM card_cache WHERE id = ?`, [id]);
+  if (!row) return null;
+  const thin = !row.supertype;
+  const stale = Date.now() - new Date(row.last_updated).getTime() >= CACHE_AGE_LIMIT_MS;
+  if (!thin && !stale) return null;
+
+  const code = idLanguage(id);
+  if (!code) return null;
+  // Fetch directly rather than through getCardById: that returns the cached row
+  // when it looks fresh, which is the case this function exists to break out of.
+  const card = normalizeCard(await fetchFullCard(code, providerId(id)), code);
+  await cacheCards([card]);
+  return card;
+}
+
+// Run `fn` over `items` at most HYDRATE_CONCURRENCY at a time, dropping failures.
+async function mapLimited(items, fn) {
+  const out = [];
+  for (let i = 0; i < items.length; i += HYDRATE_CONCURRENCY) {
+    const batch = await Promise.all(
+      items.slice(i, i + HYDRATE_CONCURRENCY).map(it => fn(it).catch(() => null))
+    );
+    out.push(...batch.filter(Boolean));
+  }
+  return out;
+}
+
+// A search returns "briefs" — id, localId, name, image and nothing else. Set,
+// rarity, types and prices only exist on the full card, so each result has to be
+// fetched. Rows land in card_cache, so the next search for them is local.
+const fetchFullCard = (lang, id) => client.get(`/${lang}/cards/${encodeURIComponent(id)}`).then(r => r.data);
+
+// TCGdex filters briefs with `field=value` (exact) or `field=like:value`
+// (substring, case-insensitive). There is no `set` field on a brief, so a
+// set-scoped search reads the set endpoint instead — one request that also
+// carries the set's localized name.
+//
+// `paged` says whether TCGdex already applied our page window. A set browse gets
+// the whole set in one response and is sliced locally; a name search is paged
+// server-side so we never pull (or hydrate) more than one page.
+async function searchBriefs(lang, name, setList, page, limit) {
+  if (setList.length) {
+    const perSet = await mapLimited(setList, async (set) => {
+      const { data } = await client.get(`/${lang}/sets/${encodeURIComponent(set)}`);
+      return data.cards || [];
+    });
+    return { briefs: perSet.flat(), paged: false };
+  }
+  if (!name) return { briefs: [], paged: true };
+  const { data } = await client.get(`/${lang}/cards`, {
+    params: { name: `like:${name}`, 'pagination:page': page, 'pagination:itemsPerPage': limit },
+  });
+  return { briefs: data || [], paged: true };
+}
+
+const numberMatches = (localId, wanted) => {
+  const a = String(localId ?? '');
+  const b = String(wanted ?? '');
+  if (!b) return true;
+  if (a === b || a.replace(/^0+/, '') === b.replace(/^0+/, '')) return true;
+  const na = parseInt(a, 10);
+  const nb = parseInt(b, 10);
+  return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
+};
+
+async function searchCards(...args) {
+  const cards = await runSearch(...args);
+  // TCGdex sends no total-count header, so the caller shows what it has. The UI
+  // already handles a null total (it falls back to the loaded count).
+  return { cards, total: null };
+}
+
+// `page` is 1-based over `limit`-sized pages, matching the other providers.
+async function runSearch(nameQuery = '', numberQuery = '', setQuery = '', scope = 'database', userId = null, lang = 'ja', page = 1, limit = 60) {
+  const code = languages.toCode(lang);
+  const langName = languages.toName(code);
+  const offset = (page - 1) * limit;
+  const name = (nameQuery || '').trim();
+  const number = (numberQuery || '').trim();
+  const setList = parseSetList(setQuery);
+
+  // 1. Collection-only search — never touches the network.
+  if (scope === 'collection') {
+    if (!userId) return [];
+    let sql = `
+      SELECT cc.*, SUM(c.quantity) AS owned_qty
+      FROM collection c
+      JOIN card_cache cc ON c.card_id = cc.id
+      WHERE c.user_id = ? AND c.list_type = 'collection' AND cc.game = 'pokemon' AND cc.language = ?
+    `;
+    const params = [userId, langName];
+    if (name) { sql += ` AND (cc.name LIKE ? OR cc.printed_name LIKE ?)`; params.push(`%${name}%`, `%${name}%`); }
+    if (number) { sql += ` AND (cc.number = ? OR CAST(cc.number AS INTEGER) = CAST(? AS INTEGER))`; params.push(number, number); }
+    const collSetFilter = setSqlFilter(setList, 'cc');
+    if (collSetFilter) { sql += ` AND ${collSetFilter.clause}`; params.push(...collSetFilter.params); }
+    sql += ` GROUP BY cc.id LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+    return (await db.all(sql, params)).map(parseCardRow);
+  }
+
+  // 2. Local cache, scoped to this language so English rows can't answer a
+  // Japanese search. Kept as a closure: an internet-scope search skips it here
+  // but still wants it as a fallback when TCGdex is unreachable.
+  const queryLocal = async () => {
+    let sql = `SELECT * FROM card_cache WHERE game = 'pokemon' AND language = ?`;
+    const params = [langName];
+    if (name) { sql += ` AND (name LIKE ? OR printed_name LIKE ?)`; params.push(`%${name}%`, `%${name}%`); }
+    if (number) { sql += ` AND (number = ? OR CAST(number AS INTEGER) = CAST(? AS INTEGER))`; params.push(number, number); }
+    const localSetFilter = setSqlFilter(setList);
+    if (localSetFilter) { sql += ` AND ${localSetFilter.clause}`; params.push(...localSetFilter.params); }
+    sql += ` LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+    return db.all(sql, params);
+  };
+
+  let localResults = [];
+  if (scope !== 'internet') {
+    localResults = await queryLocal();
+    if (localResults.length > 0) {
+      const stale = localResults.filter(r => (Date.now() - new Date(r.last_updated).getTime()) > CACHE_AGE_LIMIT_MS);
+      if (stale.length > 0) refreshInBackground(code, stale);
+      return localResults.map(parseCardRow);
+    }
+  }
+
+  // 3. TCGdex.
+  try {
+    const { briefs, paged } = await searchBriefs(code, name, setList, page, limit);
+    const lowerName = name.toLowerCase();
+    // A number filter is applied here rather than upstream: TCGdex can only match
+    // localId exactly, and collector numbers arrive zero-padded ("004") or not
+    // ("4") depending on where they were typed.
+    // ponytail: on a name search the number filter only sees the page TCGdex
+    // returned. A number is only reliable alongside a set anyway (same reason the
+    // English path refuses a bare number search), and that path reads the whole set.
+    const matched = briefs.filter(b =>
+      numberMatches(b.localId, number) &&
+      (!name || String(b.name || '').toLowerCase().includes(lowerName))
+    );
+    if (matched.length === 0) return localResults.map(parseCardRow);
+
+    // Only the requested page gets hydrated — one request per card, so paging is
+    // what keeps a 210-card set browse from becoming 210 requests at once.
+    const window = paged ? matched.slice(0, limit) : matched.slice(offset, offset + limit);
+    const full = await mapLimited(window, b => fetchFullCard(code, b.id));
+    const cards = full.map(c => normalizeCard(c, code));
+    if (cards.length > 0) await cacheCards(cards);
+    return cards;
+  } catch (error) {
+    console.error(`TCGdex search failed (${code}):`, error.message);
+    // Same rule as the other providers: serve the cache before admitting defeat,
+    // and only report an outage when there is genuinely nothing to show — an
+    // empty result would otherwise read as "no such card".
+    const cached = scope === 'internet' ? await queryLocal() : localResults;
+    if (cached.length > 0) {
+      console.warn(`TCGdex unavailable — serving ${cached.length} cached match(es).`);
+      return cached.map(parseCardRow);
+    }
+    if (error.response && error.response.status === 404) return [];
+    throw new Error('UPSTREAM_UNAVAILABLE');
+  }
+}
+
+// Re-fetch stale rows and record any price movement. Fire-and-forget: the search
+// that triggered it has already answered from cache.
+function refreshInBackground(code, rows) {
+  (async () => {
+    try {
+      const fresh = await mapLimited(rows, async (row) => {
+        const raw = await fetchFullCard(code, providerId(row.id));
+        return normalizeCard(raw, code);
+      });
+      if (fresh.length) await cacheCards(fresh);
+      for (const card of fresh) await recordPrice(card.id, card.price_trend);
+    } catch (e) {
+      console.error('TCGdex background refresh failed:', e.message);
+    }
+  })();
+}
+
+// Split "tcgdex-ja-SV2a-004" back into its language and the provider's own id.
+//
+// This matches against the known language codes instead of a `[a-z]{2}` pattern
+// on purpose: TCGdex set ids contain dashes AND can be two lowercase letters
+// ("lc-3", "ex-12"), so a generic pattern reads "tcgdex-en-lc-3" as language
+// "en-lc" and card "3". Codes are tried longest-first so "zh-tw" wins over "zh".
+const CODES = languages.LANGUAGES.map(l => l.code).sort((a, b) => b.length - a.length);
+
+function splitId(id) {
+  const s = String(id || '');
+  if (!s.startsWith('tcgdex-')) return { lang: null, id: s };
+  const rest = s.slice('tcgdex-'.length);
+  for (const code of CODES) {
+    if (rest.startsWith(`${code}-`)) return { lang: code, id: rest.slice(code.length + 1) };
+  }
+  return { lang: null, id: rest };
+}
+
+// "tcgdex-ja-SV2a-004" -> "SV2a-004"
+const providerId = (id) => splitId(id).id;
+
+// Language of a cached row's id, so a sweep knows which language endpoint to ask.
+const idLanguage = (id) => splitId(id).lang;
+
+async function getCardById(id) {
+  const cached = await db.get(`SELECT * FROM card_cache WHERE id = ?`, [id]);
+  if (cached && (Date.now() - new Date(cached.last_updated).getTime() < CACHE_AGE_LIMIT_MS)) {
+    return parseCardRow(cached);
+  }
+  const code = idLanguage(id);
+  if (!code) return cached ? parseCardRow(cached) : null;
+  try {
+    const card = normalizeCard(await fetchFullCard(code, providerId(id)), code);
+    await cacheCards([card]);
+    return card;
+  } catch (e) {
+    console.error(`TCGdex card ${id} lookup failed:`, e.message);
+  }
+  return cached ? parseCardRow(cached) : null;
+}
+
+// Every set TCGdex publishes for a language, in the shape /api/sets returns. Not
+// written to the `sets` table on purpose: the same set id exists in several
+// languages with different names and card counts, and that table is keyed by id
+// alone. Cached in memory instead — set lists change a few times a year.
+const setsCache = new Map(); // lang -> { at, sets }
+const SETS_TTL_MS = 1000 * 60 * 60 * 12;
+
+async function listSets(lang) {
+  const code = languages.toCode(lang);
+  const hit = setsCache.get(code);
+  if (hit && Date.now() - hit.at < SETS_TTL_MS) return hit.sets;
+  const { data } = await client.get(`/${code}/sets`);
+  // A set brief carries id, name and cardCount only. Release date, series and
+  // logos live on the per-set endpoint, and 177 extra requests to decorate an
+  // autocomplete is not a trade worth making — the list already arrives oldest
+  // first, which is the order the set pickers expect.
+  const sets = (data || []).map(s => ({
+    id: s.id,
+    name: s.name,
+    series: '',
+    printed_total: (s.cardCount && s.cardCount.official) || 0,
+    total: (s.cardCount && s.cardCount.total) || 0,
+    release_date: '',
+    ptcgo_code: '',
+    symbol_url: '',
+    logo_url: '',
+    game: 'pokemon',
+  }));
+  setsCache.set(code, { at: Date.now(), sets });
+  return sets;
+}
+
+// Price sweep for owned/decked non-English Pokémon cards. tcgApi's sweep skips
+// these (their ids 404 on pokemontcg.io), so this is their only refresh path.
+// `force` bypasses the once-a-day gate (used by the scheduled daily run, which is
+// already on the right cadence). Without the gate the boot sweep re-ran on every
+// restart — which under nodemon means every code edit.
+async function updateCollectionPrices(force = false) {
+  try {
+    if (!force && !(await shouldSweepPrices('tcgdex'))) {
+      console.log('Skipping TCGdex price update: already swept within the last 24h.');
+      return;
+    }
+    const rows = await db.all(`
+      SELECT DISTINCT c.card_id AS id FROM collection c
+      JOIN card_cache cc ON c.card_id = cc.id WHERE cc.game = 'pokemon' AND cc.language != 'English'
+      UNION
+      SELECT DISTINCT d.card_id AS id FROM deck_cards d
+      JOIN card_cache cc ON d.card_id = cc.id WHERE cc.game = 'pokemon' AND cc.language != 'English'
+    `);
+    const owned = rows.filter(r => idLanguage(r.id));
+    if (owned.length === 0) return;
+    console.log(`Starting TCGdex price update for ${owned.length} unique cards...`);
+    const fresh = await mapLimited(owned, async (row) => {
+      const code = idLanguage(row.id);
+      return normalizeCard(await fetchFullCard(code, providerId(row.id)), code);
+    });
+    if (fresh.length) await cacheCards(fresh);
+    for (const card of fresh) await recordPrice(card.id, card.price_trend);
+    await markPricesSwept('tcgdex');
+    console.log(`TCGdex price update complete: ${fresh.length} priced.`);
+  } catch (err) {
+    console.error('Error during TCGdex price update:', err.message);
+  }
+}
+
+// `client` is exported for tests (stub the axios adapter), like tcgApi.tcgClient.
+module.exports = {
+  searchCards, getCardById, hydrateCard, listSets, cacheCards, normalizeCard,
+  updateCollectionPrices, providerId, idLanguage, client,
+};

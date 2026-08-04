@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { formatPrice } from '../utils/formatPrice';
+import { useT } from '../utils/i18n';
 
 // Selectable chart windows. Default is 1 Year so price movement is visible; a
 // 30-day window is usually too short to show meaningful change.
@@ -9,10 +10,7 @@ import { formatPrice } from '../utils/formatPrice';
 // recorded itself. No card API sells back-history — Scryfall returns current
 // prices only — so 1Y/5Y buttons could never show anything the 30-day one
 // didn't already.
-const RANGE_OPTIONS = [
-  { key: '30d', label: '30D', name: '30 Days' },
-  { key: 'all', label: 'All', name: 'All Recorded' },
-];
+const RANGE_KEYS = ['30d', 'all'];
 
 // Shared, properly-proportioned price-history chart. Fetches its own data for a
 // given card id and lets the user switch the time window. Give it real vertical
@@ -21,8 +19,9 @@ export default function PriceHistoryChart({
   cardId,
   height = 150,
   defaultRange = '30d',
-  titlePrefix = 'Price History',
+  titlePrefix,
 }) {
+  const { t, locale } = useT();
   const [range, setRange] = useState(defaultRange);
   const [data, setData] = useState([]);
   const [insufficientHistory, setInsufficientHistory] = useState(false);
@@ -79,7 +78,7 @@ export default function PriceHistoryChart({
 
   const up = (pctChange ?? 0) >= 0;
   const trendColor = up ? '#22c55e' : '#ef4444';
-  const rangeName = RANGE_OPTIONS.find(r => r.key === range)?.name ?? '';
+  const rangeName = RANGE_KEYS.includes(range) ? t(`priceHistory.range.${range}.name`) : '';
 
   return (
     <div style={{
@@ -91,7 +90,7 @@ export default function PriceHistoryChart({
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px', gap: '0.5rem' }}>
         <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          {titlePrefix} ({rangeName})
+          {titlePrefix ?? t('priceHistory.title')} ({rangeName})
         </span>
         {pctChange !== null && (
           <span style={{ fontSize: '0.7rem', fontWeight: 800, color: trendColor }}>
@@ -102,11 +101,11 @@ export default function PriceHistoryChart({
 
       {/* Range selector */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
-        {RANGE_OPTIONS.map(opt => (
+        {RANGE_KEYS.map(key => (
           <button
-            key={opt.key}
-            onClick={() => setRange(opt.key)}
-            aria-pressed={range === opt.key}
+            key={key}
+            onClick={() => setRange(key)}
+            aria-pressed={range === key}
             style={{
               flex: 1,
               padding: '3px 0',
@@ -115,12 +114,12 @@ export default function PriceHistoryChart({
               cursor: 'pointer',
               borderRadius: 'var(--radius-sm)',
               border: '1px solid var(--border-glass)',
-              background: range === opt.key ? 'var(--accent-yellow)' : 'transparent',
-              color: range === opt.key ? '#000' : 'var(--text-secondary)',
+              background: range === key ? 'var(--accent-yellow)' : 'transparent',
+              color: range === key ? '#000' : 'var(--text-secondary)',
               transition: 'background 0.15s, color 0.15s',
             }}
           >
-            {opt.label}
+            {t(`priceHistory.range.${key}.label`)}
           </button>
         ))}
       </div>
@@ -131,10 +130,10 @@ export default function PriceHistoryChart({
       {!loading && !insufficientHistory && (coverage.marketCount > 0 || coverage.recordedCount > 0) && (
         <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginBottom: '6px', lineHeight: 1.35 }}>
           {coverage.marketCount > 0
-            ? 'Cardmarket 30-day averages'
-            : `${coverage.spanDays || 0} day${coverage.spanDays === 1 ? '' : 's'} recorded by Bindarr`}
+            ? t('priceHistory.sourceCardmarket')
+            : t('priceHistory.sourceRecorded', { count: coverage.spanDays || 0 })}
           {coverage.marketCount > 0 && coverage.recordedCount > 0
-            ? ` + ${coverage.recordedCount} price${coverage.recordedCount === 1 ? '' : 's'} recorded here`
+            ? ` + ${t('priceHistory.plusRecorded', { count: coverage.recordedCount })}`
             : ''}
         </div>
       )}
@@ -144,11 +143,11 @@ export default function PriceHistoryChart({
           <div className="spinner" style={{ height: '30px', margin: `${Math.max(0, height / 2 - 15)}px auto` }} />
         ) : insufficientHistory ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-            Not enough price history yet for this range.
+            {t('priceHistory.insufficient')}
           </div>
         ) : (!chartData || chartData.length === 0) ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            No price data for this window.
+            {t('priceHistory.noData')}
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -171,8 +170,8 @@ export default function PriceHistoryChart({
               <Tooltip
                 contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-glass)', borderRadius: '8px', fontSize: '0.75rem' }}
                 labelStyle={{ color: 'var(--text-secondary)' }}
-                formatter={(val) => [`$${formatPrice(val)}`, 'Market']}
-                labelFormatter={(label) => (label ? new Date(label).toLocaleDateString() : '')}
+                formatter={(val) => [`$${formatPrice(val)}`, t('priceHistory.market')]}
+                labelFormatter={(label) => (label ? new Date(label).toLocaleDateString(locale) : '')}
               />
               <Area type="monotone" dataKey="price" stroke="var(--accent-yellow)" strokeWidth={1.75} fillOpacity={1} fill="url(#priceGlow)" />
             </AreaChart>

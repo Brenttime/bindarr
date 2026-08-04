@@ -4,6 +4,8 @@ import { TrendingUp, Coins, Library, Trophy, Plus, ArrowUpRight } from 'lucide-r
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice } from '../utils/formatPrice';
 import { getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
+import { defaultGameFilter, gameOptions, showGamePicker, gameLabel } from '../utils/games';
+import { useT } from '../utils/i18n';
 import CardInspectorModal from './CardInspectorModal';
 
 const COLORS = [
@@ -32,11 +34,17 @@ const TYPE_COLORS = {
 };
 
 function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEntryId, onUpdate, showToast }) {
+  const { t, locale } = useT();
+  // Money and dates follow the interface language, not the browser's: a user who
+  // picked German sees 1.234,56 and 3.8.2026 even on an en-US browser.
+  const money = (n) => (n || 0).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [timePeriod, setTimePeriod] = useState('30d');
-  const [gameFilter, setGameFilter] = useState(''); // '' | 'pokemon' | 'mtg'
+  // '' | 'pokemon' | 'mtg'. Collapses to the only visible game when the other is
+  // hidden in Settings, so the totals never include cards the user cannot see.
+  const [gameFilter, setGameFilter] = useState(() => defaultGameFilter());
   
   // Timeline Chart State
   const [historyData, setHistoryData] = useState([]);
@@ -62,7 +70,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
       setLoading(true);
       const response = await fetch(`/api/stats${gameFilter ? `?game=${gameFilter}` : ''}`);
       if (!response.ok) {
-        throw new Error('Failed to load stats');
+        throw new Error(t('dash.errStats'));
       }
       const data = await response.json();
       setStats(data);
@@ -89,23 +97,28 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
     }
   };
 
-  const renderGameTabs = () => (
-    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-      <div className="sub-nav-tabs" style={{ margin: 0 }}>
-        {[['', 'All'], ['pokemon', 'Pokémon'], ['mtg', 'MTG']].map(([val, label]) => (
-          <button
-            key={val || 'all'}
-            type="button"
-            className={`sub-nav-tab ${gameFilter === val ? 'active' : ''}`}
-            style={{ padding: '0.35rem 0.85rem', fontSize: '0.75rem' }}
-            onClick={() => setGameFilter(val)}
-          >
-            {label}
-          </button>
-        ))}
+  const renderGameTabs = () => {
+    // One game shown: "All" and that game are the same list, so there is nothing
+    // to switch between.
+    if (!showGamePicker()) return null;
+    return (
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+        <div className="sub-nav-tabs" style={{ margin: 0 }}>
+          {[['', t('dash.allGames')], ...gameOptions().map(g => [g.value, g.short])].map(([val, label]) => (
+            <button
+              key={val || 'all'}
+              type="button"
+              className={`sub-nav-tab ${gameFilter === val ? 'active' : ''}`}
+              style={{ padding: '0.35rem 0.85rem', fontSize: '0.75rem' }}
+              onClick={() => setGameFilter(val)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   if (loading) {
     return <div className="spinner"></div>;
@@ -114,31 +127,29 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
   if (error) {
     return (
       <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
-        <p>Error loading dashboard statistics: {error}</p>
-        <button className="btn btn-primary" onClick={fetchStats} style={{ marginTop: '1rem' }}>Retry</button>
+        <p>{t('dash.errLoad', { error })}</p>
+        <button className="btn btn-primary" onClick={fetchStats} style={{ marginTop: '1rem' }}>{t('dash.retry')}</button>
       </div>
     );
   }
 
   if (!stats || stats.summary.totalCards === 0) {
     const isFiltered = Boolean(gameFilter);
-    const gameName = gameFilter === 'pokemon' ? 'Pokémon' : gameFilter === 'mtg' ? 'MTG' : '';
+    const gameName = isFiltered ? gameLabel(gameFilter, true) : '';
     return (
       <div>
         {renderGameTabs()}
         <div className="glass-panel" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-secondary)' }}>
           <TrendingUp size={48} style={{ color: 'var(--accent-red)', marginBottom: '1.5rem', opacity: 0.8 }} />
           <h2 style={{ color: 'var(--text-strong)', marginBottom: '0.5rem' }}>
-            {isFiltered ? `No ${gameName} Cards` : 'Welcome to Bindarr!'}
+            {isFiltered ? t('dash.emptyFilteredTitle', { game: gameName }) : t('dash.emptyTitle')}
           </h2>
           <p style={{ maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
-            {isFiltered
-              ? `You don't have any ${gameName} cards in your collection yet.`
-              : 'Your collection database is currently empty. Start scanning cards with your phone camera or search cards manually to build your binder!'}
+            {isFiltered ? t('dash.emptyFilteredBody', { game: gameName }) : t('dash.emptyBody')}
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
             <div style={{ display: 'inline-block' }}>
-              <button className="btn btn-primary" onClick={() => onNavigate && onNavigate('add-cards')}>Go to Add Cards</button>
+              <button className="btn btn-primary" onClick={() => onNavigate && onNavigate('add-cards')}>{t('dash.goToAddCards')}</button>
             </div>
           </div>
         </div>
@@ -170,7 +181,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
           <div className="metric-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
               <span className="metric-icon" style={{ width: '28px', height: '28px' }}><TrendingUp size={16} /></span>
-              Net Worth
+              {t('dash.netWorth')}
             </span>
             <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.05)', padding: '2px', borderRadius: '4px' }}>
               {['7d', '30d', '1y', '5y'].map(p => (
@@ -195,7 +206,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
               ))}
             </div>
           </div>
-          <div className="metric-value">${summary.totalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+          <div className="metric-value">${money(summary.totalValue)}</div>
           {(() => {
             const change = timePeriod === '7d' ? summary.change7d :
                            timePeriod === '30d' ? summary.change30d :
@@ -206,7 +217,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
             if (!change || !change.available) {
               return (
                 <div className="metric-footer" style={{ color: 'var(--text-muted)' }}>
-                  <span>Not enough price history yet for this range</span>
+                  <span>{t('dash.noPriceHistory')}</span>
                 </div>
               );
             }
@@ -215,7 +226,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
               <div className={`metric-footer ${isPositive ? 'positive' : 'negative'}`} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <TrendingUp size={12} style={{ transform: isPositive ? 'none' : 'rotate(180deg)' }} />
                 <span>
-                  {isPositive ? '+' : ''}${change.abs.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ({isPositive ? '+' : ''}{change.pct}%)
+                  {isPositive ? '+' : ''}${money(change.abs)} ({isPositive ? '+' : ''}{change.pct}%)
                 </span>
               </div>
             );
@@ -225,12 +236,12 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
         {/* Total Invested (cost basis) */}
         <div className="glass-panel metric-card accent-invested">
           <div className="metric-header">
-            <span>Total Invested</span>
+            <span>{t('dash.totalInvested')}</span>
             <span className="metric-icon"><Coins size={18} /></span>
           </div>
-          <div className="metric-value">${(summary.totalSpent || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+          <div className="metric-value">${money(summary.totalSpent)}</div>
           <div className="metric-footer">
-            <span>Avg ${formatPrice(summary.avgCardValue)} / card</span>
+            <span>{t('dash.avgPerCard', { price: formatPrice(summary.avgCardValue) })}</span>
           </div>
         </div>
 
@@ -241,14 +252,14 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
           return (
             <div className={`glass-panel metric-card ${isPositive ? 'accent-gain-up' : 'accent-gain-down'}`}>
               <div className="metric-header">
-                <span>Unrealized Gain</span>
+                <span>{t('dash.unrealizedGain')}</span>
                 <span className="metric-icon"><ArrowUpRight size={18} style={{ transform: isPositive ? 'none' : 'rotate(90deg)' }} /></span>
               </div>
               <div className="metric-value" style={{ color: isPositive ? '#22c55e' : '#ef4444' }}>
-                {isPositive ? '+' : '−'}${Math.abs(roi.abs || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                {isPositive ? '+' : '−'}${money(Math.abs(roi.abs || 0))}
               </div>
               <div className="metric-footer">
-                <span>{roi.pct === null ? 'Set purchase prices to track ROI' : `${isPositive ? '+' : ''}${roi.pct}% vs cost basis`}</span>
+                <span>{roi.pct === null ? t('dash.roiUnset') : t('dash.roiVsCost', { pct: `${isPositive ? '+' : ''}${roi.pct}` })}</span>
               </div>
             </div>
           );
@@ -257,12 +268,12 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
         {/* Total Cards count */}
         <div className="glass-panel metric-card accent-cards">
           <div className="metric-header">
-            <span>Total Cards Owned</span>
+            <span>{t('dash.totalCards')}</span>
             <span className="metric-icon"><Library size={18} /></span>
           </div>
           <div className="metric-value">{summary.totalCards}</div>
           <div className="metric-footer">
-            <span>{summary.uniqueCards} unique{summary.unsortedCount > 0 ? ` • ${summary.unsortedCount} unsorted` : ''}</span>
+            <span>{t('dash.uniqueCount', { count: summary.uniqueCards })}{summary.unsortedCount > 0 ? ` • ${t('dash.unsortedCount', { count: summary.unsortedCount })}` : ''}</span>
           </div>
         </div>
       </div>
@@ -270,16 +281,16 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
       {/* Net Worth History Timeline Chart */}
       <div className="glass-panel" style={{ marginBottom: '1.5rem', padding: '1.5rem 1.75rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 className="chart-title" style={{ margin: 0 }}>Net Worth Valuation Timeline</h3>
+          <h3 className="chart-title" style={{ margin: 0 }}>{t('dash.timelineTitle')}</h3>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            Showing performance history ({timePeriod.toUpperCase()})
+            {t('dash.timelineRange', { range: timePeriod.toUpperCase() })}
           </span>
         </div>
         <div className="chart-container" style={{ height: '240px', position: 'relative' }}>
           {loadingHistory ? (
             <div className="spinner" style={{ position: 'absolute', top: '45%', left: '45%' }}></div>
           ) : historyData.length < 2 ? (
-            <div className="chart-empty">Not enough history yet to plot a trend for this range.</div>
+            <div className="chart-empty">{t('dash.notEnoughHistory')}</div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={historyData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
@@ -294,7 +305,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
                 <Tooltip 
                   contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }}
                   labelStyle={{ color: 'var(--text-primary)' }}
-                  formatter={(v) => [`$${v}`, 'Portfolio Value']}
+                  formatter={(v) => [`$${v}`, t('dash.portfolioValue')]}
                 />
                 <Area type="monotone" dataKey="value" stroke="var(--type-grass)" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" />
               </AreaChart>
@@ -310,10 +321,10 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
           
           {/* Card Value by Set Chart */}
           <div className="glass-panel">
-            <h3 className="chart-title">Collection Value by Set</h3>
+            <h3 className="chart-title">{t('dash.valueBySet')}</h3>
             <div className="chart-container">
               {sets.length === 0 ? (
-                <div className="chart-empty">No set value data for this filter yet.</div>
+                <div className="chart-empty">{t('dash.noSetData')}</div>
               ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={sets} layout="vertical" margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
@@ -322,7 +333,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
                   <Tooltip 
                     contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }}
                     labelStyle={{ color: 'var(--text-primary)' }}
-                    formatter={(v) => [`$${v}`, 'Value']}
+                    formatter={(v) => [`$${v}`, t('dash.value')]}
                   />
                   <Bar dataKey="value" fill="var(--accent-red)" radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -334,10 +345,10 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
             {/* Type Distribution Donut Chart */}
             <div className="glass-panel">
-              <h3 className="chart-title">{gameFilter === 'mtg' ? 'Color Distribution' : 'Energy Type Distribution'}</h3>
+              <h3 className="chart-title">{t(gameFilter === 'mtg' ? 'dash.colorDistribution' : 'dash.typeDistribution')}</h3>
               <div className="chart-container" style={{ height: '220px' }}>
                 {typeChartData.length === 0 ? (
-                  <div className="chart-empty">No type data for this filter yet.</div>
+                  <div className="chart-empty">{t('dash.noTypeData')}</div>
                 ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
@@ -358,7 +369,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
                       contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }}
                       itemStyle={{ color: 'var(--text-strong)' }}
                       labelStyle={{ color: 'var(--text-strong)' }}
-                      formatter={(v) => [v, 'Cards']}
+                      formatter={(v) => [v, t('dash.cards')]}
                     />
                     <Legend 
                       verticalAlign="bottom" 
@@ -375,10 +386,10 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
 
             {/* Rarity Distribution Chart */}
             <div className="glass-panel">
-              <h3 className="chart-title">Rarity Distribution</h3>
+              <h3 className="chart-title">{t('dash.rarityDistribution')}</h3>
               <div className="chart-container" style={{ height: '220px' }}>
                 {rarityChartData.length === 0 ? (
-                  <div className="chart-empty">No rarity data for this filter yet.</div>
+                  <div className="chart-empty">{t('dash.noRarityData')}</div>
                 ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
@@ -399,7 +410,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
                       contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }}
                       itemStyle={{ color: 'var(--text-strong)' }}
                       labelStyle={{ color: 'var(--text-strong)' }}
-                      formatter={(v) => [v, 'Cards']}
+                      formatter={(v) => [v, t('dash.cards')]}
                     />
                     <Legend 
                       verticalAlign="bottom" 
@@ -423,7 +434,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
           <div className="glass-panel" style={{ flex: 1 }}>
             <h3 className="chart-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Trophy size={18} style={{ color: 'var(--accent-yellow)' }} />
-              Top Valuable Cards
+              {t('dash.topValuable')}
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.25rem' }}>
               {topValuable.map((card, idx) => (
@@ -446,7 +457,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
                   <img src={card.image_url} alt={card.name} style={{ width: '56px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '5px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }} />
                   <div style={{ flex: 1, overflow: 'hidden' }}>
                     <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {getCardDisplayName(card.name, card.language)}
+                      {getCardDisplayName(card.name, card.language, card.printed_name)}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                       <span>{card.set_name} • {card.rarity}</span>
@@ -458,9 +469,9 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 800, color: 'var(--accent-yellow)', fontSize: '0.95rem' }}>${formatPrice(card.price_trend)}<span style={{ fontSize: '0.6rem', fontWeight: 500, color: 'var(--text-muted)' }}> ea</span></div>
+                    <div style={{ fontWeight: 800, color: 'var(--accent-yellow)', fontSize: '0.95rem' }}>${formatPrice(card.price_trend)}<span style={{ fontSize: '0.6rem', fontWeight: 500, color: 'var(--text-muted)' }}> {t('dash.each')}</span></div>
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                      {card.quantity > 1 ? `x${card.quantity} • $${formatPrice(card.price_trend * card.quantity)} total` : 'x1'}
+                      {card.quantity > 1 ? t('dash.qtyTotal', { qty: card.quantity, price: formatPrice(card.price_trend * card.quantity) }) : t('dash.qty', { qty: 1 })}
                     </div>
                   </div>
                 </div>
@@ -473,7 +484,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
             <div className="glass-panel" style={{ flex: 1 }}>
               <h3 className="chart-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Plus size={18} style={{ color: 'var(--accent-blue)' }} />
-                Recent Additions
+                {t('dash.recentAdditions')}
               </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1.25rem' }}>
                 {recentAdditions.map((card, idx) => (
@@ -486,7 +497,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
                     <img src={card.image_url} alt={card.name} style={{ width: '48px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '5px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }} />
                     <div style={{ flex: 1, overflow: 'hidden' }}>
                       <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {getCardDisplayName(card.name, card.language)}
+                        {getCardDisplayName(card.name, card.language, card.printed_name)}
                       </div>
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                         <span>{card.set_name} • #{card.number}</span>
@@ -498,8 +509,8 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 700, color: 'var(--accent-yellow)', fontSize: '0.8rem' }}>${formatPrice(card.price_trend)}<span style={{ fontSize: '0.55rem', fontWeight: 500, color: 'var(--text-muted)' }}> ea</span></div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{card.quantity > 1 ? `x${card.quantity}` : (card.added_at ? new Date(card.added_at).toLocaleDateString() : '')}</div>
+                      <div style={{ fontWeight: 700, color: 'var(--accent-yellow)', fontSize: '0.8rem' }}>${formatPrice(card.price_trend)}<span style={{ fontSize: '0.55rem', fontWeight: 500, color: 'var(--text-muted)' }}> {t('dash.each')}</span></div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{card.quantity > 1 ? t('dash.qty', { qty: card.quantity }) : (card.added_at ? new Date(card.added_at).toLocaleDateString(locale) : '')}</div>
                     </div>
                   </div>
                 ))}
@@ -510,7 +521,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
           {/* Set Completion progress tracker */}
           {setProgress.length > 0 && (
             <div className="glass-panel">
-              <h3 className="chart-title">Set Progress</h3>
+              <h3 className="chart-title">{t('dash.setProgress')}</h3>
               <div className="set-progress-grid" style={{ marginTop: '1rem' }}>
                 {setProgress.map((set, idx) => (
                   <div key={idx} className="set-progress-item">

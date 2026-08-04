@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
-import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github } from 'lucide-react';
+import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Layers, Languages } from 'lucide-react';
+import { GAMES, enabledGames, setGameEnabled, gameOptions, defaultGame } from '../utils/games';
+import { LOCALES, localeName, useT } from '../utils/i18n';
 
 function Settings({ user, onUpdateUser, showToast }) {
+  const { locale, setLocale, t } = useT();
   const [showApiKey, setShowApiKey] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
@@ -18,7 +21,8 @@ function Settings({ user, onUpdateUser, showToast }) {
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
 
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
-  const [defaultGame, setDefaultGame] = useState(() => localStorage.getItem('default_game') || 'pokemon');
+  const [defaultGameValue, setDefaultGameValue] = useState(() => defaultGame());
+  const [shownGames, setShownGames] = useState(() => enabledGames());
   const [autoConfirm, setAutoConfirm] = useState(() => localStorage.getItem('scanner_auto_confirm') === '1');
 
   const [versionInfo, setVersionInfo] = useState(null);
@@ -56,13 +60,13 @@ function Settings({ user, onUpdateUser, showToast }) {
       const data = await res.json();
       setVersionInfo(data);
       setBackendReachable(true);
-      if (data.check_failed) showToast('Could not reach GitHub to check for updates.');
-      else if (data.update_available) showToast(`Version ${data.latest} is available.`);
-      else showToast('You are on the latest version.');
+      if (data.check_failed) showToast(t('settings.updateNoGithub'));
+      else if (data.update_available) showToast(t('settings.updateAvailable', { version: data.latest }));
+      else showToast(t('settings.updateLatest'));
     } catch (err) {
       console.error(err);
       setBackendReachable(false);
-      showToast('Could not reach the server to check for updates.');
+      showToast(t('settings.updateNoServer'));
     } finally {
       setCheckingUpdate(false);
     }
@@ -122,7 +126,7 @@ function Settings({ user, onUpdateUser, showToast }) {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (!window.confirm(`Import "${file.name}"? Cards from this file will be merged into your existing collection. This cannot be undone.`)) {
+    if (!window.confirm(t('settings.confirmImport', { file: file.name }))) {
       e.target.value = '';
       return;
     }
@@ -134,7 +138,7 @@ function Settings({ user, onUpdateUser, showToast }) {
     reader.onload = async (event) => {
       try {
         const fileData = event.target.result;
-        showToast('Importing collection...');
+        showToast(t('settings.importing'));
         const response = await fetch('/api/import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -146,18 +150,18 @@ function Settings({ user, onUpdateUser, showToast }) {
 
         const result = await response.json();
         if (response.ok) {
-          showToast(result.message || 'Import successful!');
+          showToast(result.message || t('settings.importOk'));
         } else {
-          showToast(`Import failed: ${result.error || 'Unknown error'}`);
+          showToast(t('settings.importFailed', { error: result.error || t('settings.unknownError') }));
         }
       } catch (err) {
         console.error(err);
-        showToast(`Import failed: ${err.message}`);
+        showToast(t('settings.importFailed', { error: err.message }));
       }
     };
 
     reader.onerror = () => {
-      showToast('Failed to read the selected file.');
+      showToast(t('settings.errReadFile'));
     };
 
     reader.readAsText(file);
@@ -175,15 +179,15 @@ function Settings({ user, onUpdateUser, showToast }) {
   const handlePasswordChange = async (e) => {
     e.preventDefault();
     if (!currentPassword) {
-      showToast('Please enter your current password.');
+      showToast(t('settings.errCurrentPassword'));
       return;
     }
     if (password.length < 8) {
-      showToast('Password must be at least 8 characters.');
+      showToast(t('login.errPasswordShort', { count: 8 }));
       return;
     }
     if (password !== confirmPassword) {
-      showToast('Passwords do not match.');
+      showToast(t('login.errPasswordMismatch'));
       return;
     }
 
@@ -196,17 +200,17 @@ function Settings({ user, onUpdateUser, showToast }) {
       });
 
       if (response.ok) {
-        showToast('Password updated successfully.');
+        showToast(t('settings.passwordUpdated'));
         setCurrentPassword('');
         setPassword('');
         setConfirmPassword('');
       } else {
         const data = await response.json();
-        showToast(data.error || 'Failed to update password.');
+        showToast(data.error || t('settings.errPasswordUpdate'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error updating password.');
+      showToast(t('settings.errPasswordUpdateGeneric'));
     } finally {
       setPasswordLoading(false);
     }
@@ -216,7 +220,7 @@ function Settings({ user, onUpdateUser, showToast }) {
     try {
       const response = await fetch(`/api/export?format=${format}`);
       if (!response.ok) {
-        showToast('Export failed.');
+        showToast(t('settings.errExport'));
         return;
       }
       const blob = await response.blob();
@@ -230,7 +234,7 @@ function Settings({ user, onUpdateUser, showToast }) {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
-      showToast('Error exporting collection.');
+      showToast(t('settings.errExportGeneric'));
     }
   };
 
@@ -247,15 +251,15 @@ function Settings({ user, onUpdateUser, showToast }) {
       if (response.ok) {
         const data = await response.json();
         onUpdateUser(data.user);
-        showToast(checked ? 'Collection sharing enabled.' : 'Collection sharing disabled.');
+        showToast(t(checked ? 'settings.sharingOn' : 'settings.sharingOff'));
       } else {
         setShareEnabled(!checked); // Revert
-        showToast('Failed to update sharing settings.');
+        showToast(t('settings.errSharing'));
       }
     } catch (err) {
       console.error(err);
       setShareEnabled(!checked);
-      showToast('Error updating sharing settings.');
+      showToast(t('settings.errSharingGeneric'));
     } finally {
       setShareLoading(false);
     }
@@ -273,22 +277,22 @@ function Settings({ user, onUpdateUser, showToast }) {
       if (response.ok) {
         const data = await response.json();
         onUpdateUser(data.user);
-        showToast(checked ? 'Card locations now visible on your share page.' : 'Card locations hidden from your share page.');
+        showToast(t(checked ? 'settings.locationsOn' : 'settings.locationsOff'));
       } else {
         setShareLocations(!checked);
-        showToast('Failed to update location sharing.');
+        showToast(t('settings.errLocations'));
       }
     } catch (err) {
       console.error(err);
       setShareLocations(!checked);
-      showToast('Error updating location sharing.');
+      showToast(t('settings.errLocationsGeneric'));
     } finally {
       setShareLoading(false);
     }
   };
 
   const handleRegenerateToken = async () => {
-    if (!window.confirm('Are you sure you want to regenerate your share token? Any existing links you shared will stop working.')) {
+    if (!window.confirm(t('settings.confirmRegenerate'))) {
       return;
     }
 
@@ -303,13 +307,13 @@ function Settings({ user, onUpdateUser, showToast }) {
       if (response.ok) {
         const data = await response.json();
         onUpdateUser(data.user);
-        showToast('New share link generated.');
+        showToast(t('settings.tokenRegenerated'));
       } else {
-        showToast('Failed to regenerate token.');
+        showToast(t('settings.errRegenerate'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error regenerating token.');
+      showToast(t('settings.errRegenerateGeneric'));
     } finally {
       setShareLoading(false);
     }
@@ -328,14 +332,14 @@ function Settings({ user, onUpdateUser, showToast }) {
       if (response.ok) {
         const data = await response.json();
         onUpdateUser(data.user);
-        showToast('TCG API Key updated successfully.');
+        showToast(t('settings.apiKeyUpdated'));
       } else {
         const data = await response.json();
-        showToast(data.error || 'Failed to update API Key.');
+        showToast(data.error || t('settings.errApiKey'));
       }
     } catch (err) {
       console.error(err);
-      showToast('Error updating API Key.');
+      showToast(t('settings.errApiKeyGeneric'));
     } finally {
       setApiKeyLoading(false);
     }
@@ -353,10 +357,10 @@ function Settings({ user, onUpdateUser, showToast }) {
   const copyToClipboard = (url, type) => {
     navigator.clipboard.writeText(url).then(() => {
       setCopiedType(type);
-      showToast(`Copied public ${type} link to clipboard.`);
+      showToast(t(`settings.copied.${type}`));
       setTimeout(() => setCopiedType(''), 2000);
     }).catch(() => {
-      showToast('Could not copy to clipboard. Copy the link manually.');
+      showToast(t('settings.errCopy'));
     });
   };
 
@@ -364,8 +368,8 @@ function Settings({ user, onUpdateUser, showToast }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Title Panel */}
       <div className="glass-panel">
-        <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)' }}>Trainer Settings</h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Manage your account security and collection sharing options.</p>
+        <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)' }}>{t('settings.title')}</h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{t('settings.subtitle')}</p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }} className="settings-grid">
@@ -373,13 +377,13 @@ function Settings({ user, onUpdateUser, showToast }) {
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
             <Share2 size={20} style={{ color: 'var(--accent-red)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>Collection Sharing</h3>
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.sharingTitle')}</h3>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
             <div>
-              <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem' }}>Share My Library</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Allow anyone with your link to view your collection.</div>
+              <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem' }}>{t('settings.shareLibrary')}</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t('settings.shareLibraryHint')}</div>
             </div>
             <label className="switch-control" style={{ position: 'relative', display: 'inline-block', width: '46px', height: '24px' }}>
               <input 
@@ -415,7 +419,7 @@ function Settings({ user, onUpdateUser, showToast }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
               
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Standard Collection Share Link</label>
+                <label>{t('settings.linkCollection')}</label>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <input 
                     type="text" 
@@ -426,13 +430,13 @@ function Settings({ user, onUpdateUser, showToast }) {
                   />
                   <button className="btn btn-secondary" onClick={() => copyToClipboard(shareUrl, 'collection')} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
                     {copiedType === 'collection' ? <Check size={14} style={{ color: 'var(--type-grass)' }} /> : <Clipboard size={14} />}
-                    <span>Copy</span>
+                    <span>{t('settings.copy')}</span>
                   </button>
                 </div>
               </div>
 
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Trade Binder Share Link</label>
+                <label>{t('settings.linkTrade')}</label>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <input 
                     type="text" 
@@ -443,13 +447,13 @@ function Settings({ user, onUpdateUser, showToast }) {
                   />
                   <button className="btn btn-secondary" onClick={() => copyToClipboard(tradeUrl, 'trade')} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
                     {copiedType === 'trade' ? <Check size={14} style={{ color: 'var(--type-grass)' }} /> : <Clipboard size={14} />}
-                    <span>Copy</span>
+                    <span>{t('settings.copy')}</span>
                   </button>
                 </div>
               </div>
 
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Wishlist Share Link</label>
+                <label>{t('settings.linkWishlist')}</label>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <input 
                     type="text" 
@@ -460,19 +464,27 @@ function Settings({ user, onUpdateUser, showToast }) {
                   />
                   <button className="btn btn-secondary" onClick={() => copyToClipboard(wishlistUrl, 'wishlist')} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
                     {copiedType === 'wishlist' ? <Check size={14} style={{ color: 'var(--type-grass)' }} /> : <Clipboard size={14} />}
-                    <span>Copy</span>
+                    <span>{t('settings.copy')}</span>
                   </button>
                 </div>
               </div>
 
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                💡 <strong>Tip:</strong> Share links automatically use your current active theme ({activeTheme}). You can also force a specific theme for visitors by adding <code>?theme=lcars</code>, <code>?theme=light</code>, or <code>?theme=dark</code> to the end of any share link.
+                {/* The three query strings go in as placeholders rather than as
+                    <code> elements: that keeps the sentence one translatable unit
+                    and stops a translator from accidentally localising a URL. */}
+                💡 <strong>{t('settings.tipLabel')}</strong> {t('settings.themeTip', {
+                  theme: activeTheme,
+                  lcars: '?theme=lcars',
+                  light: '?theme=light',
+                  dark: '?theme=dark',
+                })}
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                 <div>
-                  <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem' }}>Show Card Locations</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Reveal which binder or box each card is stored in.</div>
+                  <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem' }}>{t('settings.showLocations')}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t('settings.showLocationsHint')}</div>
                 </div>
                 <label className="switch-control" style={{ position: 'relative', display: 'inline-block', width: '46px', height: '24px' }}>
                   <input
@@ -512,7 +524,7 @@ function Settings({ user, onUpdateUser, showToast }) {
                   style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}
                 >
                   <RefreshCw size={12} className={shareLoading ? 'spin-animation' : ''} />
-                  <span>Regenerate Link</span>
+                  <span>{t('settings.regenerateLink')}</span>
                 </button>
               </div>
             </div>
@@ -521,7 +533,7 @@ function Settings({ user, onUpdateUser, showToast }) {
           {!shareEnabled && (
             <div style={{ display: 'flex', gap: '0.5rem', background: 'rgba(255, 71, 71, 0.05)', border: '1px solid rgba(255,71,71,0.1)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
               <ShieldAlert size={16} style={{ color: 'var(--accent-red)', flexShrink: 0 }} />
-              <span>Your library is currently private. People visiting your share link will not be able to view your cards.</span>
+              <span>{t('settings.privateNotice')}</span>
             </div>
           )}
         </div>
@@ -530,19 +542,19 @@ function Settings({ user, onUpdateUser, showToast }) {
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
             <KeyRound size={20} style={{ color: 'var(--accent-yellow)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>Security</h3>
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.securityTitle')}</h3>
           </div>
 
           <form onSubmit={handlePasswordChange} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="current-password">Current Password</label>
+              <label htmlFor="current-password">{t('settings.currentPassword')}</label>
               <input
                 id="current-password"
                 type="password"
                 name="current-password"
                 autoComplete="current-password"
                 className="input-control"
-                placeholder="Your current password"
+                placeholder={t('settings.currentPasswordPlaceholder')}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 required
@@ -551,14 +563,14 @@ function Settings({ user, onUpdateUser, showToast }) {
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="settings-new-password">New Password</label>
+              <label htmlFor="settings-new-password">{t('settings.newPassword')}</label>
               <input
                 id="settings-new-password"
                 type="password"
                 name="new-password"
                 autoComplete="new-password"
                 className="input-control"
-                placeholder="At least 8 characters"
+                placeholder={t('settings.newPasswordPlaceholder', { count: 8 })}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -567,14 +579,14 @@ function Settings({ user, onUpdateUser, showToast }) {
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="settings-confirm-password">Confirm Password</label>
+              <label htmlFor="settings-confirm-password">{t('login.confirmPassword')}</label>
               <input
                 id="settings-confirm-password"
                 type="password"
                 name="confirm-password"
                 autoComplete="new-password"
                 className="input-control"
-                placeholder="Re-enter password"
+                placeholder={t('login.confirmPasswordPlaceholder')}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
@@ -590,7 +602,7 @@ function Settings({ user, onUpdateUser, showToast }) {
             >
               {passwordLoading ? (
                 <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div>
-              ) : 'Update Password'}
+              ) : t('settings.updatePassword')}
             </button>
           </form>
         </div>
@@ -599,16 +611,22 @@ function Settings({ user, onUpdateUser, showToast }) {
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
             <KeyRound size={20} style={{ color: 'var(--accent-red)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>Pokémon TCG API Key</h3>
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.apiKeyTitle')}</h3>
           </div>
 
           <form onSubmit={handleApiKeyChange} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ background: 'rgba(255, 71, 71, 0.03)', border: '1px solid var(--border-glass)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-              Card searches use the free Pokémon TCG API. Adding your own key raises your rate limit so searches stay fast during bulk scanning. Grab a free key at <a href="https://dev.pokemontcg.io" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>dev.pokemontcg.io</a> and paste it below. It&apos;s optional.
+              {/* The link carries a whole clause rather than sitting mid-sentence:
+                  a translator gets two complete units instead of two fragments
+                  whose order their language may not allow. */}
+              {t('settings.apiKeyIntro')}{' '}
+              <a href="https://dev.pokemontcg.io" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>
+                {t('settings.apiKeyGetOne')}
+              </a>
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="settings-tcg-api-key">API Key</label>
+              <label htmlFor="settings-tcg-api-key">{t('settings.apiKeyLabel')}</label>
               <div style={{ position: 'relative' }}>
                 <input
                   id="settings-tcg-api-key"
@@ -625,8 +643,8 @@ function Settings({ user, onUpdateUser, showToast }) {
                 <button
                   type="button"
                   onClick={() => setShowApiKey((v) => !v)}
-                  aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
-                  title={showApiKey ? 'Hide API key' : 'Show API key'}
+                  aria-label={t(showApiKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
+                  title={t(showApiKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
                   style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
                 >
                   {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -642,7 +660,7 @@ function Settings({ user, onUpdateUser, showToast }) {
             >
               {apiKeyLoading ? (
                 <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div>
-              ) : 'Save API Key'}
+              ) : t('settings.saveApiKey')}
             </button>
           </form>
         </div>
@@ -651,11 +669,11 @@ function Settings({ user, onUpdateUser, showToast }) {
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
             <Database size={20} style={{ color: 'var(--accent-red)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>Collection Backup & Data</h3>
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.backupTitle')}</h3>
           </div>
 
           <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-glass)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-            Export your card collection as a CSV or JSON backup, or import a previously exported database. Importing will merge cards into your collection.
+            {t('settings.backupHint')}
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
@@ -666,7 +684,7 @@ function Settings({ user, onUpdateUser, showToast }) {
               style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
             >
               <Download size={14} />
-              <span>Export CSV</span>
+              <span>{t('settings.exportCsv')}</span>
             </button>
             <button
               type="button"
@@ -675,7 +693,7 @@ function Settings({ user, onUpdateUser, showToast }) {
               style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
             >
               <Download size={14} />
-              <span>Export JSON</span>
+              <span>{t('settings.exportJson')}</span>
             </button>
 
             <label 
@@ -683,7 +701,7 @@ function Settings({ user, onUpdateUser, showToast }) {
               style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', cursor: 'pointer', margin: 0 }}
             >
               <Upload size={14} />
-              <span>Import Backup</span>
+              <span>{t('settings.importBackup')}</span>
               <input
                 type="file"
                 accept=".json,.csv"
@@ -698,11 +716,55 @@ function Settings({ user, onUpdateUser, showToast }) {
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
             <SlidersHorizontal size={20} style={{ color: 'var(--accent-yellow)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>Preferences</h3>
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('prefs.title')}</h3>
+          </div>
+
+          {/* Interface language. The picker only appears once a second locale file
+              exists to switch to — dropping one into src/locales is what makes it
+              appear — but the call for translators shows either way, since with
+              English alone there is nothing else to advertise it.
+              This is not the card language: that is picked per card on entry. */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label htmlFor={LOCALES.length > 1 ? 'settings-ui-lang' : undefined}>{t('prefs.language')}</label>
+            {LOCALES.length > 1 ? (
+              <>
+                <select
+                  id="settings-ui-lang"
+                  className="select-control"
+                  value={locale}
+                  onChange={(e) => setLocale(e.target.value)}
+                >
+                  {LOCALES.map(code => (
+                    <option key={code} value={code}>{localeName(code)}</option>
+                  ))}
+                </select>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
+                  {t('prefs.languageHint')}
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                {t('prefs.languageOnlyEnglish')}
+              </div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', marginTop: '0.5rem' }}>
+              <Languages size={13} style={{ color: 'var(--accent-yellow)', flexShrink: 0 }} />
+              <span style={{ color: 'var(--text-secondary)' }}>
+                {t('prefs.translateCta')}{' '}
+                <a
+                  href={`${REPO_URL}/blob/main/docs/TRANSLATING.md`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}
+                >
+                  {t('prefs.translateCtaLink')}
+                </a>
+              </span>
+            </div>
           </div>
 
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="settings-theme">Theme</label>
+            <label htmlFor="settings-theme">{t('prefs.theme')}</label>
             <select
               id="settings-theme"
               className="select-control"
@@ -712,43 +774,91 @@ function Settings({ user, onUpdateUser, showToast }) {
                 setTheme(val);
                 localStorage.setItem('theme', val);
                 document.documentElement.setAttribute('data-theme', val);
-                showToast(`Theme set to ${val === 'lcars' ? 'LCARS' : val.charAt(0).toUpperCase() + val.slice(1)}.`);
+                showToast(t('prefs.themeSet', { theme: t(`theme.${val}`) }));
               }}
             >
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-              <option value="lcars">LCARS</option>
+              <option value="dark">{t('theme.dark')}</option>
+              <option value="light">{t('theme.light')}</option>
+              <option value="lcars">{t('theme.lcars')}</option>
             </select>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
-              Changes the app&apos;s color scheme instantly.
+              {t('prefs.themeHint')}
+            </div>
+          </div>
+
+          {/* Games shown. Hiding a game removes its tabs, filters and cards from
+              the UI; only offered while more than one game exists to hide. */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>{t('prefs.gamesShown')}</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {GAMES.map(({ value, label }) => {
+                const on = shownGames.includes(value);
+                const isLast = on && shownGames.length === 1;
+                return (
+                  <label
+                    key={value}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.6rem', margin: 0,
+                      background: 'rgba(255,255,255,0.01)', padding: '0.6rem 0.8rem',
+                      borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)',
+                      cursor: isLast ? 'not-allowed' : 'pointer', opacity: isLast ? 0.7 : 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      disabled={isLast}
+                      onChange={(e) => {
+                        if (!setGameEnabled(value, e.target.checked)) {
+                          showToast(t('prefs.lastGameKept'));
+                          return;
+                        }
+                        const next = enabledGames();
+                        setShownGames(next);
+                        // A hidden game can't stay the default the other views open on.
+                        setDefaultGameValue(defaultGame());
+                        showToast(t(e.target.checked ? 'prefs.gameShown' : 'prefs.gameHidden', { game: label }));
+                      }}
+                      style={{ width: '16px', height: '16px', accentColor: 'var(--accent-red)' }}
+                    />
+                    <Layers size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                    <span style={{ fontSize: '0.9rem', color: 'var(--text-strong)', fontWeight: 600 }}>{label}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
+              {t('prefs.gamesShownHint')}
             </div>
           </div>
 
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="settings-default-game">Default Game</label>
+            <label htmlFor="settings-default-game">{t('prefs.defaultGame')}</label>
             <select
               id="settings-default-game"
               className="select-control"
-              value={defaultGame}
+              value={defaultGameValue}
+              disabled={shownGames.length === 1}
               onChange={(e) => {
                 const val = e.target.value;
-                setDefaultGame(val);
+                setDefaultGameValue(val);
                 localStorage.setItem('default_game', val);
-                showToast(`Default game set to ${val === 'mtg' ? 'Magic: The Gathering' : 'Pokémon'}.`);
+                // Game names are brands, so they come from GAMES rather than the
+                // locale file — nobody translates "Magic: The Gathering".
+                showToast(t('prefs.defaultGameSet', { game: GAMES.find(g => g.value === val)?.label || val }));
               }}
             >
-              <option value="pokemon">Pokémon</option>
-              <option value="mtg">Magic: The Gathering</option>
+              {gameOptions().map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
             </select>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
-              The scanner and collection open scoped to this game.
+              {t(shownGames.length === 1 ? 'prefs.defaultGameHintSingle' : 'prefs.defaultGameHint')}
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
             <div>
-              <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem' }}>Scanner Auto-Confirm</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Add high-confidence single matches automatically, skipping the confirm dialog.</div>
+              <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem' }}>{t('prefs.autoConfirm')}</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t('prefs.autoConfirmHint')}</div>
             </div>
             <label className="switch-control" style={{ position: 'relative', display: 'inline-block', width: '46px', height: '24px', flexShrink: 0 }}>
               <input
@@ -758,7 +868,7 @@ function Settings({ user, onUpdateUser, showToast }) {
                   const checked = e.target.checked;
                   setAutoConfirm(checked);
                   localStorage.setItem('scanner_auto_confirm', checked ? '1' : '0');
-                  showToast(checked ? 'Scanner auto-confirm enabled.' : 'Scanner auto-confirm disabled.');
+                  showToast(t(checked ? 'prefs.autoConfirmOn' : 'prefs.autoConfirmOff'));
                 }}
                 style={{ opacity: 0, width: 0, height: 0 }}
               />
@@ -789,44 +899,44 @@ function Settings({ user, onUpdateUser, showToast }) {
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
             <Info size={20} style={{ color: 'var(--accent-yellow)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>About Bindarr</h3>
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.aboutTitle')}</h3>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
             <div>
               <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <span>Bindarr {shownVersion ? `v${shownVersion}` : '(version unknown)'}</span>
+                <span>{shownVersion ? `Bindarr v${shownVersion}` : t('settings.versionUnknown')}</span>
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  title="Copy version and environment details for a bug report"
+                  title={t('settings.copyVersionHint')}
                   onClick={() => {
                     const text = `Bindarr app v${shownVersion || 'unknown'} | server v${versionInfo?.version || (backendReachable ? 'unknown' : 'unreachable')} | ${navigator.platform || 'unknown'} | ${navigator.userAgent}`;
                     navigator.clipboard?.writeText(text)
-                      .then(() => showToast('Version details copied.'))
-                      .catch(() => showToast('Could not copy to clipboard.'));
+                      .then(() => showToast(t('settings.versionCopied')))
+                      .catch(() => showToast(t('settings.errCopyShort')));
                   }}
                   style={{ padding: '0.15rem 0.45rem', fontSize: '0.7rem' }}
                 >
-                  <Clipboard size={12} /> Copy
+                  <Clipboard size={12} /> {t('settings.copy')}
                 </button>
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                 {isDemo
-                  ? 'Update checks need the Bindarr backend — this is a static demo.'
+                  ? t('settings.updateDemo')
                   : !backendReachable
-                  ? 'Server unreachable — update checks are unavailable right now.'
+                  ? t('settings.updateUnreachable')
                   : versionInfo?.check_failed
-                    ? 'Could not reach GitHub. Check your connection and try again.'
+                    ? t('settings.updateGithubFailed')
                     : versionInfo?.update_available
-                      ? `Version ${versionInfo.latest} is available.`
+                      ? t('settings.updateAvailable', { version: versionInfo.latest })
                       : versionInfo?.latest
-                        ? 'You are running the latest version.'
-                        : 'Updates are only checked when you ask.'}
+                        ? t('settings.updateRunningLatest')
+                        : t('settings.updateOnDemand')}
               </div>
               {versionSkew && (
                 <div style={{ fontSize: '0.75rem', color: 'var(--accent-yellow)', marginTop: '0.25rem' }}>
-                  Server is running v{versionSkew}. Restart it to finish updating.
+                  {t('settings.versionSkew', { version: versionSkew })}
                 </div>
               )}
             </div>
@@ -835,7 +945,7 @@ function Settings({ user, onUpdateUser, showToast }) {
                   report "you're up to date" without having checked anything. */}
               <button type="button" className="btn btn-secondary" onClick={handleCheckUpdate} disabled={checkingUpdate || isDemo}>
                 <RefreshCw size={16} className={checkingUpdate ? 'spin-animation' : ''} />
-                {checkingUpdate ? 'Checking…' : 'Check for updates'}
+                {t(checkingUpdate ? 'settings.checking' : 'settings.checkForUpdates')}
               </button>
               {versionInfo?.update_available && (
                 <a
@@ -846,7 +956,7 @@ function Settings({ user, onUpdateUser, showToast }) {
                   style={{ textDecoration: 'none' }}
                 >
                   <Download size={16} />
-                  Get {versionInfo.latest}
+                  {t('settings.getVersion', { version: versionInfo.latest })}
                 </a>
               )}
             </div>
@@ -857,37 +967,38 @@ function Settings({ user, onUpdateUser, showToast }) {
               reading it and pressing the button on GitHub. */}
           <div>
             <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '0.5rem' }}>
-              Report a problem
+              {t('settings.getInvolvedTitle')}
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               <a className="btn btn-secondary" href={bugReportUrl()} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                <Bug size={16} /> Report a bug
+                <Bug size={16} /> {t('settings.reportBug')}
               </a>
               <a className="btn btn-secondary" href={featureRequestUrl()} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                <Lightbulb size={16} /> Request a feature
+                <Lightbulb size={16} /> {t('settings.requestFeature')}
+              </a>
+              <a className="btn btn-secondary" href={`${REPO_URL}/blob/main/docs/TRANSLATING.md`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <Languages size={16} /> {t('settings.helpTranslate')}
               </a>
               <a className="btn btn-secondary" href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                <MessagesSquare size={16} /> Browse issues
+                <MessagesSquare size={16} /> {t('settings.browseIssues')}
               </a>
               <a className="btn btn-secondary" href={`${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                <ScrollText size={16} /> Changelog
+                <ScrollText size={16} /> {t('settings.changelog')}
               </a>
               <a className="btn btn-secondary" href={REPO_URL} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                <Github size={16} /> Source
+                <Github size={16} /> {t('settings.source')}
               </a>
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem', lineHeight: 1.4 }}>
-              Bug reports open a prefilled GitHub issue with your version and browser
-              filled in — nothing is sent until you review it and submit on GitHub, and
-              nothing about your collection is included.
+              {t('settings.reportNote')}
             </div>
           </div>
 
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            Update checks contact the public GitHub releases API for{' '}
+            {t('settings.updateChecksNote')}{' '}
             <a href={versionInfo?.releases_url || `${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)' }}>
               thenotoriousJeremy/bindarr
-            </a>. Nothing about your collection is sent.
+            </a>
           </div>
         </div>
       </div>

@@ -16,9 +16,9 @@ parentPort.on('message', (msg) => {
     }
     return;
   }
-  const { id, game, set, qDesc, qRows, qKp, indices } = msg;
+  const { id, game, set, lang, qDesc, qRows, qKp, indices } = msg;
   try {
-    const scored = setIndex.verifySlice(game, set, qDesc, qRows, qKp, indices);
+    const scored = setIndex.verifySlice(game, set, qDesc, qRows, qKp, indices, lang);
     parentPort.postMessage({ id, scored });
   } catch (e) {
     parentPort.postMessage({ id, error: e.message || String(e) });

@@ -88,7 +88,14 @@ async function recordPrice(cardId, price) {
 // (https://scryfall.com/docs/api/rate-limits). Sweeping more often than daily
 // is pure load for zero new data, so both providers gate on this.
 const PRICE_SWEEP_INTERVAL_MS = 1000 * 60 * 60 * 24;
-const SWEEP_COLUMN = { mtg: 'mtg_prices_swept_at', pokemon: 'pokemon_prices_swept_at' };
+// tcgdex gets its own clock: it serves the non-English Pokémon cards that
+// pokemontcg.io has no rows for, so the two sweep different cards and letting
+// either one mark the other's gate would silently skip a whole language.
+const SWEEP_COLUMN = {
+  mtg: 'mtg_prices_swept_at',
+  pokemon: 'pokemon_prices_swept_at',
+  tcgdex: 'tcgdex_prices_swept_at',
+};
 
 // Has this game's price sweep gone stale enough to be worth running again?
 async function shouldSweepPrices(game) {

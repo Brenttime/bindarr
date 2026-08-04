@@ -10,6 +10,7 @@ const path = require('path');
 const axios = require('axios');
 const sharp = require('sharp');
 const { cv } = require('opencv-wasm');
+const languages = require('./utils/languages');
 // scryfallApi/tcgApi are lazy-required inside the build/preview paths only — they
 // pull in the DB module, which verify-only worker threads must not load.
 
@@ -19,13 +20,23 @@ const DESC_BYTES = 32, CAP = 500, REF_WIDTH = 500, RATIO = 0.75, RANSAC_PX = 5.0
 const http = axios.create({ timeout: 30000, headers: { 'User-Agent': 'Bindarr/1.0', 'Accept': 'application/json' } });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const cache = {};        // "game|set" -> { meta, desc:Buffer, kp:Buffer } (loaded)
-const building = {};     // "game|set" -> Promise (in-flight build)
-const progress = {};     // "game|set" -> { total, done, status:'fetching'|'indexing'|'done'|'error', error? }
+const cache = {};        // "game|set|lang" -> { meta, desc:Buffer, kp:Buffer } (loaded)
+const building = {};     // "game|set|lang" -> Promise (in-flight build)
+const progress = {};     // "game|set|lang" -> { total, done, status:'fetching'|'indexing'|'done'|'error', error? }
 
+// A card's art is language-specific, so an index built from English scans is
+// useless against a Japanese print of the same card: different name box,
+// different flavour text, different ORB features. Each language therefore gets
+// its own index, keyed and stored separately.
 const norm = (set) => (set || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const paths = (game, set) => {
-  const base = path.join(SETS_DIR, `${game}-${norm(set)}-orb`);
+const langOf = (lang) => languages.toCode(lang);
+const key = (game, set, lang) => `${game}|${norm(set)}|${langOf(lang)}`;
+const paths = (game, set, lang) => {
+  // English keeps the original, un-suffixed filenames so every index built before
+  // languages existed is still found instead of silently rebuilt.
+  const code = langOf(lang);
+  const suffix = code === 'en' ? '' : `-${code}`;
+  const base = path.join(SETS_DIR, `${game}-${norm(set)}${suffix}-orb`);
   return { desc: `${base}-desc.bin`, kp: `${base}-kp.bin`, meta: `${base}-meta.json` };
 };
 
@@ -82,7 +93,7 @@ const hamming = (a, b) => popcount((a.hi ^ b.hi) >>> 0) + popcount((a.lo ^ b.lo)
 // indexes tokens/art/etc., not just the 408 main-set prints. Digital-only sets
 // (Alchemy) are skipped — no physical card to scan. include:extras stops Scryfall
 // hiding tokens/emblems; -is:digital drops any stray digital print.
-async function mtgSetFamilyQuery(set) {
+async function mtgSetFamilyQuery(set, lang) {
   const scryfallApi = require('./scryfallApi');
   const code = norm(set);
   const codes = new Set([code]);
@@ -93,7 +104,18 @@ async function mtgSetFamilyQuery(set) {
     }
   } catch { /* /sets unreachable: fall back to the main set only */ }
   const sets = [...codes].map(c => `set:${c}`).join(' or ');
-  return `(${sets}) include:extras unique:prints -is:digital`;
+  // Language is a search keyword (and needs include_multilingual on the request,
+  // added by mtgSearchUrl below) — Scryfall has no lang parameter.
+  const scryLang = languages.resolve(lang).scryfall;
+  const langTerm = scryLang === 'en' ? '' : ` lang:${scryLang}`;
+  return `(${sets}) include:extras unique:prints -is:digital${langTerm}`;
+}
+
+// Search URL for a set family in one language. English omits
+// include_multilingual so the query stays exactly what it was before languages.
+function mtgSearchUrl(query, lang, extra = '') {
+  const multilingual = languages.resolve(lang).scryfall === 'en' ? '' : '&include_multilingual=true';
+  return `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}${extra}${multilingual}`;
 }
 
 // Scannable face image(s) for a Scryfall card. Single-image layouts (normal,
@@ -105,21 +127,74 @@ function mtgCardImages(c) {
   return (c.card_faces || []).map(f => f.image_uris?.normal).filter(Boolean);
 }
 
-// MTG: page Scryfall for a set family. Returns [{ name, set, number, img, raw }],
-// one entry per scannable face (double-faced cards yield two, same name/number).
-async function fetchMtgSet(set) {
+// MTG: page Scryfall for a set family in one language. Returns
+// [{ name, set, number, img, raw }], one entry per scannable face (double-faced
+// cards yield two, same name/number). `name` is the localized (printed) name when
+// there is one, because that is what the post-scan lookup searches Scryfall for —
+// verified: `!"稲妻" lang:ja` with include_multilingual finds the card.
+async function fetchMtgSet(set, lang) {
   const scryfallApi = require('./scryfallApi');
-  let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(await mtgSetFamilyQuery(set))}&order=set`;
+  let url = mtgSearchUrl(await mtgSetFamilyQuery(set, lang), lang, '&order=set');
   const cards = [];
   while (url) {
     const r = await scryfallApi.scryGetRetried(url);
     for (const c of r.data.data || []) {
       for (const img of mtgCardImages(c)) {
-        cards.push({ name: c.name || '', set: c.set || set, number: c.collector_number || '', img, raw: c });
+        cards.push({ name: c.printed_name || c.name || '', set: c.set || set, number: c.collector_number || '', img, raw: c });
       }
     }
     url = r.data.has_more ? r.data.next_page : null;
     await sleep(120);
+  }
+  return cards;
+}
+
+// Pokémon, non-English: TCGdex. One request returns the whole set's cards with
+// localized names and art (pokemontcg.io has no non-English sets at all).
+//
+// TCGdex's coverage is uneven PER SET, in ways its own metadata hides, and a scan
+// index needs card ART specifically. Three distinct dead ends, all of which used
+// to surface as the same useless "no cards for set X":
+//   1. the set does not exist in this language at all (codes differ by language)
+//   2. the set is listed — even reporting a cardCount — but holds no card records
+//      (Korean SV2a claims 165 cards and returns zero)
+//   3. the cards exist but none carry an image (Korean SV4M has all 95 cards with
+//      names and prices, and no art) — searchable, but impossible to scan
+// Each says which one it is, because the user's next move differs every time.
+async function fetchTcgdexSet(set, lang) {
+  const tcgdexApi = require('./tcgdexApi');
+  const code = languages.toCode(lang);
+  const langName = languages.toName(code);
+  let r;
+  try {
+    r = await http.get(`https://api.tcgdex.net/v2/${code}/sets/${encodeURIComponent(set)}`);
+  } catch (e) {
+    if (e.response && e.response.status === 404) {
+      throw new Error(`TCGdex has no ${langName} set "${set}". Set codes differ by language — pick from the ${langName} set list.`);
+    }
+    throw e;
+  }
+  const setName = r.data.name || set;
+  const all = r.data.cards || [];
+  if (!all.length) {
+    throw new Error(`TCGdex lists "${setName}" (${set}) in ${langName} but has no cards for it yet, so there is nothing to index. Try another set or language.`);
+  }
+  if (!all.some(c => c.image)) {
+    throw new Error(`TCGdex has ${all.length} ${langName} cards for "${setName}" (${set}) but no card images, and scanning matches on the art. You can still search and add these cards by name; scanning this set needs another language.`);
+  }
+  const cards = [];
+  for (const brief of all) {
+    if (!brief.image) continue; // this card has no art yet; the rest of the set does
+    cards.push({
+      name: brief.name || '',
+      set: r.data.id || set,
+      number: brief.localId != null ? String(brief.localId) : '',
+      // High res for indexing: ORB has more to work with than the 245px art the
+      // card grids use, and this runs once per set.
+      img: `${brief.image}/high.png`,
+      raw: { ...brief, set: { id: r.data.id || set, name: setName } },
+      tcgdex: true,
+    });
   }
   return cards;
 }
@@ -160,15 +235,18 @@ async function fetchPokemonSet(set) {
   return cards;
 }
 
-// Fetch every printing in a set, ORB-index each, persist.
-async function buildSet(game, set) {
-  const k = `${game}|${norm(set)}`;
+// Fetch every printing in a set, in one language, ORB-index each, persist.
+async function buildSet(game, set, lang) {
+  const k = key(game, set, lang);
+  const code = langOf(lang);
   if (game !== 'mtg' && game !== 'pokemon') throw new Error('set index only supports mtg/pokemon');
   fs.mkdirSync(SETS_DIR, { recursive: true });
-  progress[k] = { total: 0, done: 0, status: 'fetching' };
+  progress[k] = { total: 0, done: 0, status: 'fetching', lang: code };
   try {
-    console.log(`setIndex: building ${game} ${set}...`);
-    const cards = game === 'mtg' ? await fetchMtgSet(set) : await fetchPokemonSet(set);
+    console.log(`setIndex: building ${game} ${set} (${code})...`);
+    const cards = game === 'mtg'
+      ? await fetchMtgSet(set, code)
+      : (code === 'en' ? await fetchPokemonSet(set) : await fetchTcgdexSet(set, code));
     if (cards.length === 0) throw new Error(`no cards for set ${set}`);
     progress[k].total = cards.length;
     progress[k].status = 'indexing';
@@ -176,11 +254,26 @@ async function buildSet(game, set) {
     // Cache full card data now so the post-match /api/search is an instant local
     // card_cache hit instead of a live (throttled) provider fetch per scan.
     try {
-      if (game === 'mtg') { const scryfallApi = require('./scryfallApi'); const seen = new Set(); const rows = cards.filter(c => c.raw?.id && (seen.has(c.raw.id) ? false : seen.add(c.raw.id))); await scryfallApi.cacheCards(rows.map(c => scryfallApi.normalizeCard(c.raw))); }
-      else { const tcgApi = require('./tcgApi'); await tcgApi.cacheCards(cards.map(c => c.raw)); }
+      if (game === 'mtg') {
+        const scryfallApi = require('./scryfallApi');
+        const seen = new Set();
+        const rows = cards.filter(c => c.raw?.id && (seen.has(c.raw.id) ? false : seen.add(c.raw.id)));
+        await scryfallApi.cacheCards(rows.map(c => scryfallApi.normalizeCard(c.raw, code)));
+      } else if (code === 'en') {
+        const tcgApi = require('./tcgApi');
+        await tcgApi.cacheCards(cards.map(c => c.raw));
+      } else {
+        // TCGdex set briefs carry no rarity/types/prices, so these rows are thin
+        // on purpose — enough for the scanner to name a card the instant it
+        // matches, without 237 extra requests during a build. They are flagged
+        // `incomplete` so they read as stale and get filled in when the card is
+        // actually added (see the add route) or by the price sweep.
+        const tcgdexApi = require('./tcgdexApi');
+        await tcgdexApi.cacheCards(cards.map(c => tcgdexApi.normalizeCard(c.raw, code)), { incomplete: true });
+      }
     } catch (e) { console.warn(`setIndex: caching ${set} cards failed: ${e.message}`); }
 
-    const p = paths(game, set);
+    const p = paths(game, set, lang);
     const descFd = fs.openSync(p.desc, 'w'), kpFd = fs.openSync(p.kp, 'w');
     const scanPool = require('./scanPool');
     const workers = scanPool.getPool();
@@ -215,8 +308,10 @@ async function buildSet(game, set) {
       }
     }
     fs.closeSync(descFd); fs.closeSync(kpFd);
-    fs.writeFileSync(p.meta, JSON.stringify({ set, hashed: true, cards: meta }));
-    console.log(`setIndex: ${set} indexed ${meta.length} cards`);
+    // `lang` in the meta so listBuilds can report a build's language without
+    // having to parse it back out of the filename.
+    fs.writeFileSync(p.meta, JSON.stringify({ set, lang: code, hashed: true, cards: meta }));
+    console.log(`setIndex: ${set} (${code}) indexed ${meta.length} cards`);
     progress[k].status = 'done';
   } catch (e) {
     progress[k] = { ...progress[k], status: 'error', error: e.message };
@@ -224,27 +319,42 @@ async function buildSet(game, set) {
   }
 }
 
-function loadSet(game, set) {
-  const k = `${game}|${norm(set)}`;
+function loadSet(game, set, lang) {
+  const k = key(game, set, lang);
   if (cache[k]) return cache[k];
-  const p = paths(game, set);
+  const p = paths(game, set, lang);
   if (!fs.existsSync(p.meta)) return null;
   const parsed = JSON.parse(fs.readFileSync(p.meta));
   cache[k] = { meta: parsed.cards, hashed: !!parsed.hashed, desc: fs.readFileSync(p.desc), kp: fs.readFileSync(p.kp) };
   return cache[k];
 }
 
+// Has this index already tried and failed? A failure is remembered (in progress)
+// so it can be reported instead of retried into the ground — see ensureSet.
+function buildFailed(game, set, lang) {
+  const p = progress[key(game, set, lang)];
+  return p && p.status === 'error' ? p.error || 'build failed' : null;
+}
+
 // Build (if needed) + load a set index. Concurrent callers share one build.
-async function ensureSet(game, set) {
-  const k = `${game}|${norm(set)}`;
-  if (loadSet(game, set)) return true;
+//
+// A remembered failure short-circuits: the scanner polls this once a second while
+// it waits, and because a finished build clears `building[k]`, every poll used to
+// start a brand-new doomed build — dozens of identical failures per minute against
+// someone else's API, with the UI still showing "fetching card list" because each
+// restart reset the progress the client was about to read. Retrying is now an
+// explicit act (startBuild, i.e. the user pressing Rebuild).
+async function ensureSet(game, set, lang, { retry = false } = {}) {
+  const k = key(game, set, lang);
+  if (loadSet(game, set, lang)) return true;
+  if (!retry && buildFailed(game, set, lang)) return false;
   if (!building[k]) {
-    building[k] = buildSet(game, set).then(() => { loadSet(game, set); }).catch(e => { console.error('setIndex build failed:', e.message); throw e; }).finally(() => { delete building[k]; });
+    building[k] = buildSet(game, set, lang).then(() => { loadSet(game, set, lang); }).catch(e => { console.error('setIndex build failed:', e.message); throw e; }).finally(() => { delete building[k]; });
   }
   try { await building[k]; return !!cache[k]; } catch { return false; }
 }
 
-function isReady(game, set) { return !!loadSet(game, set); }
+function isReady(game, set, lang) { return !!loadSet(game, set, lang); }
 
 // --- Admin build management ---
 
@@ -253,32 +363,41 @@ function listBuilds() {
   if (!fs.existsSync(SETS_DIR)) return [];
   const out = [];
   for (const f of fs.readdirSync(SETS_DIR)) {
-    const m = f.match(/^(mtg|pokemon)-(.+)-orb-meta\.json$/);
+    // norm() strips every non-alphanumeric from a set code, so the set segment
+    // can never contain a dash — which is what makes the optional language
+    // segment unambiguous. English builds have no segment at all (they predate
+    // languages and keep their original filenames).
+    const m = f.match(/^(mtg|pokemon)-([a-z0-9]+)(?:-([a-z]{2}(?:-[a-z]{2})?))?-orb-meta\.json$/);
     if (!m) continue;
-    const [, game, normset] = m;
+    const [, game, normset, fileLang] = m;
     const metaPath = path.join(SETS_DIR, f);
-    let cardCount = 0, set = normset;
-    try { const j = JSON.parse(fs.readFileSync(metaPath)); cardCount = j.cards.length; set = j.set || normset; } catch { continue; }
-    const base = path.join(SETS_DIR, `${game}-${normset}-orb`);
+    let cardCount = 0, set = normset, lang = fileLang || 'en';
+    try {
+      const j = JSON.parse(fs.readFileSync(metaPath));
+      cardCount = j.cards.length;
+      set = j.set || normset;
+      lang = j.lang || lang;
+    } catch { continue; }
+    const base = metaPath.replace(/-meta\.json$/, '');
     let sizeBytes = 0, builtAt = 0;
     for (const p of [`${base}-desc.bin`, `${base}-kp.bin`, metaPath]) {
       try { const st = fs.statSync(p); sizeBytes += st.size; builtAt = Math.max(builtAt, st.mtimeMs); } catch { /* missing part */ }
     }
-    out.push({ key: `${game}|${normset}`, game, set, cardCount, sizeBytes, builtAt });
+    out.push({ key: `${game}|${normset}|${lang}`, game, set, lang, cardCount, sizeBytes, builtAt });
   }
   return out.sort((a, b) => b.builtAt - a.builtAt);
 }
 
-// Snapshot of in-flight / recently finished builds, keyed by "game|set".
+// Snapshot of in-flight / recently finished builds, keyed by "game|set|lang".
 function getProgress() { return progress; }
 
 // Progress for one set (or null if no build has started/tracked it).
-function setProgress(game, set) { return progress[`${game}|${norm(set)}`] || null; }
+function setProgress(game, set, lang) { return progress[key(game, set, lang)] || null; }
 
 // Delete a build's files and evict it from memory + progress.
-function deleteBuild(game, set) {
-  const k = `${game}|${norm(set)}`;
-  const p = paths(game, set);
+function deleteBuild(game, set, lang) {
+  const k = key(game, set, lang);
+  const p = paths(game, set, lang);
   for (const f of [p.desc, p.kp, p.meta]) { try { fs.unlinkSync(f); } catch { /* already gone */ } }
   delete cache[k];
   delete progress[k];
@@ -286,14 +405,20 @@ function deleteBuild(game, set) {
 
 // Fetch just the printing count for a set (no image downloads) so the UI can
 // warn about size before committing to a full build.
-async function previewSet(game, set) {
+async function previewSet(game, set, lang) {
+  const code = langOf(lang);
   if (game === 'mtg') {
     const scryfallApi = require('./scryfallApi');
-    const r = await scryfallApi.scryGetRetried(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(await mtgSetFamilyQuery(set))}`);
+    const r = await scryfallApi.scryGetRetried(mtgSearchUrl(await mtgSetFamilyQuery(set, code), code));
     return r.data.total_cards || (r.data.data ? r.data.data.length : 0);
   }
-  const key = process.env.POKEMON_TCG_API_KEY || '';
-  const headers = key ? { 'X-Api-Key': key } : {};
+  if (code !== 'en') {
+    // Reuses the fetch above so Preview reports the same clear reason a build
+    // would ("listed but no card data in Korean") instead of a bare HTTP 404.
+    return (await fetchTcgdexSet(set, code)).length;
+  }
+  const apiKey = process.env.POKEMON_TCG_API_KEY || '';
+  const headers = apiKey ? { 'X-Api-Key': apiKey } : {};
   const r = await http.get('https://api.pokemontcg.io/v2/cards', {
     params: { q: `set.id:${set}`, page: 1, pageSize: 1, select: 'id' }, headers,
   });
@@ -302,12 +427,14 @@ async function previewSet(game, set) {
 
 // Kick off a (re)build without blocking. Concurrent callers share one build;
 // evicts any cached copy first so a rebuild reloads fresh from disk.
-function startBuild(game, set) {
-  const k = `${game}|${norm(set)}`;
+function startBuild(game, set, lang) {
+  const k = key(game, set, lang);
   if (building[k]) return;
   delete cache[k];
-  building[k] = buildSet(game, set)
-    .then(() => { loadSet(game, set); })
+  // Explicit user action, so clear any remembered failure and genuinely retry.
+  delete progress[k];
+  building[k] = buildSet(game, set, lang)
+    .then(() => { loadSet(game, set, lang); })
     .catch(e => { console.error('setIndex build failed:', e.message); })
     .finally(() => { delete building[k]; });
 }
@@ -346,8 +473,8 @@ function inliers(bf, qDescFull, qKp, refDesc, refKp, count) {
 // Verify a given list of card indices against query ORB features. Runs in a
 // worker thread (see scanWorker.js); qDesc is the raw query descriptor bytes
 // (Uint8Array, qRows x DESC_BYTES), qKp the query keypoints. Returns scored[].
-function verifySlice(game, set, qDesc, qRows, qKp, indices) {
-  const idx = loadSet(game, set);
+function verifySlice(game, set, qDesc, qRows, qKp, indices, lang) {
+  const idx = loadSet(game, set, lang);
   if (!idx) return [];
   const qMat = new cv.Mat(qRows, DESC_BYTES, cv.CV_8U);
   qMat.data.set(qDesc);
@@ -390,8 +517,8 @@ function recallIndices(idx, qHash) {
 // A cheap dHash recall shortlists candidates, then the expensive ORB+RANSAC
 // verify runs only on those — fanned out to the worker pool, or inline if the
 // pool is disabled (SCAN_WORKERS=0) / errors. qHash is the query's dHash.
-async function matchSet(q, game, set, topK = 8, qHash = null) {
-  const idx = loadSet(game, set);
+async function matchSet(q, game, set, topK = 8, qHash = null, lang) {
+  const idx = loadSet(game, set, lang);
   if (!idx) return null;
   const indices = recallIndices(idx, qHash);
   // Copy the query descriptors off the cv heap so they survive + are cloneable.
@@ -399,7 +526,7 @@ async function matchSet(q, game, set, topK = 8, qHash = null) {
 
   let scored = null;
   try {
-    scored = await require('./scanPool').verify(game, set, qDesc, q.desc.rows, q.kp, indices);
+    scored = await require('./scanPool').verify(game, set, qDesc, q.desc.rows, q.kp, indices, lang);
   } catch (e) {
     console.warn(`setIndex: pool verify failed, running inline: ${e.message}`);
   }
@@ -423,4 +550,4 @@ async function matchSet(q, game, set, topK = 8, qHash = null) {
   return uniq.slice(0, topK);
 }
 
-module.exports = { ensureSet, isReady, matchSet, verifySlice, extractCard, dhash, listBuilds, getProgress, setProgress, deleteBuild, previewSet, startBuild };
+module.exports = { ensureSet, isReady, buildFailed, matchSet, verifySlice, extractCard, dhash, listBuilds, getProgress, setProgress, deleteBuild, previewSet, startBuild };
