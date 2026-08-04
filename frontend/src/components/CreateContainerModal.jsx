@@ -21,7 +21,9 @@ const TYPE_META = [
   { type: 'Display Shelf / Stand', key: 'displayShelf', icon: Layers, plan: { count: 1, capacity: 10 } },
   { type: 'Deck Box', key: 'deckBox', icon: Archive, plan: { count: 1, capacity: 60 } },
   { type: 'Tin / Case', key: 'tinCase', icon: Archive, plan: { count: 1, capacity: 200 } },
-  { type: 'Other', key: 'other', icon: HelpCircle, plan: { count: 1, capacity: 500 } },
+  // key is 'misc', not 'other': a locale key ending in a plural category ('.one',
+  // '.other', ...) is read as a counted phrase by check-locales.mjs.
+  { type: 'Other', key: 'misc', icon: HelpCircle, plan: { count: 1, capacity: 500 } },
 ];
 
 // Binders hold pages, everything else holds rows. Returns the key half so the

@@ -391,10 +391,12 @@ These download every card image and are **heavy**: several hours of CPU + downlo
 
 ## Translating Bindarr
 
-**Bindarr is English-only right now, and translators are wanted.** People collect
-cards in every language; there is no reason the app should only speak one. If you
-are fluent in another language, this is the single most useful thing you can
-contribute, and it does not require knowing how to code.
+**Bindarr speaks English, Brazilian Portuguese, French, German, Italian, Japanese,
+Korean, Russian, Simplified Chinese, Traditional Chinese and Spanish, and more
+translators are welcome.** People collect cards in every language; there is no
+reason the app should only speak a few. If you are fluent in another language, this
+is the single most useful thing you can contribute, and it does not require knowing
+how to code.
 
 The interface is translated by the community, and a translation is a single JSON
 file - no account, no tooling, no programming. Copy
