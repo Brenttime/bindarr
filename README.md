@@ -313,19 +313,34 @@ There are two ways to supply the reference features:
 
 **Set-scoped MTG (recommended, no pre-build).** Enter the set code of the box you're scanning. The first scan of a new set builds that set's ORB index on demand from Scryfall (~1 min, cached under `backend/data/sets/`); every subsequent scan matches within just that set (ORB inliers against every printing, no global CLIP recall needed) for exact-printing accuracy. Nothing to run ahead of time. The per-printing ORB verify is fanned out across a warmed worker-thread pool (`SCAN_WORKERS`, see below), so large sets stay fast without any loss of accuracy — the result is identical to single-threaded ranking.
 
-**Global / code-free matching (optional, heavy pre-build).** To identify cards without giving a set code (and to power game auto-detection), precompute the full CLIP embedding + ORB databases:
+**Global / code-free matching (optional, heavy pre-build).** To identify cards without giving a set code (and to power game auto-detection), precompute the CLIP embedding + ORB databases. The easiest route is **Admin → Global Index Cache → Rebuild**, which does both halves and can be stopped and resumed. From the command line:
 
 ```bash
 cd backend
-# CLIP embeddings (recall) — per game
-node --max-old-space-size=2048 scripts/build-card-embeddings.mjs --game mtg
-node --max-old-space-size=2048 scripts/build-card-embeddings.mjs --game pokemon
-# ORB features (geometric verification) — per game
-node scripts/build-card-orb.mjs --game mtg
-node scripts/build-card-orb.mjs --game pokemon
+# Check the card source, images and encoder first — seconds, not hours
+node scripts/build-card-embeddings.mjs --game mtg --preflight
+# CLIP embeddings (the recall stage) — per game
+node scripts/build-card-embeddings.mjs --game mtg
+node scripts/build-card-embeddings.mjs --game pokemon
 ```
 
-These download every card image and are **heavy**: several hours of CPU + downloads and ~1.6 GB on disk. Both scripts checkpoint and support `--resume`. A `POKEMON_TCG_API_KEY` (see below) is recommended for the Pokémon build. Without these DBs, set-scoped MTG matching still works (it builds on demand); only code-free matching and game auto-detection need the pre-built data.
+The ORB half has **no separate build script**. It is assembled from the per-set indexes described above (`backend/src/orbUnion.js`), so it is chunked and resumable — an interruption costs one set rather than the whole run — and any set you already built for set-scoped scanning is reused as-is. The in-app Rebuild does this automatically after the CLIP half; `--game mtg` alone only builds embeddings.
+
+Expect **hours of CPU + downloads and ~1.6 GB on disk** per game. The build streams Scryfall's gzipped JSONL bulk file, so peak memory is flat and no `--max-old-space-size` flag is needed. It checkpoints, supports `--resume`, retries failed image downloads and then reports any card it could not embed to `{game}-embed-missing.json` — a silently-dropped card is one that can never be scanned. A build that finishes below 95% completeness is refused rather than swapped over a working index. A `POKEMON_TCG_API_KEY` (see below) is recommended for the Pokémon build.
+
+Without these DBs, set-scoped MTG matching still works (it builds on demand); only code-free matching and game auto-detection need the pre-built data.
+
+**Measuring accuracy.** `RECALL_K = 250` out of ~74k cards is a 0.34% window: if the CLIP shortlist misses the right card, ORB never sees it and the answer is simply wrong. So changes to preprocessing, the model, or `RECALL_K` should be measured rather than guessed at:
+
+```bash
+node scripts/eval-global-index.mjs --game mtg --sample 200 --compare
+```
+
+It samples indexed cards (deterministically, so two runs are comparable) and reports CLIP recall@1/@5/@K, verified top-1, and mean latency — first against each card's own reference image, then against a camera-like degraded copy. A low *clean* recall@1 is a specific and useful signal: it means the build and query sides disagree on preprocessing, which otherwise produces no error at all.
+
+**Printing disambiguation (opt-in).** The CLIP index is built from Scryfall's `unique_artwork`, one printing per artwork, so scanning a reprint returns the right card with possibly the wrong set/number. The ORB index contains every printing, so setting `GLOBAL_PRINTING_EXPANSION=1` makes verification also test the other printings of a recalled card and let inliers pick the exact one. It is off by default because it is the one change that trades scan latency for accuracy; it is bounded by `GLOBAL_PRINTING_EXPANSION_TOP` (default 20 recall candidates expanded) and `GLOBAL_PRINTING_EXPANSION_MAX` (default 120 extra printings verified). Measure both effects with the eval harness above before turning it on.
+
+**Languages.** Global indexes are per-language, because card images are language-specific — a Japanese printing has a different name box and flavour text, so an English index cannot match it. Each language is its own full build (~hours, ~1.6 GB), so the admin panel lists one row per game + language rather than offering an "all languages" button; build only what you collect. Pass `--lang ja` to the script for the CLIP half. English keeps its original un-suffixed filenames, so indexes built before languages existed are still found. Note that non-English Pokémon data comes from TCGdex, whose coverage varies enormously by language (Russian has 9 sets to English's 218).
 
 > [!NOTE]
 > The endpoints backing this are `POST /api/scan-match` (identify an uploaded card image) and `POST /api/prepare-set` (build/verify a set's index). The backend has no auto-reload — restart it after changing backend code so new routes/data load.
@@ -363,7 +378,7 @@ These download every card image and are **heavy**: several hours of CPU + downlo
   │     │     │     └── auth.js       # Session-token auth, admin guard, rate limiters
   │     │     ├── routes/            # auth, admin, collection (+scan-match/prepare-set), sets, decks, shared
   │     │     └── utils/             # compartmentSort (filing engine), priceHelpers, authHelpers
-  │     ├── scripts/                 # build-card-embeddings.mjs, build-card-orb.mjs, cardSources.js
+  │     ├── scripts/                 # build-card-embeddings.mjs, cardSources.js, eval-global-index.mjs
   │     ├── data/                    # Precomputed embeddings/ORB/per-set indexes (gitignored)
   │     ├── test/                    # Framework-free tests: unit + e2e/ runner (npm test)
   │     └── package.json

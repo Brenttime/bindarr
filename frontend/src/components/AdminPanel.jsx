@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, UserPlus, Key, Trash2, ToggleLeft, ToggleRight, Search, Users, Globe, Database, Play, RefreshCw, AlertTriangle, HardDriveDownload, Download, BookOpen, ChevronDown, ChevronRight } from 'lucide-react';
+import { Shield, UserPlus, Key, Trash2, ToggleLeft, ToggleRight, Search, Users, Globe, Database, Play, RefreshCw, AlertTriangle, HardDriveDownload, Download, BookOpen, ChevronDown, ChevronRight, X, Stethoscope } from 'lucide-react';
 import { useBackGuard } from '../utils/useBackGuard';
 import { LANGUAGES, langName } from '../utils/languages';
 import { defaultGame, gameOptions, showGamePicker, gameLabel, enabledGames } from '../utils/games';
@@ -54,9 +54,20 @@ function AdminPanel({ showToast }) {
   const pollRef = useRef(null);
   const mountedRef = useRef(true);
 
-  // Global scan index states
+  // Global scan index states. Each (game, language) pair is its own multi-hour,
+  // ~1.6GB build, so the table only lists the languages actually in play —
+  // English plus whatever the user has added or already built — rather than
+  // rendering 22 mostly-empty rows and inviting a week of work.
   const [globals, setGlobals] = useState([]);
   const [globalProgress, setGlobalProgress] = useState({});
+  const [globalLangs, setGlobalLangs] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('admin_global_langs') || '[]');
+      const codes = Array.isArray(saved) ? saved.filter(c => LANGUAGES.some(l => l.code === c)) : [];
+      return [...new Set(['en', ...codes])];
+    } catch { return ['en']; }
+  });
+  const [preflighting, setPreflighting] = useState('');
 
   // Database backup states
   const [backups, setBackups] = useState([]);
@@ -113,10 +124,12 @@ function AdminPanel({ showToast }) {
     }, 1500);
   };
 
-  // Returns whether a global build is in flight (drives polling).
-  const fetchGlobals = async () => {
+  // Returns whether a global build is in flight (drives polling). `langsOverride`
+  // lets a just-added language be fetched before the state update has landed.
+  const fetchGlobals = async (langsOverride) => {
     try {
-      const res = await fetch('/api/admin/global-indexes');
+      const langs = (langsOverride || globalLangs).join(',');
+      const res = await fetch(`/api/admin/global-indexes?langs=${encodeURIComponent(langs)}`);
       if (!res.ok) return false;
       const data = await res.json();
       if (!mountedRef.current) return false;
@@ -129,13 +142,47 @@ function AdminPanel({ showToast }) {
     }
   };
 
-  const handleBuildGlobal = async (game) => {
-    if (!window.confirm(t('admin.confirmGlobalBuild', { game: game.toUpperCase() }))) return;
+  const addGlobalLang = (code) => {
+    if (!code || globalLangs.includes(code)) return;
+    const next = [...globalLangs, code];
+    setGlobalLangs(next);
+    try { localStorage.setItem('admin_global_langs', JSON.stringify(next.filter(c => c !== 'en'))); } catch { /* private mode */ }
+    fetchGlobals(next);
+  };
+
+  const removeGlobalLang = (code) => {
+    if (code === 'en') return;                       // English is always listed
+    const next = globalLangs.filter(c => c !== code);
+    setGlobalLangs(next);
+    try { localStorage.setItem('admin_global_langs', JSON.stringify(next.filter(c => c !== 'en'))); } catch { /* private mode */ }
+    fetchGlobals(next);
+  };
+
+  // Check the card source, images and encoder before committing to hours of
+  // build. Issue #29 was a broken card source found the slow way.
+  const handlePreflight = async (game, lang) => {
+    setPreflighting(`${game}|${lang}`);
+    try {
+      const res = await fetch(`/api/admin/global-indexes/preflight?game=${game}&lang=${lang}`);
+      const data = await res.json();
+      if (res.ok && data.ok) showToast(t('admin.preflightOk', { sets: data.sets }));
+      else showToast(t('admin.preflightFailed', { error: data.error || '?' }));
+    } catch (err) {
+      console.error(err);
+      showToast(t('admin.preflightFailed', { error: String(err.message || err) }));
+    } finally {
+      setPreflighting('');
+    }
+  };
+
+  const handleBuildGlobal = async (game, lang = 'en', resume = false) => {
+    const label = `${game.toUpperCase()} (${langName(lang)})`;
+    if (!resume && !window.confirm(t('admin.confirmGlobalBuild', { game: label }))) return;
     try {
       const res = await fetch('/api/admin/global-indexes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ game }),
+        body: JSON.stringify({ game, lang, resume }),
       });
       const data = await res.json();
       if (res.ok) { showToast(data.message); await fetchGlobals(); startPolling(); }
@@ -146,10 +193,10 @@ function AdminPanel({ showToast }) {
     }
   };
 
-  const handleStopGlobal = async (game) => {
-    if (!window.confirm(t('admin.confirmStopGlobal', { game: game.toUpperCase() }))) return;
+  const handleStopGlobal = async (game, lang = 'en') => {
+    if (!window.confirm(t('admin.confirmStopGlobal', { game: `${game.toUpperCase()} (${langName(lang)})` }))) return;
     try {
-      const res = await fetch(`/api/admin/global-indexes/${game}`, { method: 'DELETE' });
+      const res = await fetch(`/api/admin/global-indexes/${game}?lang=${lang}`, { method: 'DELETE' });
       const data = await res.json();
       if (res.ok) { showToast(data.message); fetchGlobals(); }
       else showToast(data.error || t('admin.errStopBuild'));
@@ -836,6 +883,7 @@ function AdminPanel({ showToast }) {
               <thead>
                 <tr>
                   <th>{t('collection.fGame')}</th>
+                  <th>{t('card.language')}</th>
                   <th>{t('sets.colCards')}</th>
                   <th>{t('admin.colSize')}</th>
                   <th>{t('admin.colStatus')}</th>
@@ -843,55 +891,148 @@ function AdminPanel({ showToast }) {
                 </tr>
               </thead>
               <tbody>
-                {/* Global indexes are English-only by design (see scanMatch) and
-                    only listed for the games Settings is showing. */}
+                {/* One row per (game, language): card images are language-specific,
+                    so each language needs its own index. Only the games Settings
+                    is showing, and only the languages in play. */}
                 {globals.filter(g => enabledGames().includes(g.game)).map((g) => {
-                  const p = globalProgress[g.game];
+                  const p = globalProgress[`${g.game}|${g.lang}`];
                   const active = isGlobalActive(p);
                   const pct = p && p.total ? Math.round((p.done / p.total) * 100) : 0;
                   const cards = g.embed.cards || g.orb.cards || 0;
                   const bytes = (g.embed.bytes || 0) + (g.orb.bytes || 0);
+                  const built = g.embed.present && g.orb.present;
+                  const resumable = p && p.resumable && (p.status === 'error' || p.status === 'stopped' || p.status === 'interrupted');
+                  const busy = preflighting === `${g.game}|${g.lang}`;
+                  // Phase labels: 'gather' and 'sets' are the long silent stretches
+                  // that used to show as a frozen 0% bar with no explanation.
+                  const phaseLabel = {
+                    gather: t('admin.phaseGather'),
+                    embed: t('admin.phaseEmbeddings'),
+                    sets: t('admin.phaseSets'),
+                    orb: 'ORB',
+                    verify: t('admin.phaseVerify'),
+                  }[p?.phase] || p?.phase || '';
+                  const eta = p && p.eta > 0
+                    ? (p.eta > 3600 ? `${Math.round(p.eta / 3600)}h` : p.eta > 60 ? `${Math.round(p.eta / 60)}m` : `${p.eta}s`)
+                    : null;
                   return (
-                    <tr key={g.game}>
+                    <tr key={`${g.game}|${g.lang}`}>
                       <td style={{ textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-strong)' }}>{g.game}</td>
+                      <td style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                        {langName(g.lang)}
+                        {g.lang !== 'en' && !built && !active && (
+                          <button
+                            className="btn btn-secondary btn-icon-only"
+                            style={{ marginLeft: '0.35rem', opacity: 0.6 }}
+                            title={t('admin.removeGlobalLang')}
+                            onClick={() => removeGlobalLang(g.lang)}
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </td>
                       <td>{cards ? cards.toLocaleString() : '-'}</td>
                       <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{bytes ? formatBytes(bytes) : '-'}</td>
-                      <td style={{ minWidth: '180px' }}>
+                      <td style={{ minWidth: '200px' }}>
                         {active ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                             <div style={{ height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                              <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent-red)', transition: 'width 0.4s ease' }}></div>
+                              {/* An indeterminate phase (no total yet) shows a full
+                                  faint bar rather than a stuck 0%. */}
+                              <div style={{
+                                height: '100%',
+                                width: p.total ? `${pct}%` : '100%',
+                                opacity: p.total ? 1 : 0.35,
+                                background: 'var(--accent-red)',
+                                transition: 'width 0.4s ease',
+                              }}></div>
                             </div>
                             <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                              {t('admin.globalProgress', { phase: p.phase === 'orb' ? 'ORB' : t('admin.phaseEmbeddings'), done: p.done, total: p.total || '?', pct })}
+                              {p.total
+                                ? t('admin.globalProgress', { phase: phaseLabel, done: p.done, total: p.total, pct })
+                                : t('admin.globalProgressIndeterminate', { phase: phaseLabel })}
+                              {eta ? ` · ${t('admin.etaShort', { eta })}` : ''}
+                              {p.fail > 0 ? ` · ${t('admin.failCount', { count: p.fail })}` : ''}
                             </span>
                           </div>
                         ) : p && p.status === 'error' ? (
-                          <span style={{ fontSize: '0.75rem', color: 'var(--accent-red)' }} title={p.error}>{t('admin.statusFailed')}</span>
+                          // The message is the actionable part (a renamed Scryfall
+                          // field, a DNS failure); show it instead of hiding it in
+                          // a hover title.
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--accent-red)' }}>{t('admin.statusFailed')}</span>
+                            {p.error && (
+                              <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', wordBreak: 'break-word', maxWidth: '320px' }} title={p.error}>
+                                {p.error.length > 160 ? `${p.error.slice(0, 160)}…` : p.error}
+                              </span>
+                            )}
+                          </div>
+                        ) : p && p.status === 'interrupted' ? (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--accent-yellow)' }}>{t('admin.statusInterrupted')}</span>
                         ) : p && p.status === 'stopped' ? (
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{t('admin.statusStopped')}</span>
-                        ) : g.embed.present && g.orb.present ? (
+                        ) : built ? (
                           <span style={{ fontSize: '0.75rem', color: 'var(--accent-green, #4ade80)' }}>{t('admin.statusReady')}</span>
                         ) : (
                           <span style={{ fontSize: '0.75rem', color: 'var(--accent-yellow)' }}>{t('admin.statusNotBuilt')}</span>
                         )}
                       </td>
                       <td>
-                        {active ? (
-                          <button className="btn btn-danger btn-icon-only" title={t('admin.stopBuild')} onClick={() => handleStopGlobal(g.game)}>
-                            <AlertTriangle size={14} />
-                          </button>
-                        ) : (
-                          <button className="btn btn-secondary btn-icon-only" title={t('admin.rebuildGlobal')} onClick={() => handleBuildGlobal(g.game)}>
-                            <RefreshCw size={14} />
-                          </button>
-                        )}
+                        <div style={{ display: 'flex', gap: '0.3rem' }}>
+                          {active ? (
+                            <button className="btn btn-danger btn-icon-only" title={t('admin.stopBuild')} onClick={() => handleStopGlobal(g.game, g.lang)}>
+                              <AlertTriangle size={14} />
+                            </button>
+                          ) : (
+                            <>
+                              {resumable && (
+                                <button
+                                  className="btn btn-primary btn-icon-only"
+                                  title={t('admin.resumeBuild')}
+                                  onClick={() => handleBuildGlobal(g.game, g.lang, true)}
+                                >
+                                  <Play size={14} />
+                                </button>
+                              )}
+                              <button
+                                className="btn btn-secondary btn-icon-only"
+                                title={t('admin.preflight')}
+                                disabled={busy}
+                                onClick={() => handlePreflight(g.game, g.lang)}
+                              >
+                                <Stethoscope size={14} />
+                              </button>
+                              <button className="btn btn-secondary btn-icon-only" title={t('admin.rebuildGlobal')} onClick={() => handleBuildGlobal(g.game, g.lang)}>
+                                <RefreshCw size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+          </div>
+          {/* Adding a language is deliberately an explicit act: each one is a
+              separate multi-hour, ~1.6GB build, so there is no "all languages"
+              button. Coverage also varies a lot by game — non-English Pokémon
+              comes from TCGdex, where some languages have a handful of sets. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{t('admin.addGlobalLang')}</label>
+            <select
+              className="form-input"
+              style={{ maxWidth: '220px', fontSize: '0.8rem' }}
+              value=""
+              onChange={(e) => addGlobalLang(e.target.value)}
+            >
+              <option value="">{t('admin.addGlobalLangPick')}</option>
+              {LANGUAGES.filter(l => !globalLangs.includes(l.code)).map(l => (
+                <option key={l.code} value={l.code}>{l.name}</option>
+              ))}
+            </select>
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{t('admin.addGlobalLangHint')}</span>
           </div>
         </div>
 

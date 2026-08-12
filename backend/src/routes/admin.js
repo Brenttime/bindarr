@@ -354,26 +354,51 @@ router.get('/sets-browse', async (req, res) => {
 // --- Global scan index build management ---
 
 // On-disk status of the whole-game CLIP+ORB indexes plus any in-flight build.
+//
+// `langs` is a comma-separated list (default English) so the panel only lists the
+// languages the user actually collects — each one is a separate multi-hour build,
+// and offering all eleven at once would be an invitation to start a week of work.
 router.get('/global-indexes', (req, res) => {
-  res.json({ games: globalIndex.listGlobals(), progress: globalIndex.getProgress() });
+  const langs = String(req.query.langs || 'en').split(',').map(s => s.trim()).filter(Boolean);
+  const codes = langs.length ? langs.map(languages.toCode) : ['en'];
+  res.json({
+    games: globalIndex.listGlobals(codes),
+    progress: globalIndex.getProgress(),
+  });
 });
 
-// Start (or restart) a full rebuild of a game's global indexes. Background;
-// poll GET for progress. Heavy: tens of thousands of images, ~1GB, hours.
+// Start (or restart) a rebuild of one game+language's global indexes. Background;
+// poll GET for progress. Heavy: tens of thousands of images and hours.
+// `resume: true` continues from whatever a previous interrupted attempt staged.
 router.post('/global-indexes', (req, res) => {
-  const { game } = req.body;
+  const { game, lang, resume } = req.body;
   if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
-  const started = globalIndex.startBuild(game);
-  if (!started) return res.status(409).json({ error: `A ${game} build is already running` });
-  res.status(202).json({ message: `Global build started for ${game}` });
+  const code = languages.toCode(lang);
+  const started = resume ? globalIndex.resumeBuild(game, code) : globalIndex.startBuild(game, code);
+  if (!started) return res.status(409).json({ error: `A ${game} (${code}) build is already running` });
+  res.status(202).json({ message: `Global build ${resume ? 'resumed' : 'started'} for ${game} (${code})` });
 });
 
-// Stop an in-flight global build (the live index is left untouched).
+// Check a game+language's card source and encoder before committing to a build.
+// Answers "will this even work" in seconds rather than an hour in — issue #29 was
+// a broken card source discovered the slow way.
+router.get('/global-indexes/preflight', (req, res) => {
+  const { game, lang } = req.query;
+  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
+  const code = languages.toCode(lang);
+  globalIndex.preflight(game, code)
+    .then(out => res.json({ game, lang: code, ok: true, ...out }))
+    .catch(e => res.status(502).json({ game, lang: code, ok: false, error: e.message }));
+});
+
+// Stop an in-flight global build. The live index is untouched and the staged
+// files are kept, so the build can be resumed rather than restarted.
 router.delete('/global-indexes/:game', (req, res) => {
   const { game } = req.params;
   if (!isGame(game)) return res.status(400).json({ error: 'invalid game' });
-  const stopped = globalIndex.stopBuild(game);
-  res.json({ message: stopped ? `Stopped ${game} build` : `No ${game} build running` });
+  const code = languages.toCode(req.query.lang);
+  const stopped = globalIndex.stopBuild(game, code);
+  res.json({ message: stopped ? `Stopped ${game} (${code}) build` : `No ${game} (${code}) build running` });
 });
 
 // --- Database backup --- (see ../backup.js)

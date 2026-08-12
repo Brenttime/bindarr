@@ -118,6 +118,45 @@ function mtgSearchUrl(query, lang, extra = '') {
   return `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}${extra}${multilingual}`;
 }
 
+// Every set worth building a global index from, as set codes in build order.
+//
+// MTG returns PARENT sets only. mtgSetFamilyQuery above already folds a set's
+// children (tokens, art series, promos — anything linked by parent_set_code)
+// into the parent's index, so enumerating the children as well would index the
+// same printings twice: harmless for correctness (scanMatch treats repeated
+// set|number rows as faces and keeps the best) but a straight waste of build
+// time and disk. Digital-only sets are skipped — no physical card to scan.
+async function listAllSets(game, lang) {
+  const code = langOf(lang);
+  if (game === 'mtg') {
+    const scryfallApi = require('./scryfallApi');
+    const r = await scryfallApi.scryGetRetried('https://api.scryfall.com/sets');
+    return (r.data.data || [])
+      .filter(s => s.code && !s.digital && !s.parent_set_code && (s.card_count || 0) > 0)
+      .map(s => s.code);
+  }
+  if (code !== 'en') {
+    // Non-English Pokémon comes from TCGdex, whose per-language coverage varies
+    // enormously (ru has 9 sets to en's 218) — an almost-empty list is normal.
+    const tcgdexApi = require('./tcgdexApi');
+    const sets = await tcgdexApi.listSets(code);
+    return sets.filter(s => s.id && (s.total || s.printed_total || 0) > 0).map(s => s.id);
+  }
+  // tcgApi.tcgClient, not the bare `http` above: api.pokemontcg.io answers 5xx
+  // often enough that a single un-retried GET here would abort a whole multi-hour
+  // global build before it indexed anything. That client already retries
+  // transients and carries the API key.
+  const { tcgClient } = require('./tcgApi');
+  const out = [];
+  for (let page = 1; ; page++) {
+    const r = await tcgClient.get('/sets', { params: { page, pageSize: 250, select: 'id,total' } });
+    const data = r.data.data || [];
+    for (const s of data) if (s.id) out.push(s.id);
+    if (data.length < 250) break;
+  }
+  return out;
+}
+
 // Scannable face image(s) for a Scryfall card. Single-image layouts (normal,
 // split, flip, adventure, saga) carry one top-level image. Double-faced cards
 // (transform, modal DFC, art series, reversible) have no top-level image and one
@@ -550,4 +589,11 @@ async function matchSet(q, game, set, topK = 8, qHash = null, lang) {
   return uniq.slice(0, topK);
 }
 
-module.exports = { ensureSet, isReady, buildFailed, matchSet, verifySlice, extractCard, dhash, listBuilds, getProgress, setProgress, deleteBuild, previewSet, startBuild };
+module.exports = {
+  ensureSet, isReady, buildFailed, matchSet, verifySlice, extractCard, dhash,
+  listBuilds, getProgress, setProgress, deleteBuild, previewSet, startBuild,
+  // For src/globalIndex.js, which assembles the global ORB index out of these
+  // per-set ones (see src/orbUnion.js): it needs to know which sets exist, where
+  // each index lives on disk, and the geometry they were all built with.
+  listAllSets, paths, CAP, REF_WIDTH,
+};

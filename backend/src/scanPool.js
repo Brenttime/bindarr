@@ -78,4 +78,32 @@ async function verify(game, set, qDesc, qRows, qKp, indices, lang) {
   return results.flat();
 }
 
-module.exports = { verify, extract, getPool };
+// Verify global-index candidates across the pool. `slices` carry pre-resolved
+// byte ranges (see globalVerify.js) so workers never build their own copy of the
+// index map. Returns merged scored[] (unsorted), or null if the pool is disabled
+// so the caller can run inline.
+async function verifyGlobal(descPath, kpPath, qDesc, qRows, qKp, slices) {
+  const workers = getPool();
+  if (workers.length === 0 || slices.length === 0) return null;
+  const n = workers.length;
+  const per = Math.ceil(slices.length / n);
+  const jobs = [];
+  for (let i = 0; i < n; i++) {
+    const chunk = slices.slice(i * per, i * per + per);
+    if (chunk.length === 0) break;
+    jobs.push(job(workers[i], { type: 'verifyGlobal', descPath, kpPath, qDesc, qRows, qKp, slices: chunk }));
+  }
+  const results = await Promise.all(jobs);
+  return results.flat();
+}
+
+// Ask every worker to drop its cached global-index descriptors. Called before a
+// rebuild swaps the files: on Windows a rename fails outright while any process
+// still holds a handle, and a worker's handle is just as blocking as ours.
+async function closeGlobalFiles() {
+  const workers = getPool();
+  if (workers.length === 0) return;
+  await Promise.all(workers.map(w => job(w, { type: 'closeGlobal' }).catch(() => {})));
+}
+
+module.exports = { verify, verifyGlobal, extract, getPool, closeGlobalFiles };
