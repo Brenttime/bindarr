@@ -12,7 +12,8 @@
 const axios = require('axios');
 const db = require('./db');
 const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
-const { parseSetList, setSqlFilter } = require('./utils/setQuery');
+const { parseSetList } = require('./utils/setQuery');
+const cardSearchSql = require('./utils/cardSearchSql');
 const { cacheNormalizedCards } = require('./utils/cardCache');
 const languages = require('./utils/languages');
 
@@ -209,21 +210,17 @@ async function runSearch(nameQuery = '', numberQuery = '', setQuery = '', scope 
   const setList = parseSetList(setQuery);
 
   // 1. Collection-only search — never touches the network.
+  //
+  // No language filter, unlike the local-cache query below. This used to filter,
+  // and it was the odd one out: the same "what do I own" search returned
+  // different rows depending on the UI language, so browsing in Japanese hid the
+  // English copies of the very cards being looked for. You own the card whatever
+  // language you own it in. See utils/cardSearchSql.
   if (scope === 'collection') {
     if (!userId) return [];
-    let sql = `
-      SELECT cc.*, SUM(c.quantity) AS owned_qty
-      FROM collection c
-      JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ? AND c.list_type = 'collection' AND cc.game = 'pokemon' AND cc.language = ?
-    `;
-    const params = [userId, langName];
-    if (name) { sql += ` AND (cc.name LIKE ? OR cc.printed_name LIKE ?)`; params.push(`%${name}%`, `%${name}%`); }
-    if (number) { sql += ` AND (cc.number = ? OR CAST(cc.number AS INTEGER) = CAST(? AS INTEGER))`; params.push(number, number); }
-    const collSetFilter = setSqlFilter(setList, 'cc');
-    if (collSetFilter) { sql += ` AND ${collSetFilter.clause}`; params.push(...collSetFilter.params); }
-    sql += ` GROUP BY cc.id LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+    const { sql, params } = cardSearchSql.collectionQuery('pokemon', {
+      userId, name, number, setList, limit, offset,
+    });
     return (await db.all(sql, params)).map(parseCardRow);
   }
 
@@ -231,14 +228,9 @@ async function runSearch(nameQuery = '', numberQuery = '', setQuery = '', scope 
   // Japanese search. Kept as a closure: an internet-scope search skips it here
   // but still wants it as a fallback when TCGdex is unreachable.
   const queryLocal = async () => {
-    let sql = `SELECT * FROM card_cache WHERE game = 'pokemon' AND language = ?`;
-    const params = [langName];
-    if (name) { sql += ` AND (name LIKE ? OR printed_name LIKE ?)`; params.push(`%${name}%`, `%${name}%`); }
-    if (number) { sql += ` AND (number = ? OR CAST(number AS INTEGER) = CAST(? AS INTEGER))`; params.push(number, number); }
-    const localSetFilter = setSqlFilter(setList);
-    if (localSetFilter) { sql += ` AND ${localSetFilter.clause}`; params.push(...localSetFilter.params); }
-    sql += ` LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+    const { sql, params } = cardSearchSql.localCacheQuery('pokemon', {
+      language: langName, name, number, setList, limit, offset,
+    });
     return db.all(sql, params);
   };
 
@@ -380,6 +372,54 @@ async function listSets(lang) {
   return sets;
 }
 
+// Pokémon TCG Pocket — the phone game. Its cards have artwork and set codes but
+// no physical printing, so they can never be the answer to a camera scan. TCGdex
+// publishes them alongside the paper sets with nothing on the set brief to tell
+// them apart, which is how 14 of them (2,321 artworks) ended up in the scan index:
+// dead weight on every recall pass, and a live source of confident wrong answers,
+// since Pocket art is largely redrawn from paper cards.
+//
+// Scryfall marks its digital sets and setIndex.listAllSets filters on that flag
+// for MTG; this constant is the Pokémon equivalent.
+const DIGITAL_SERIES = 'tcgp';
+
+// Which series each set belongs to, as setId -> { id, name }.
+//
+// A set brief carries no series (see listSets) and the per-set endpoint does —
+// but asking that 218 times to answer "which of these are digital" is not a trade
+// worth making, and this runs behind a panel that re-polls every 1.5s. The series
+// endpoints invert the question: one request for the series list plus one per
+// series (~22 total) returns every set already grouped. Same answer, a tenth of
+// the traffic.
+//
+// Cached as long as the set list, since a set's series never changes after it
+// ships. A series whose detail request fails is skipped rather than fatal: the
+// caller's fallback ("no series known") degrades to showing the set, which is the
+// safe direction — better a digital set slips into the catalogue than a network
+// blip silently drops half the paper sets from a build.
+const seriesCache = new Map();   // lang -> { at, bySet }
+
+async function listSeries(lang) {
+  const code = languages.toCode(lang);
+  const hit = seriesCache.get(code);
+  if (hit && Date.now() - hit.at < SETS_TTL_MS) return hit.bySet;
+
+  const { data } = await client.get(`/${code}/series`);
+  const details = await mapLimited(data || [], async (s) => {
+    const r = await client.get(`/${code}/series/${encodeURIComponent(s.id)}`);
+    return { id: s.id, name: s.name || s.id, sets: r.data.sets || [] };
+  });
+
+  const bySet = new Map();
+  for (const serie of details) {
+    for (const s of serie.sets) {
+      if (s && s.id) bySet.set(s.id, { id: serie.id, name: serie.name });
+    }
+  }
+  seriesCache.set(code, { at: Date.now(), bySet });
+  return bySet;
+}
+
 // Price sweep for owned/decked non-English Pokémon cards. tcgApi's sweep skips
 // these (their ids 404 on pokemontcg.io), so this is their only refresh path.
 // `force` bypasses the once-a-day gate (used by the scheduled daily run, which is
@@ -418,4 +458,7 @@ async function updateCollectionPrices(force = false) {
 module.exports = {
   searchCards, getCardById, hydrateCard, listSets, cacheCards, normalizeCard,
   updateCollectionPrices, providerId, idLanguage, client,
+  // setIndex.listAllSets filters digital sets out of a build with these, and
+  // globalIndex groups the coverage breakdown by series.
+  listSeries, DIGITAL_SERIES,
 };

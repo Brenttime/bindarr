@@ -313,22 +313,29 @@ There are two ways to supply the reference features:
 
 **Set-scoped MTG (recommended, no pre-build).** Enter the set code of the box you're scanning. The first scan of a new set builds that set's ORB index on demand from Scryfall (~1 min, cached under `backend/data/sets/`); every subsequent scan matches within just that set (ORB inliers against every printing, no global CLIP recall needed) for exact-printing accuracy. Nothing to run ahead of time. The per-printing ORB verify is fanned out across a warmed worker-thread pool (`SCAN_WORKERS`, see below), so large sets stay fast without any loss of accuracy — the result is identical to single-threaded ranking.
 
-**Global / code-free matching (optional, heavy pre-build).** To identify cards without giving a set code (and to power game auto-detection), precompute the CLIP embedding + ORB databases. The easiest route is **Admin → Global Index Cache → Rebuild**, which does both halves and can be stopped and resumed. From the command line:
+**Global / code-free matching (optional, heavy pre-build).** There is only **one unit of work** here — a per-set index — and everything else is derived from it:
 
-```bash
-cd backend
-# Check the card source, images and encoder first — seconds, not hours
-node scripts/build-card-embeddings.mjs --game mtg --preflight
-# CLIP embeddings (the recall stage) — per game
-node scripts/build-card-embeddings.mjs --game mtg
-node scripts/build-card-embeddings.mjs --game pokemon
-```
+- Scanning **with** a set code needs just that set's index, built on demand by the scan itself.
+- Scanning **without** one needs *every* set indexed, plus two whole-game rollups: a **CLIP recall table** (one vector per artwork, scanned linearly to shortlist candidates) and an **ORB feature index** (every printing, keyed by `set|number`, read per candidate to name the exact printing).
 
-The ORB half has **no separate build script**. It is assembled from the per-set indexes described above (`backend/src/orbUnion.js`), so it is chunked and resumable — an interruption costs one set rather than the whole run — and any set you already built for set-scoped scanning is reused as-is. The in-app Rebuild does this automatically after the CLIP half; `--game mtg` alone only builds embeddings.
+Both rollups are concatenations of the per-set files (`backend/src/embedUnion.js`, `backend/src/orbUnion.js`), so a build is **one walk over the sets**: each set is fetched once, its images downloaded once, and both its ORB features and CLIP vectors computed from the same buffers. There is no separate global card source and no second download pass.
 
-Expect **hours of CPU + downloads and ~1.6 GB on disk** per game. The build streams Scryfall's gzipped JSONL bulk file, so peak memory is flat and no `--max-old-space-size` flag is needed. It checkpoints, supports `--resume`, retries failed image downloads and then reports any card it could not embed to `{game}-embed-missing.json` — a silently-dropped card is one that can never be scanned. A build that finishes below 95% completeness is refused rather than swapped over a working index. A `POKEMON_TCG_API_KEY` (see below) is recommended for the Pokémon build.
+Run it from **Admin → Global Scan Indexes**:
 
-Without these DBs, set-scoped MTG matching still works (it builds on demand); only code-free matching and game auto-detection need the pre-built data.
+- **Preflight** (stethoscope) — checks the set list, real card data in the chosen language, and the encoder. Seconds, not hours. It samples sets across the whole catalogue and reports honestly when coverage will be partial.
+- **Index every set** (lightning) — the walk without the rollups. Gets you accurate set-scoped scanning for everything.
+- **Rebuild** (refresh) — the walk plus both rollups, which is what enables code-free scanning.
+- **Stop / Resume** — a stop lands within one set, and resume continues from the set boundary. Per-set indexes already on disk are reused.
+
+Expect **hours of CPU + downloads and ~1.6 GB on disk** per game and language. Because the unit of work is a set, an interruption costs one set rather than the whole run. A build whose *reachable* sets mostly fail is refused rather than swapped over a working index — sets that simply have no data in the chosen language are counted separately, not as failures. A `POKEMON_TCG_API_KEY` (see below) is recommended for Pokémon.
+
+Without the rollups, set-scoped matching still works (it builds on demand); only code-free matching and game auto-detection need them.
+
+**Staying current.** A set built by the scan path gets ORB features only — that is the fast build, so nobody waits for a capability they did not ask for. If (and only if) the whole-game rollups already exist, a background pass afterwards adds that set's CLIP vectors and re-runs the rollups, so code-free coverage grows as you scan instead of decaying until the next full rebuild. Where the rollups have never been built, the pass does nothing: code-free scanning is maintained automatically, never *started* automatically, because starting it means re-downloading every image of every already-indexed set.
+
+`scripts/build-card-embeddings.mjs` is retained for standalone/offline use of the older bulk card sources, but the in-app build no longer uses it.
+
+**Who can build.** Index building is admin-only by default. Note that scanning a set *already* builds that set's index on demand for any logged-in user (`POST /api/prepare-set`), so **Admin → Instance Settings → "Let members build individual set indexes"** only adds an explicit button for something members already trigger implicitly; whole-game rollups stay admin-only either way. Any logged-in user can read `GET /api/scan-index-status` to see whether code-free scanning is available — previously a member scanning without a set code just got a silent failure.
 
 **Measuring accuracy.** `RECALL_K = 250` out of ~74k cards is a 0.34% window: if the CLIP shortlist misses the right card, ORB never sees it and the answer is simply wrong. So changes to preprocessing, the model, or `RECALL_K` should be measured rather than guessed at:
 

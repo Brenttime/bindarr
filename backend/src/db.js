@@ -364,6 +364,42 @@ async function initDb() {
     await run(`ALTER TABLE app_settings ADD COLUMN tcgdex_prices_swept_at DATETIME`);
   }
 
+  // Whether non-admin members may trigger an individual set index build from the
+  // UI. Off by default. This is convenience rather than a new capability: scanning
+  // a set already builds its index on demand for any logged-in user (see
+  // routes/collection.js /prepare-set). Whole-game rollups stay admin-only either
+  // way, because those are hours of CPU and gigabytes of disk shared by everyone.
+  if (!appSettingsCols.some(c => c.name === 'allow_member_set_builds')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN allow_member_set_builds INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'pokemon_provider')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN pokemon_provider TEXT DEFAULT 'pokemontcg'`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'scan_exclude_tokens')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_tokens INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'scan_exclude_art_cards')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_art_cards INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'scan_exclude_jumpstart')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_jumpstart INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'scan_exclude_promos')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_promos INTEGER NOT NULL DEFAULT 0`);
+  }
+  // The one scan exclusion that defaults ON, and the only one that is not a
+  // matter of taste: Pokémon TCG Pocket cards exist solely in the phone game, so
+  // no camera will ever be pointed at one. Indexing them costs a linear pass over
+  // 2,321 extra vectors on every code-free scan and — because Pocket art is
+  // largely redrawn from paper cards — invites confident matches naming a set the
+  // user cannot own. MTG has always excluded digital sets (setIndex.listAllSets
+  // filters Scryfall's `digital` flag); this is the Pokémon half of that rule
+  // finally catching up, which is why existing installs get it applied on
+  // migration rather than grandfathered off.
+  if (!appSettingsCols.some(c => c.name === 'scan_exclude_digital')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_digital INTEGER NOT NULL DEFAULT 1`);
+  }
+
   // A non-English printing is its own card, not a display variant of the English
   // one: it has its own provider id, its own art and its own name. `language`
   // records which printing a cached row IS (collection.language still records

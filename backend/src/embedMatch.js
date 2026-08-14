@@ -24,7 +24,12 @@ function loadDb(game, lang = 'en') {
   // Copy into an aligned Float32Array (fs Buffer may not be 4-byte aligned).
   const vecs = new Float32Array(buf.length / 4);
   Buffer.from(vecs.buffer).set(buf);
-  dbs[k] = { vecs, cards: meta.cards, n: meta.cards.length, dim: meta.dim, model: meta.model, preprocess: meta.preprocess };
+  // `scope` says which sets this table covers. Null on a full build (or an index
+  // built before scopes existed); present and with excluded > 0 on a partial one.
+  dbs[k] = {
+    vecs, cards: meta.cards, n: meta.cards.length, dim: meta.dim,
+    model: meta.model, preprocess: meta.preprocess, scope: meta.scope || null,
+  };
   console.log(`embedMatch: loaded ${gpaths.tag(game, lang)} DB (${meta.cards.length} cards, dim ${meta.dim})`);
   // An index built by a different preprocessing recipe is not comparable to
   // anything this process can produce. Warn loudly rather than silently return
@@ -82,4 +87,10 @@ function reload(game, lang) {
 // scan can use the global path at all.
 function isBuilt(game, lang = 'en') { return !!loadDb(game, lang); }
 
-module.exports = { match, reload, isBuilt };
+// What the built table covers, or null when it covers everything / is unknown.
+function scopeOf(game, lang = 'en') {
+  const db = loadDb(game, lang);
+  return db ? db.scope : null;
+}
+
+module.exports = { match, reload, isBuilt, scopeOf };

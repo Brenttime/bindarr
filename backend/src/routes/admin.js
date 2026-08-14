@@ -311,9 +311,9 @@ router.get('/set-indexes/preview', async (req, res) => {
 
 // Start (or restart) a full-set build. Runs in the background; poll GET for progress.
 router.post('/set-indexes', (req, res) => {
-  const { game, set, lang } = req.body;
+  const { game, set, lang, excludeChildCodes } = req.body;
   if (!isGame(game) || !set) return res.status(400).json({ error: 'game (mtg|pokemon) and set are required' });
-  setIndex.startBuild(game, set, lang);
+  setIndex.startBuild(game, set, lang, { excludeChildCodes: Array.isArray(excludeChildCodes) ? excludeChildCodes : [] });
   res.status(202).json({ message: `Build started for ${game} ${set} (${languages.toCode(lang)})` });
 });
 
@@ -351,6 +351,53 @@ router.get('/sets-browse', async (req, res) => {
   }
 });
 
+// --- Scan indexes (unified) ---
+
+// THE getter for the scan-index UI: for one game+language, every buildable set
+// with its index state, plus the whole-game rollup status and any in-flight build.
+//
+// One call rather than three (browse sets / list built indexes / check the global
+// tables), because the three were what made two separate panels look like two
+// separate features — the rollups are built FROM these set indexes.
+router.get('/scan-indexes', async (req, res) => {
+  const { game, lang } = req.query;
+  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
+  const code = languages.toCode(lang);
+  try {
+    const data = await globalIndex.listSetIndexes(game, code);
+    res.json({ ...data, progress: globalIndex.getProgress() });
+  } catch (error) {
+    res.status(502).json({ error: `Set list unavailable: ${error.message}` });
+  }
+});
+
+// Build indexes for one game+language.
+//
+//   sets:   array of set codes to index, or omitted/null for the whole catalogue.
+//   rollup: also build the whole-game tables (what code-free scanning needs).
+//   filter: opaque description of how `sets` was chosen, recorded in the index so
+//           a partial index can explain what it does not cover.
+//   resume: continue an interrupted build instead of starting over.
+router.post('/scan-indexes/build', (req, res) => {
+  const { game, lang, sets, rollup, filter, resume } = req.body || {};
+  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
+  if (sets !== undefined && sets !== null && !Array.isArray(sets)) {
+    return res.status(400).json({ error: 'sets must be an array of set codes, or omitted for all' });
+  }
+  const code = languages.toCode(lang);
+  const started = resume
+    ? globalIndex.resumeBuild(game, code)
+    : globalIndex.startBuild(game, code, {
+      rollup: rollup !== false,
+      only: Array.isArray(sets) && sets.length ? sets : null,
+      filter: filter || null,
+    });
+  if (!started) return res.status(409).json({ error: `A ${game} (${code}) build is already running` });
+  const scope = Array.isArray(sets) && sets.length ? `${sets.length} set(s)` : 'every set';
+  const what = rollup === false ? 'Set indexing' : 'Index build';
+  res.status(202).json({ message: `${what} ${resume ? 'resumed' : 'started'} for ${game} (${code}) — ${scope}` });
+});
+
 // --- Global scan index build management ---
 
 // On-disk status of the whole-game CLIP+ORB indexes plus any in-flight build.
@@ -367,28 +414,53 @@ router.get('/global-indexes', (req, res) => {
   });
 });
 
-// Start (or restart) a rebuild of one game+language's global indexes. Background;
-// poll GET for progress. Heavy: tens of thousands of images and hours.
-// `resume: true` continues from whatever a previous interrupted attempt staged.
+// Start (or restart) an index build for one game+language. Background; poll GET
+// for progress. Heavy: every set fetched and every card image encoded, hours.
+//
+//   rollup: true  (default) index every set AND build the whole-game tables, so
+//                 scanning without a set code works.
+//   rollup: false index every set and stop.
+//
+// Both are the same walk. `rollup: false` replaced a client-side loop that fired
+// one request per set with no queue — ~460 concurrent set builds for MTG.
+// `resume: true` continues from whatever a previous interrupted attempt left.
 router.post('/global-indexes', (req, res) => {
-  const { game, lang, resume } = req.body;
+  const { game, lang, resume, rollup } = req.body;
   if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
   const code = languages.toCode(lang);
-  const started = resume ? globalIndex.resumeBuild(game, code) : globalIndex.startBuild(game, code);
+  const started = resume
+    ? globalIndex.resumeBuild(game, code)
+    : globalIndex.startBuild(game, code, { rollup: rollup !== false });
   if (!started) return res.status(409).json({ error: `A ${game} (${code}) build is already running` });
-  res.status(202).json({ message: `Global build ${resume ? 'resumed' : 'started'} for ${game} (${code})` });
+  const what = rollup === false ? 'Set indexing' : 'Global build';
+  res.status(202).json({ message: `${what} ${resume ? 'resumed' : 'started'} for ${game} (${code})` });
+});
+
+// How many of a game+language's sets are indexed. Hits the provider for the set
+// list, so it is a separate call from the cheap status above rather than folded
+// into it — the panel asks for it per row on demand.
+router.get('/global-indexes/coverage', async (req, res) => {
+  const { game, lang } = req.query;
+  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
+  try {
+    res.json(await globalIndex.coverage(game, languages.toCode(lang)));
+  } catch (error) {
+    res.status(502).json({ error: `Coverage unavailable: ${error.message}` });
+  }
 });
 
 // Check a game+language's card source and encoder before committing to a build.
 // Answers "will this even work" in seconds rather than an hour in — issue #29 was
 // a broken card source discovered the slow way.
-router.get('/global-indexes/preflight', (req, res) => {
+router.get('/global-indexes/preflight', async (req, res) => {
   const { game, lang } = req.query;
   if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
   const code = languages.toCode(lang);
-  globalIndex.preflight(game, code)
-    .then(out => res.json({ game, lang: code, ok: true, ...out }))
-    .catch(e => res.status(502).json({ game, lang: code, ok: false, error: e.message }));
+  try {
+    res.json({ game, lang: code, ok: true, ...(await globalIndex.preflight(game, code)) });
+  } catch (e) {
+    res.status(502).json({ game, lang: code, ok: false, error: e.message });
+  }
 });
 
 // Stop an in-flight global build. The live index is untouched and the staged

@@ -86,7 +86,7 @@ function appendSetIndex(descFd, kpFd, startOffset, src) {
 // (and directly testable with fixtures).
 //
 // `onSet(i, total, set, info)` is called after each set, for progress reporting.
-async function unionSets({ sets, resolveSet, outPaths, cap, refWidth, lang, onSet = () => {} }) {
+async function unionSets({ sets, resolveSet, outPaths, cap, refWidth, lang, scope = null, onSet = () => {} }) {
   fs.mkdirSync(path.dirname(outPaths.desc), { recursive: true });
   const descFd = fs.openSync(outPaths.desc, 'w');
   const kpFd = fs.openSync(outPaths.kp, 'w');
@@ -115,7 +115,7 @@ async function unionSets({ sets, resolveSet, outPaths, cap, refWidth, lang, onSe
     fs.closeSync(kpFd);
   }
 
-  fs.writeFileSync(outPaths.meta, JSON.stringify({ cap, refWidth, lang, cards: meta }));
+  fs.writeFileSync(outPaths.meta, JSON.stringify({ cap, refWidth, lang, scope, cards: meta }));
   return { cards: meta.length, descriptors: offset, sets: sets.length, missing, skipped };
 }
 

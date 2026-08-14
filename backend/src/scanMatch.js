@@ -16,7 +16,6 @@ const { parseSetList } = require('./utils/setQuery');
 const languages = require('./utils/languages');
 const gpaths = require('./utils/globalIndexPaths');
 
-const DATA_DIR = process.env.INDEX_DATA_DIR || path.join(__dirname, '..', 'data');
 const RECALL_K = 250;      // CLIP candidates to geometrically verify
 const REF_WIDTH = 500;     // must match build-card-orb.mjs
 const DESC_BYTES = 32;
@@ -45,6 +44,29 @@ function posInt(raw, fallback) {
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n >= 1 ? n : fallback;
 }
+// A partial index — one built from a filtered set selection rather than the whole
+// catalogue — cannot answer "I don't know". CLIP always returns its nearest
+// neighbour, so a card from an excluded set comes back as the closest artwork the
+// table happens to hold, and ORB then verifies it weakly. Presented plainly that
+// is a confident wrong answer, which is worse for the user than a miss: they file
+// the card under the wrong name and never find out.
+//
+// So when the index is partial AND verification is weak, say so. This is the
+// decision, kept pure and separate for test/outofscope.test.js.
+const OUT_OF_SCOPE_INLIERS = 12;   // matches the client's auto-fill confidence gate
+
+function outOfScopeNotice(scope, topInliers) {
+  // A complete index has nothing to disclaim: a weak match there is a genuine miss.
+  if (!scope || !scope.excluded || scope.excluded <= 0) return null;
+  if (topInliers >= OUT_OF_SCOPE_INLIERS) return null;
+  return {
+    covered: scope.covered || 0,
+    catalogue: scope.catalogue || 0,
+    excluded: scope.excluded,
+    filter: scope.filter || null,
+  };
+}
+
 const EXPAND_PRINTINGS = process.env.GLOBAL_PRINTING_EXPANSION === '1';
 const EXPAND_TOP = posInt(process.env.GLOBAL_PRINTING_EXPANSION_TOP, 20);
 const EXPAND_MAX = posInt(process.env.GLOBAL_PRINTING_EXPANSION_MAX, 120);
@@ -410,7 +432,7 @@ const STRONG_INLIERS = 25; // enough to stop trying the other game
 
 // Score one game: CLIP recall + ORB verify against the shared query features.
 // Async because verification is fanned out to the worker pool.
-async function verifyGame(cardBuf, game, q, bf, recall, topK, lang = 'en') {
+async function verifyGame(game, q, bf, recall, topK, lang = 'en') {
   const db = loadOrbDb(game, lang);
   if (!db) return { verified: false, candidates: recall.slice(0, topK), top: 0 };
 
@@ -490,10 +512,12 @@ async function verifyGame(cardBuf, game, q, bf, recall, topK, lang = 'en') {
 // scores higher — so scanning in the wrong mode still works. Returns
 // { game, verified, candidates:[{name,set,number,score,inliers}], crop }.
 async function match(imageBuffer, requestedGame, topK = 8, setCode = '', opts = {}) {
-  // The global CLIP + ORB indexes are built from English art only (building one
-  // is hours and ~1GB per game; doing that per language is not a trade worth
-  // making). A non-English scan is therefore set-scoped or nothing — and it says
-  // so via `englishOnly` rather than silently returning English lookalikes.
+  // Indexes are per game AND per language, all the way down: the per-set walk
+  // asks each provider for the requested language, so a Japanese rollup holds
+  // Japanese art. Nothing here falls back to English — an English vector cannot
+  // answer a Japanese scan (different name box, different flavour text), so a
+  // language with no rollup built says `englishOnly` rather than returning
+  // confident lookalikes.
   const lang = languages.toCode(opts.lang);
   // Scan-detail knobs (client "Scan Detail" slider). Fewer CLIP candidates to
   // verify + fewer ORB features = faster, less accurate. Clamped to sane bounds.
@@ -542,12 +566,19 @@ async function match(imageBuffer, requestedGame, topK = 8, setCode = '', opts = 
     for (const g of usable) {
       const recall = await embedMatch.match(cardBuf, g, recallK, lang); // CLIP recall
       if (recall.length === 0) continue;
-      const r = await verifyGame(cardBuf, g, q, bf, recall, topK, lang);
+      const r = await verifyGame(g, q, bf, recall, topK, lang);
       if (!best || r.top > best.top) best = { ...r, game: g };
       if (best.top >= STRONG_INLIERS) break; // confident — no need to try the other game
     }
     if (!best) return { game: requestedGame, verified: false, candidates: [], crop, lang };
-    return { game: best.game, verified: best.verified, candidates: best.candidates, crop, lang };
+    // If the winning game's index only covers part of the catalogue and the match
+    // is weak, tell the caller so it can say "outside your indexed range" instead
+    // of presenting the nearest indexed artwork as the answer.
+    const outOfScope = outOfScopeNotice(embedMatch.scopeOf(best.game, lang), best.top);
+    return {
+      game: best.game, verified: best.verified, candidates: best.candidates, crop, lang,
+      ...(outOfScope ? { outOfScope } : {}),
+    };
   } finally {
     q.desc.delete(); bf.delete(); orb.delete();
   }
@@ -576,4 +607,8 @@ module.exports = {
   // expansion bounds; both are module-private on purpose.
   _loadOrbDbForTest: loadOrbDb,
   _expansionConfigForTest: () => ({ enabled: EXPAND_PRINTINGS, top: EXPAND_TOP, max: EXPAND_MAX }),
+  // test/outofscope.test.js: whether a partial index admits it might not cover the
+  // scanned card is a correctness decision, not a cosmetic one.
+  _outOfScopeNoticeForTest: outOfScopeNotice,
+  _outOfScopeInliersForTest: OUT_OF_SCOPE_INLIERS,
 };

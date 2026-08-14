@@ -1,7 +1,8 @@
 const axios = require('axios');
 const db = require('./db');
 const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
-const { parseSetList, setSqlFilter } = require('./utils/setQuery');
+const { parseSetList } = require('./utils/setQuery');
+const cardSearchSql = require('./utils/cardSearchSql');
 const languages = require('./utils/languages');
 const { cacheNormalizedCards } = require('./utils/cardCache');
 
@@ -391,26 +392,14 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
   // answer locally.
   const langName = languages.toName(lang);
 
-  // 1. Collection-only search
+  // 1. Collection-only search. What the user owns, in every language they own it
+  // in — filtering by the picker's language here would hide their Japanese copies
+  // from a deck search. See utils/cardSearchSql.
   if (scope === 'collection') {
     if (!userId) return [];
-    let sql = `
-      SELECT cc.*, SUM(c.quantity) AS owned_qty
-      FROM collection c
-      JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ? AND c.list_type = 'collection' AND cc.game = 'mtg'
-    `;
-    const params = [userId];
-    // Collection scope searches what the user owns, in every language they own it
-    // in — filtering by the picker's language here would hide their Japanese
-    // copies from a deck search. A name typed in any language still matches:
-    // printed_name carries the localized one.
-    if (cleanName) { sql += ` AND (cc.name LIKE ? OR cc.printed_name LIKE ?)`; params.push(`%${cleanName}%`, `%${cleanName}%`); }
-    if (cleanNumber) { sql += ` AND (cc.number = ? OR CAST(cc.number AS INTEGER) = CAST(? AS INTEGER))`; params.push(cleanNumber, cleanNumber); }
-    const collSetFilter = setSqlFilter(setList, 'cc');
-    if (collSetFilter) { sql += ` AND ${collSetFilter.clause}`; params.push(...collSetFilter.params); }
-    sql += ` GROUP BY cc.id LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+    const { sql, params } = cardSearchSql.collectionQuery('mtg', {
+      userId, name: cleanName, number: cleanNumber, setList, limit, offset,
+    });
     return (await db.all(sql, params)).map(parseCardRow);
   }
 
@@ -419,14 +408,9 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
   const queryLocal = async () => {
     // language is part of the identity of a cached printing, so a Japanese search
     // must not be answered with the English rows sitting next to it.
-    let sql = `SELECT * FROM card_cache WHERE game = 'mtg' AND language = ?`;
-    const params = [langName];
-    if (cleanName) { sql += ` AND (name LIKE ? OR printed_name LIKE ?)`; params.push(`%${cleanName}%`, `%${cleanName}%`); }
-    if (cleanNumber) { sql += ` AND (number = ? OR CAST(number AS INTEGER) = CAST(? AS INTEGER))`; params.push(cleanNumber, cleanNumber); }
-    const localSetFilter = setSqlFilter(setList);
-    if (localSetFilter) { sql += ` AND ${localSetFilter.clause}`; params.push(...localSetFilter.params); }
-    sql += ` LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+    const { sql, params } = cardSearchSql.localCacheQuery('mtg', {
+      language: langName, name: cleanName, number: cleanNumber, setList, limit, offset,
+    });
     return db.all(sql, params);
   };
 
