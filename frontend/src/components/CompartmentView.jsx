@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { useDroppable } from '@dnd-kit/core';
 import { Lock, Edit3 } from 'lucide-react';
 import { getPrintingBadgeStyle, getPrintingBadgeLabel, getFoilOverlayClass } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
@@ -124,6 +125,27 @@ export function getPrimaryCategory(card, sortOrder, setsList = []) {
   return categoryForField(card, field, setsList);
 }
 
+// A binder pocket that accepts a dragged card. Two components, not one with a
+// conditional hook: CompartmentView also renders inside CheckoutWizardModal,
+// which has no DndContext above it, so the hook must not mount there at all.
+function ActiveDroppable({ dropId, dropData, style, children, ...divProps }) {
+  const { setNodeRef, isOver } = useDroppable({ id: dropId, data: dropData });
+  return (
+    <div
+      ref={setNodeRef}
+      style={isOver ? { ...style, outline: '3px solid var(--accent-green)', outlineOffset: '2px' } : style}
+      {...divProps}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DroppablePocket({ enabled, dropId, dropData, children, ...divProps }) {
+  if (!enabled) return <div {...divProps}>{children}</div>;
+  return <ActiveDroppable dropId={dropId} dropData={dropData} {...divProps}>{children}</ActiveDroppable>;
+}
+
 function PrintingBadge({ printing }) {
   if (!printing || printing === 'Normal') return null;
   return (
@@ -245,7 +267,12 @@ export default function CompartmentView({
   placementMode = false,
   pickedEntryId = null,
   onPickCard = null,
-  onPlaceSlot = null
+  onPlaceSlot = null,
+
+  // Drag-and-drop filing: makes every pocket on this page a drop target for a
+  // card dragged from elsewhere. Requires a DndContext above this component —
+  // LocationManager provides one; nothing else that renders this view does.
+  dropEnabled = false
 }) {
   const { t } = useT();
   const isBinder = isBinderType(locationType);
@@ -572,7 +599,10 @@ export default function CompartmentView({
                 );
               }
               return card ? (
-                <div
+                <DroppablePocket
+                  enabled={dropEnabled}
+                  dropId={`pocket-${compartment.id}-${pos}`}
+                  dropData={{ compartmentId: compartment.id, slot: pos, occupantEntryId: card.entry_id || null }}
                   key={card.entry_id || `slot-${i}`}
                   id={card.entry_id ? `card-${card.entry_id}` : undefined}
                   className={`binder-pocket ${categoryStart ? 'set-start' : ''} ${card.entry_id === focusEntryId ? 'focus-flash' : ''}`}
@@ -628,9 +658,12 @@ export default function CompartmentView({
                   {isTarget && (
                     <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'var(--accent-green)', color: '#000', width: '30px', height: '30px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1rem', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }}>✓</div>
                   )}
-                </div>
+                </DroppablePocket>
               ) : (
-                <div
+                <DroppablePocket
+                  enabled={dropEnabled}
+                  dropId={`pocket-${compartment.id}-${pos}`}
+                  dropData={{ compartmentId: compartment.id, slot: pos, occupantEntryId: null }}
                   key={`empty-${i}`}
                   className="binder-pocket empty"
                   onClick={placementMode && pickedEntryId ? () => onPlaceSlot(compartment.id, pos, null) : undefined}
@@ -646,7 +679,7 @@ export default function CompartmentView({
                   {placementMode && pickedEntryId && !isTarget && (
                     <div style={{ color: 'var(--accent-red)', fontWeight: 'bold', fontSize: '0.7rem', marginTop: '0.4rem' }}>{t('compartment.place')}</div>
                   )}
-                </div>
+                </DroppablePocket>
               );
             })})()}
         </div>
