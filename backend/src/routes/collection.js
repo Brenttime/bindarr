@@ -7,12 +7,14 @@ const scanMatch = require('../scanMatch');
 const setIndex = require('../setIndex');
 const languages = require('../utils/languages');
 const pokemonProvider = require('../utils/pokemonProvider');
+const psaApi = require('../psaApi');
+const gradedPrices = require('../gradedPrices');
 const cardApi = require('../utils/cardApi');
 const { authenticateToken, searchLimiter } = require('../middleware/auth');
 const { resolveCardPrice, parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { parseSetList } = require('../utils/setQuery');
 const { compartmentLabel, isBinderType, rebalanceCompartmentByScheme } = require('../utils/compartmentSort');
-const { checkedOutAllocation, resolveCompartmentAndPosition, describePlacement } = require('../utils/collectionHelpers');
+const { checkedOutAllocation, resolveCompartmentAndPosition, describePlacement, setStackQuantity } = require('../utils/collectionHelpers');
 const { validateDeckAddition } = require('../utils/deckRules');
 const { splitPrice } = require('../utils/splitPrice');
 
@@ -94,7 +96,59 @@ router.get('/search', searchLimiter, async (req, res) => {
   }
 });
 
-// 1b. Identify a scanned card image by CLIP embedding similarity.
+// 1a2. Identify a graded slab from the cert number printed on its label.
+//
+// Returns the cert AND a list of candidate cards — it does not pick one. PSA
+// labels a card as 'CHARIZARD-HOLO' with year 1999 and brand 'POKEMON GAME',
+// which names a card without identifying a printing: that name+number exists in
+// Base Set, Base Set 2 and a dozen reprints, and PSA's label does not distinguish
+// them. Auto-picking would file the wrong printing silently and confidently, so
+// the user picks and the client then adds through POST /collection as usual with
+// grader/grade/cert_number filled in.
+//
+// GET, and cheap on a repeat: psaApi caches every cert permanently, so re-checking
+// a number costs no quota and works with no token configured.
+// Path is spelled in full because this router mounts at /api, not at /api/collection
+// — every route here carries its own complete path (see '/search' above).
+router.get('/collection/cert/:certNumber', searchLimiter, async (req, res) => {
+  try {
+    const cert = await psaApi.lookupCert(req.params.certNumber, req.user.psa_api_token || '');
+    // Which game to search is read off PSA's own brand/category text. Unknown means
+    // unknown — PSA grades sports cards and tickets too, and guessing 'pokemon' for
+    // a 1986 Fleer basketball card would return nonsense candidates rather than an
+    // honest empty list.
+    const brand = `${cert.brand || ''} ${cert.category || ''}`.toUpperCase();
+    const game = /POKEMON/.test(brand) ? 'pokemon' : (/MAGIC|GATHERING/.test(brand) ? 'mtg' : null);
+    let candidates = [];
+    if (game) {
+      const name = psaApi.searchableName(cert.subject);
+      if (name) {
+        // Number included when PSA gave one: it is the single strongest
+        // discriminator between printings of the same name, and the search treats
+        // it as optional so a label without one still returns something.
+        const number = cert.card_number || '';
+        if (game === 'mtg') {
+          ({ cards: candidates } = await scryfallApi.searchCards(name, number, '', 'database', req.user.id, null, true, 1, 24));
+        } else {
+          const provider = await pokemonApiFor(null);
+          ({ cards: candidates } = provider === tcgdexApi
+            ? await provider.searchCards(name, number, '', 'database', req.user.id, 'en', 1, 24)
+            : await provider.searchCards(name, number, '', req.user.tcg_api_key, 'database', req.user.id, 1, 24));
+        }
+        await attachOwnedQty(candidates, req.user.id);
+      }
+    }
+    res.json({ cert, game, candidates });
+  } catch (error) {
+    // psaApi puts a caller-visible status on everything it throws; anything without
+    // one is a genuine bug here rather than a bad cert number.
+    const status = error.status || 500;
+    if (status >= 500) console.error('cert lookup failed:', error.message);
+    res.status(status).json({ error: status >= 500 ? 'Certification lookup failed' : error.message });
+  }
+});
+
+// 1b. Identify a scanned card image by visual-feature match.
 router.post('/scan-match', searchLimiter, async (req, res) => {
   try {
     const { game = 'pokemon', image, set = '', recallK, orb, lang } = req.body || {};
@@ -178,12 +232,11 @@ router.post('/prepare-set', searchLimiter, async (req, res) => {
       return res.json({ ready: false, building: false, failed: true, failures, error: failures[0].error });
     }
 
-    // A user waiting to scan gets the FAST build: ORB only, no CLIP encoding,
-    // which roughly halves the wait. The embeddings that make this set searchable
-    // without a set code are added afterwards by a background top-up, so nobody
-    // waits for a capability they did not ask for yet.
-    buildable.forEach(s => setIndex.ensureSet(game, s, lang, { embed: false })
-      .then(ok => { if (ok) require('../globalIndex').scheduleEmbedTopUp(game, lang); })
+    // The set index this scan needs is also everything a code-free scan needs, so
+    // folding it into the whole-game rollup afterwards costs no extra download —
+    // it is scheduled in the background rather than made to wait for it.
+    buildable.forEach(s => setIndex.ensureSet(game, s, lang)
+      .then(ok => { if (ok) require('../globalIndex').scheduleRollupRefresh(game, lang); })
       .catch(() => {}));
     // Report the first still-building set's progress for the UI bar, plus any
     // sets in the list that already failed (a multi-set scan can be part ready).
@@ -223,9 +276,9 @@ router.get('/scan-index-status', async (req, res) => {
     }
     res.json({
       game, lang: code,
-      codeFreeScanning: status.embed.present && status.orb.present,
-      cards: status.embed.cards || 0,
-      builtAt: status.embed.builtAt || 0,
+      codeFreeScanning: status.orb.present && status.orb.hashed,
+      cards: status.orb.cards || 0,
+      builtAt: status.orb.builtAt || 0,
       coverage,
     });
   } catch (error) {
@@ -269,6 +322,12 @@ router.get('/collection', async (req, res) => {
         c.favorite,
         c.list_type,
         c.notes,
+        c.grader,
+        c.grade,
+        c.cert_number,
+        c.market_value,
+        c.market_value_source,
+        c.market_value_at,
         cc.name,
         -- The localized name for a non-English printing, so every view that
         -- renders a collection card can show it as the card actually reads.
@@ -287,9 +346,13 @@ router.get('/collection', async (req, res) => {
         cc.price_normal,
         cc.price_holofoil,
         cc.price_reverse_holofoil,
+        cc.price_1st_edition,
+        cc.price_currency,
+        cc.price_source,
         cc.game,
         cc.tcgplayer_url,
         cc.cardmarket_url,
+        cc.tcgplayer_product_id,
         l.id as location_id,
         l.name as location_name,
         l.type as location_type,
@@ -334,6 +397,10 @@ class AddCardError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
+// Mirrors the collection.grader CHECK constraint in db.js. 'Raw' is the default
+// and means an ungraded card, not a missing value.
+const GRADERS = ['Raw', 'PSA', 'BGS', 'CGC', 'SGC', 'TAG'];
+
 async function addCardToCollection(user, body) {
   const {
     card_id,
@@ -346,12 +413,46 @@ async function addCardToCollection(user, body) {
     list_type = 'collection',
     is_trade = 0,
     game = 'pokemon',
-    stackable = false
+    stackable = false,
+    grader = 'Raw',
+    grade = null,
+    cert_number = null
   } = body;
   const req = { user, body };
 
   if (!card_id) {
     throw new AddCardError(400, 'card_id is required');
+  }
+
+  // Grading, validated here rather than at the two call sites, so the single add
+  // and the bulk add cannot disagree about what a slab is.
+  if (!GRADERS.includes(grader)) {
+    throw new AddCardError(400, `Invalid grader. One of: ${GRADERS.join(', ')}`);
+  }
+  const gradeNum = grade == null || grade === '' ? null : Number(grade);
+  if (gradeNum != null && !(gradeNum > 0 && gradeNum <= 10)) {
+    throw new AddCardError(400, 'grade must be between 0 and 10');
+  }
+  const cert = cert_number ? String(cert_number).trim() : null;
+  // A raw card has no grade and no cert by definition. Silently keeping either
+  // would leave a row that reads as raw in one column and graded in another, and
+  // every downstream check would then depend on which column it happened to read.
+  const isGraded = grader !== 'Raw';
+  const certValue = isGraded ? cert : null;
+  const gradeValue = isGraded ? gradeNum : null;
+
+  // Checked before the insert purely for the message: the unique index in db.js is
+  // what actually enforces this, and still catches a race between two requests.
+  // Without the check the user gets 'Failed to add card' and no idea why.
+  if (certValue) {
+    const dup = await db.get(
+      `SELECT c.id, cc.name FROM collection c JOIN card_cache cc ON cc.id = c.card_id
+        WHERE c.user_id = ? AND c.grader = ? AND c.cert_number = ?`,
+      [user.id, grader, certValue]
+    );
+    if (dup) {
+      throw new AddCardError(409, `${grader} cert ${certValue} is already in your collection as ${dup.name}.`);
+    }
   }
 
   {
@@ -391,17 +492,28 @@ async function addCardToCollection(user, body) {
     const targetLocationId = resolved.compartment_id ? (resolved.location_id ?? location_id) : null;
 
     let lastInsertedId = null;
-    const count = Math.max(1, parseInt(quantity, 10) || 1);
+    // A cert number names ONE physical slab, so a quantity above 1 is not a
+    // request for more of them — it is a mistake that the per-user unique index on
+    // (grader, cert_number) would reject on the second insert anyway, after the
+    // first had already been written. Collapse it here so the request succeeds with
+    // the row the user actually meant.
+    const count = certValue ? 1 : Math.max(1, parseInt(quantity, 10) || 1);
+    // Stacking is quantity-on-one-row, which is meaningful only for interchangeable
+    // copies. Two slabs are never interchangeable: they have different certs, and
+    // usually different grades.
+    const stack = stackable && !isGraded;
 
-    if (stackable) {
+    if (stack) {
       const result = await db.run(`
         INSERT INTO collection (
           card_id, user_id, quantity, condition, printing, language, purchase_price,
-          location_id, compartment_id, position, is_trade, list_type, game
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          location_id, compartment_id, position, is_trade, list_type, game,
+          grader, grade, cert_number
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         card_id, req.user.id, count, condition, printing, language, purchase_price || 0,
-        targetLocationId, resolved.compartment_id, resolved.position, is_trade ? 1 : 0, list_type, effectiveGame
+        targetLocationId, resolved.compartment_id, resolved.position, is_trade ? 1 : 0, list_type, effectiveGame,
+        grader, gradeValue, certValue
       ]);
       lastInsertedId = result.lastID;
     } else {
@@ -409,11 +521,13 @@ async function addCardToCollection(user, body) {
         const result = await db.run(`
           INSERT INTO collection (
             card_id, user_id, quantity, condition, printing, language, purchase_price,
-            location_id, compartment_id, position, is_trade, list_type, game
-          ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            location_id, compartment_id, position, is_trade, list_type, game,
+            grader, grade, cert_number
+          ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
           card_id, req.user.id, condition, printing, language, purchase_price || 0,
-          targetLocationId, resolved.compartment_id, resolved.position + (i * 0.001), is_trade ? 1 : 0, list_type, effectiveGame
+          targetLocationId, resolved.compartment_id, resolved.position + (i * 0.001), is_trade ? 1 : 0, list_type, effectiveGame,
+          grader, gradeValue, certValue
         ]);
         lastInsertedId = result.lastID;
       }
@@ -464,6 +578,12 @@ router.post('/collection/bulk-add', async (req, res) => {
   if (card_ids.length > BULK_ADD_MAX) {
     return res.status(400).json({ error: `Cannot add more than ${BULK_ADD_MAX} cards at once.` });
   }
+  // Every field in `shared` is applied to every card, which a cert number cannot
+  // survive: it identifies one slab. Rejected rather than dropped, because silently
+  // discarding it would add the cards ungraded and look like it worked.
+  if (shared.cert_number) {
+    return res.status(400).json({ error: 'A certification number applies to a single card. Add graded cards one at a time.' });
+  }
   // Sequential on purpose: placement resolves against the rows already inserted,
   // so adds must not race each other for the same compartment slot.
   const added = [];
@@ -492,7 +612,8 @@ router.put('/collection/:id', async (req, res) => {
   const { id } = req.params;
   const {
     quantity, condition, printing, language, purchase_price,
-    location_id, compartment_id, list_type, is_trade, favorite, game, notes
+    location_id, compartment_id, list_type, is_trade, favorite, game, notes,
+    grader, grade, cert_number, market_value
   } = req.body;
 
   try {
@@ -532,11 +653,10 @@ router.put('/collection/:id', async (req, res) => {
     const updates = [];
     const params = [];
 
-    // One physical card = one row. The edited entry always stays quantity 1;
-    // a quantity > 1 in the payload means "make this many copies" and is
-    // fulfilled below by inserting extra single-card rows (auto-split).
-    const requestedQty = quantity !== undefined ? Math.max(1, parseInt(quantity, 10) || 1) : 1;
-    if (quantity !== undefined) { updates.push('quantity = ?'); params.push(1); }
+    // Absolute, not additive: see the reconcile below. Deliberately NOT part of
+    // the UPDATE — setStackQuantity owns the quantity column so the two can
+    // never disagree about how many copies the row stands for.
+    const requestedQty = quantity !== undefined ? Math.max(1, parseInt(quantity, 10) || 1) : null;
     if (condition !== undefined) { updates.push('condition = ?'); params.push(condition); }
     if (printing !== undefined) { updates.push('printing = ?'); params.push(printing); }
     if (language !== undefined) { updates.push('language = ?'); params.push(language); }
@@ -550,6 +670,41 @@ router.put('/collection/:id', async (req, res) => {
     if (favorite !== undefined) { updates.push('favorite = ?'); params.push(favorite ? 1 : 0); }
     if (game !== undefined) { updates.push('game = ?'); params.push(game); }
     if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
+    // Grading. The three columns move together on purpose: sending grader:'Raw'
+    // must clear the grade and cert in the same statement, or the row keeps a grade
+    // it no longer claims to have. Cracking a slab is a real thing people do.
+    if (grader !== undefined) {
+      if (!GRADERS.includes(grader)) return res.status(400).json({ error: `Invalid grader. One of: ${GRADERS.join(', ')}` });
+      const raw = grader === 'Raw';
+      const g = raw || grade == null || grade === '' ? null : Number(grade);
+      if (g != null && !(g > 0 && g <= 10)) return res.status(400).json({ error: 'grade must be between 0 and 10' });
+      const cert = raw || !cert_number ? null : String(cert_number).trim();
+      if (cert) {
+        const dup = await db.get(
+          `SELECT id FROM collection WHERE user_id = ? AND grader = ? AND cert_number = ? AND id != ?`,
+          [req.user.id, grader, cert, id]
+        );
+        if (dup) return res.status(409).json({ error: `${grader} cert ${cert} is already in your collection.` });
+      }
+      updates.push('grader = ?', 'grade = ?', 'cert_number = ?');
+      params.push(grader, g, cert);
+    }
+    // What this copy is worth, typed by the owner. Empty string and null both mean
+    // "drop it and go back to the provider price" — the field is a text input, and
+    // clearing it has to be possible or a mistyped 10000 is permanent.
+    if (market_value !== undefined) {
+      if (market_value === null || market_value === '') {
+        updates.push('market_value = ?', 'market_value_source = ?', 'market_value_at = ?');
+        params.push(null, null, null);
+      } else {
+        const value = Number(market_value);
+        if (!Number.isFinite(value) || value < 0) {
+          return res.status(400).json({ error: 'market_value must be a number of 0 or more' });
+        }
+        updates.push('market_value = ?', 'market_value_source = ?', "market_value_at = CURRENT_TIMESTAMP");
+        params.push(value, 'manual');
+      }
+    }
 
     if (updates.length > 0) {
       params.push(id, req.user.id);
@@ -565,23 +720,17 @@ router.put('/collection/:id', async (req, res) => {
       if (oldLoc) await rebalanceCompartmentByScheme(db, entry.compartment_id, oldLoc.sort_order, oldLoc.foil_sorting);
     }
 
-    // Auto-split: create the extra copies as their own single-card rows, mirroring
-    // the edited entry's final placement so each copy occupies its own slot.
-    if (requestedQty > 1) {
-      const row = await db.get(`SELECT * FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-      if (row) {
-        for (let i = 1; i < requestedQty; i++) {
-          await db.run(`
-            INSERT INTO collection (
-              card_id, user_id, quantity, condition, printing, language, purchase_price,
-              location_id, compartment_id, position, is_trade, favorite, list_type, game
-            ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `, [
-            row.card_id, req.user.id, row.condition, row.printing, row.language, row.purchase_price,
-            row.location_id, row.compartment_id, (row.position || 0) + i * 0.001, row.is_trade, row.favorite, row.list_type, row.game
-          ]);
-        }
-        if (row.compartment_id && row.location_id) {
+    // Quantity is absolute — it is how many copies the user says they own, and
+    // in the stacked collection view the number in the form is the total across
+    // the identical rows, not this row alone. So reconcile the whole stack to
+    // it, up or down. It used to only ever insert (quantity - 1) extra rows,
+    // which made lowering the number a no-op and made every save duplicate the
+    // entry instead of editing it.
+    if (requestedQty !== null) {
+      const changed = await setStackQuantity(db, req.user.id, id, requestedQty);
+      if (changed !== 0) {
+        const row = await db.get(`SELECT compartment_id, location_id FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+        if (row && row.compartment_id && row.location_id) {
           const loc = await db.get(`SELECT sort_order, foil_sorting FROM locations WHERE id = ? AND user_id = ?`, [row.location_id, req.user.id]);
           if (loc) await rebalanceCompartmentByScheme(db, row.compartment_id, loc.sort_order, loc.foil_sorting);
         }
@@ -593,6 +742,48 @@ router.put('/collection/:id', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to update entry' });
+  }
+});
+
+// 4a. Fetch this copy's graded value from the price provider and store it.
+//
+// Deliberately one entry per request and never automatic: the free tier of the
+// only provider that publishes slab prices is metered per day, and a sweep over a
+// collection would spend a week's allowance in one boot. The button is the budget.
+router.post('/collection/:id/market-value/fetch', searchLimiter, async (req, res) => {
+  try {
+    const entry = await db.get(`
+      SELECT c.id, c.grade, c.grader, cc.name, cc.set_name, cc.number, cc.game, cc.tcgplayer_product_id
+      FROM collection c JOIN card_cache cc ON cc.id = c.card_id
+      WHERE c.id = ? AND c.user_id = ?`, [req.params.id, req.user.id]);
+    if (!entry) return res.status(404).json({ error: 'Collection entry not found' });
+    if (!entry.grader || entry.grader === 'Raw') {
+      return res.status(400).json({ error: 'This copy is not graded. Graded prices apply to slabs only.' });
+    }
+
+    const result = await gradedPrices.fetchGradedPrice({
+      game: entry.game,
+      name: entry.name,
+      setName: entry.set_name,
+      number: entry.number,
+      grader: entry.grader,
+      grade: entry.grade,
+      // The exact-card lookup: one card returned instead of a page of them, which
+      // is the difference between 2 credits and a hundred.
+      tcgPlayerId: entry.tcgplayer_product_id,
+      apiKey: req.user.graded_price_api_key,
+    });
+
+    await db.run(
+      `UPDATE collection SET market_value = ?, market_value_source = ?, market_value_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND user_id = ?`,
+      [result.price, result.source, req.params.id, req.user.id]
+    );
+    res.json({ market_value: result.price, source: result.source, basis: result.basis });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('graded price fetch failed:', error.message);
+    res.status(status).json({ error: error.message || 'Failed to fetch graded price' });
   }
 });
 

@@ -15,7 +15,9 @@
 //
 // Row layout (must stay in step with scanMatch.loadOrbDb):
 //   per-set: [name, set, number, offset, count, hashHi, hashLo]
-//   global:  [name, set, number, offset, count]
+//   global:  [name, set, number, offset, count, hashHi, hashLo]
+// Rollups built before the hash columns were carried have 5-column rows; readers
+// treat the hash channel as simply unavailable there rather than failing.
 const fs = require('fs');
 const path = require('path');
 
@@ -55,7 +57,7 @@ function appendSetIndex(descFd, kpFd, startOffset, src) {
   let skipped = 0;
 
   for (const row of src.rows) {
-    const [name, set, number, srcOffset, count] = row;
+    const [name, set, number, srcOffset, count, hashHi, hashLo] = row;
     // Reject rows whose byte ranges fall outside the files they point into.
     const dEnd = descLen(srcOffset + count);
     const kEnd = kpLen(srcOffset + count);
@@ -70,9 +72,15 @@ function appendSetIndex(descFd, kpFd, startOffset, src) {
     const k = src.kp.subarray(kpLen(srcOffset), kEnd);
     fs.writeSync(descFd, d, 0, d.length, descLen(offset));
     fs.writeSync(kpFd, k, 0, k.length, kpLen(offset));
-    // Drop the dHash columns: they are a per-set recall pre-filter and the
-    // global path recalls with CLIP instead.
-    rows.push([name, set, number, offset, count]);
+    // KEEP the dHash columns. They used to be dropped here because the global
+    // path recalled with CLIP and had no use for them; they are now the ENTIRE
+    // recall stage. A perceptual hash is the one recall signal that survives a
+    // blurry phone photo, which is where the visual-word channel that used to sit
+    // beside it fell apart — measured on 65 real captures, the hash put the true
+    // printing in the top 250 forty-five times against BoVW's twenty-three, and
+    // ablation put the pair one card per hundred ahead of the hash alone.
+    // Dropping these two integers per row now costs the scanner everything.
+    rows.push([name, set, number, offset, count, hashHi >>> 0, hashLo >>> 0]);
     offset += count;
   }
   return { rows, nextOffset: offset, skipped };

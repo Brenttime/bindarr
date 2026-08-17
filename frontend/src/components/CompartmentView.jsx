@@ -7,6 +7,7 @@ import { typeCategory } from '../utils/cardSort';
 import { isBinderType } from '../utils/cardOptions';
 import { displayName } from '../utils/languages';
 import { useLongPress } from '../utils/useLongPress';
+import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 
 const infoChipStyle = { fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' };
@@ -442,6 +443,9 @@ export default function CompartmentView({
       const recIdx = Math.min(recommendedSpot.index, pockets.length - 1);
       const ghostObj = {
         __ghost: true,
+        // Spread the card first so the ghost preview can resolve contributed art
+        // and the right game's card back, same as the grid ghost above.
+        ...(recommendedSpot.card || {}),
         image_url: recommendedSpot.image_url,
         name: recommendedSpot.name,
         set_name: recommendedSpot.set_name
@@ -555,7 +559,7 @@ export default function CompartmentView({
               if (card && card.__ghost) {
                 return (
                   <div key={`ghost-${i}`} id="recommended-spot" className={`binder-pocket recommended-ghost ${categoryStart ? 'set-start' : ''}`}>
-                    {card.image_url && <img src={card.image_url} alt={card.name} loading="lazy" decoding="async" style={{ opacity: 0.85 }} />}
+                    <CardImage card={card} loading="lazy" decoding="async" style={{ opacity: 0.85 }} />
                     <div className="rec-ghost-label">Slot {pos}</div>
                     {newDividers.length > 0 && (
                       <div style={{ position: 'absolute', top: 0, left: 0, transform: 'translateY(-100%)', display: 'flex', flexDirection: 'column', gap: '2px', paddingBottom: '2px', zIndex: 20 }}>
@@ -600,7 +604,7 @@ export default function CompartmentView({
                     else setCurrentActiveId(card.entry_id);
                   }}
                 >
-                  <img src={card.image_url} alt={displayName(card)} title={displayName(card)} loading="lazy" decoding="async" />
+                  <CardImage card={card} alt={displayName(card)} title={displayName(card)} loading="lazy" decoding="async" />
                   {getFoilOverlayClass(card.printing) && <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: '4px' }} />}
                   <PrintingBadge printing={card.printing} />
                   {(pullMode ? pulledSet.has(card.entry_id) : card.checked_out_qty > 0) && (
@@ -921,7 +925,7 @@ export default function CompartmentView({
                       style={{ transform, zIndex, opacity: opacity * 0.85, filter }}
                       onClick={() => setCoverflowActiveIndex(i)}
                     >
-                      {card.image_url && absOffset <= IMG_WINDOW && <img src={card.image_url} alt={card.name} decoding="async" />}
+                      {absOffset <= IMG_WINDOW && <CardImage card={card} decoding="async" />}
                       <div className="rec-ghost-label">Slot {pos}</div>
                     </div>
                   );
@@ -952,7 +956,7 @@ export default function CompartmentView({
                       else setCoverflowActiveIndex(i);
                     }}
                   >
-                    {absOffset <= IMG_WINDOW && <img src={card.image_url} alt={card.name} decoding="async" />}
+                    {absOffset <= IMG_WINDOW && <CardImage card={card} decoding="async" />}
                     {getFoilOverlayClass(card.printing) && <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: '4.5px' }} />}
                     <PrintingBadge printing={card.printing} />
                     {(pullMode ? pulledSet.has(card.entry_id) : card.checked_out_qty > 0) && (

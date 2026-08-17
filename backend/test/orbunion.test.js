@@ -131,9 +131,26 @@ async function main() {
     assert.ok(actual.kp.equals(expected.kp), `row ${i} (${name}) keypoints are byte-identical`);
   }
 
-  // 3. The dHash columns are dropped — the global reader recalls with CLIP.
+  // 3. The dHash columns are CARRIED THROUGH, and carried through per row rather
+  // than reordered along with the rebased offsets. They are the global path's
+  // ONLY recall channel now, so a rollup that drops them silently leaves the
+  // scanner with nothing to shortlist from — every code-free scan returns
+  // nothing at all rather than merely getting worse.
   for (const row of globalMeta.cards) {
-    assert.strictEqual(row.length, 5, `global rows are 5 columns, got ${row.length}`);
+    assert.strictEqual(row.length, 7, `global rows are 7 columns, got ${row.length}`);
+    assert.ok(Number.isInteger(row[5]) && Number.isInteger(row[6]), 'hash columns are integers');
+  }
+  // Each global row must keep ITS OWN hash, not a neighbour's: a hash paired with
+  // the wrong card is worse than no hash, since it recalls confidently and wrong.
+  // Keyed by name too: a double-faced card contributes two rows under one
+  // set|number, and each face carries its own hash.
+  const srcHash = new Map();
+  for (const src of [alpha, beta]) {
+    for (const r of src.rows) srcHash.set(`${r[0]}|${r[1]}|${r[2]}`, [r[5] >>> 0, r[6] >>> 0]);
+  }
+  for (const row of globalMeta.cards) {
+    const want = srcHash.get(`${row[0]}|${row[1]}|${row[2]}`);
+    assert.deepStrictEqual([row[5], row[6]], want, `row ${row[0]} kept its own dHash`);
   }
 
   // 4. Offsets are contiguous, ascending, and non-overlapping.

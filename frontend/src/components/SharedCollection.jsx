@@ -8,6 +8,7 @@ import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle } fro
 import { useBackGuard } from '../utils/useBackGuard';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { displayName } from '../utils/languages';
+import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 
 const COLORS = [
@@ -299,7 +300,7 @@ function SharedCollection({ shareToken }) {
             {topValuable.map((card) => (
               <div key={card.entry_id} onClick={() => setActiveCard(card)} className="dashboard-card-clickable"
                 style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', cursor: 'pointer' }}>
-                <img src={card.image_url} alt={card.name} style={{ width: '48px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '5px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }} />
+                <CardImage card={card} style={{ width: '48px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '5px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }} />
                 <div style={{ flex: 1, overflow: 'hidden' }}>
                   <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName(card)}</div>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.set_name} • {card.rarity}</div>
@@ -403,7 +404,7 @@ function SharedCollection({ shareToken }) {
             return (
               <div key={card.entry_id} className="tcg-card tilt-card-wrapper" onClick={() => setActiveCard(card)}>
                 <div className={`tcg-card-inner ${isUltra ? 'rarity-glow-ultra' : ''}`}>
-                  <img src={card.image_url} alt={card.name} className="tcg-card-image" loading="lazy" />
+                  <CardImage card={card} className="tcg-card-image" loading="lazy" />
                   {getFoilOverlayClass(card.printing) && (
                     <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: 'var(--radius-sm)' }} />
                   )}
@@ -446,7 +447,7 @@ function SharedCollection({ shareToken }) {
               <X size={16} />
             </button>
             <div style={{ flex: '1 1 240px', display: 'flex', justifyContent: 'center' }}>
-              <img src={activeCard.image_url} alt={activeCard.name} style={{ width: '100%', maxWidth: '260px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: 'var(--radius-md)', boxShadow: '0 8px 24px rgba(0,0,0,0.5), 0 0 15px rgba(255,255,255,0.05)' }} />
+              <CardImage card={activeCard} style={{ width: '100%', maxWidth: '260px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: 'var(--radius-md)', boxShadow: '0 8px 24px rgba(0,0,0,0.5), 0 0 15px rgba(255,255,255,0.05)' }} />
             </div>
             <div style={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: '1rem', justifyContent: 'center' }}>
               <div>

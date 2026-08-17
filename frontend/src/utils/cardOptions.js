@@ -21,6 +21,16 @@ export function getPrintings(game) {
   return PRINTINGS.map(p => ({ value: p, label: p }));
 }
 
+// Grading companies, mirroring the collection.grader CHECK constraint in
+// backend/src/db.js. 'Raw' is the default and means ungraded — not unknown, so it
+// is a real option in the picker rather than an empty one.
+export const GRADERS = ['Raw', 'PSA', 'BGS', 'CGC', 'SGC', 'TAG'];
+
+// Grades a slab can carry, highest first because that is the order a collector
+// reads them in. PSA issues whole numbers plus 10; BGS and CGC add half grades, so
+// the list is the union and the picker is shared.
+export const GRADES = [10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5, 5, 4, 3, 2, 1];
+
 // A binder-family container lays out fixed pockets (Pages); other container
 // types (boxes, deck boxes) are continuous (Rows). Kept here so the several
 // UI spots that branch on it share one definition.

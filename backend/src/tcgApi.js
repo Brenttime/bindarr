@@ -125,7 +125,11 @@ function formatCard(c) {
     price_avg30: detailed.avg30,
     // pokemontcg.io ships the marketplace links the prices came from.
     tcgplayer_url: c.tcgplayer ? c.tcgplayer.url || null : null,
-    cardmarket_url: c.cardmarket ? c.cardmarket.url || null : null
+    cardmarket_url: c.cardmarket ? c.cardmarket.url || null : null,
+    // extractPrice reads tcgplayer.prices first and falls back to Cardmarket's
+    // trendPrice, so the currency follows whichever answered.
+    price_source: 'pokemontcg',
+    price_currency: (c.tcgplayer && c.tcgplayer.prices) ? 'USD' : 'EUR'
   };
 }
 

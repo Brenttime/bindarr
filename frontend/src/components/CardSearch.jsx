@@ -10,6 +10,7 @@ import { useMultiSelect } from '../utils/useMultiSelect';
 import { CONDITIONS, PRINTINGS } from '../utils/cardOptions';
 import { LANGUAGES, langName, isEnglish, displayName, translatedName, setReference, setCode } from '../utils/languages';
 import { defaultGame, gameOptions, showGamePicker, gameLabel } from '../utils/games';
+import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 
 // Search failures worth explaining in-page rather than only as a toast. `keyHint`
@@ -83,6 +84,9 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
   const [printing, setPrinting] = useState('Normal');
   const [language, setLanguage] = useState('English');
   const [purchasePrice, setPurchasePrice] = useState(0);
+  const [grader, setGrader] = useState('Raw');
+  const [grade, setGrade] = useState('');
+  const [certNumber, setCertNumber] = useState('');
   const [, setLocationId] = useState('');
 
   // Fetch physical locations on mount for the form dropdown
@@ -439,6 +443,9 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     // of Japanese cards should not have to re-pick it for every card.
     setLanguage(langName(searchLang));
     setPurchasePrice(0);
+    setGrader('Raw');
+    setGrade('');
+    setCertNumber('');
   };
 
   const handleSubmit = async (e) => {
@@ -456,7 +463,10 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           printing,
           language,
           purchase_price: parseFloat(purchasePrice) || 0,
-          location_id: null
+          location_id: null,
+          grader,
+          grade: grade === '' ? null : parseFloat(grade),
+          cert_number: certNumber.trim() || null
         })
       });
 
@@ -477,7 +487,10 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
         onAddSuccess(); // Update stats
         closeDrawer();
       } else {
-        showToast(t('search.errAddDb'));
+        // A rejected cert number (already in the collection) explains itself; the
+        // generic message would send the user back to re-type a correct number.
+        const body = await response.json().catch(() => null);
+        showToast(body?.error || t('search.errAddDb'));
       }
     } catch (err) {
       console.error(err);
@@ -654,7 +667,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
               </div>
               {rapidLog.map(entry => (
                 <div key={entry.entryId} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'rgba(255,255,255,0.02)', padding: '0.35rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
-                  <img src={entry.card.image_url} alt="" style={{ width: '28px', borderRadius: '3px' }} />
+                  <CardImage card={entry.card} alt="" style={{ width: '28px', borderRadius: '3px' }} />
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-strong)', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     #{entry.card.number} {entry.card.name}{entry.qty > 1 ? ` ×${entry.qty}` : ''}
                   </span>
@@ -818,7 +831,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                   {selectMode && (
                     <div style={{ position: 'absolute', top: '6px', right: '6px', zIndex: 20, width: '22px', height: '22px', borderRadius: '50%', background: isSelected ? 'var(--accent-red)' : 'rgba(0,0,0,0.6)', border: '2px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-strong)', fontSize: '0.8rem', fontWeight: 900 }}>{isSelected ? '✓' : ''}</div>
                   )}
-                  <img src={card.image_url} alt={card.name} className="tcg-card-image" loading="lazy" draggable={false} />
+                  <CardImage card={card} className="tcg-card-image" loading="lazy" draggable={false} />
                   {/* Already-in-the-binder count, so a set browse doesn't invite
                       re-adding what the user already has. */}
                   {card.owned_qty > 0 && (
@@ -918,7 +931,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                 title={t('inspector.zoomHint')}
                 style={{ position: 'relative', flexShrink: 0, cursor: 'pointer', lineHeight: 0 }}
               >
-                <img src={selectedCard.image_url} alt={selectedCard.name} style={{ width: '80px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }} />
+                <CardImage card={selectedCard} style={{ width: '80px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }} />
                 <div style={{
                   position: 'absolute', bottom: '4px', right: '4px',
                   background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)',
@@ -940,6 +953,8 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
               <CardEntryFields
                 quantity={quantity} purchasePrice={purchasePrice} condition={condition} printing={printing} language={language}
                 onQuantity={setQuantity} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={setLanguage}
+                grader={grader} grade={grade} certNumber={certNumber}
+                onGrader={setGrader} onGrade={setGrade} onCertNumber={setCertNumber}
               />
 
 
@@ -957,7 +972,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           transformed ancestor becomes the containing block for position:fixed,
           which would trap this overlay inside the drawer instead of the page. */}
       {isFullScreen && selectedCard && (
-        <CardImageZoom src={selectedCard.image_url} alt={selectedCard.name} onClose={() => setIsFullScreen(false)} />
+        <CardImageZoom card={selectedCard} onClose={() => setIsFullScreen(false)} />
       )}
     </div>
   );

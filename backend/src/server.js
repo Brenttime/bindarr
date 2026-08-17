@@ -1,8 +1,16 @@
+// Load .env from the CWD first (how a normal `npm start` from backend/ behaves),
+// then from backend/ explicitly. dotenv never overwrites an already-set variable,
+// so the first one to define a key still wins and nothing changes for existing
+// deployments — this only rescues the case where the server was launched by
+// absolute path from some other directory, which silently ignored the file and
+// left settings like HTTPS_PORT looking as though they had no effect.
 require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const path = require('path');
 const db = require('./db');
 const tcgApi = require('./tcgApi');
@@ -20,6 +28,7 @@ const decksRoutes = require('./routes/decks');
 const settingsRoutes = require('./routes/settings');
 const tagsRoutes = require('./routes/tags');
 const notesRoutes = require('./routes/notes');
+const cardArtRoutes = require('./routes/cardArt');
 const { getAuditLogs, revertAuditEvent } = require('./utils/auditLogger');
 const { startHttps, selfSignedTls } = require('./utils/tls');
 
@@ -55,7 +64,11 @@ app.use(helmet({
     reportOnly: true,
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      // 'wasm-unsafe-eval' is what lets the browser compile WebAssembly. The card
+      // scanner runs OpenCV.js locally to find the card in the frame, and without
+      // this the wasm is refused outright. Harmless today because the policy is
+      // report-only, but it would silently break scanning the moment that flips.
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
       connectSrc: ["'self'"],
       imgSrc: ["'self'", 'data:', 'blob:', 'https://images.pokemontcg.io', 'https://cards.scryfall.io', 'https://c1.scryfall.com', 'https://img.scryfall.com', 'https://assets.tcgdex.net'],
       styleSrc: ["'self'", "'unsafe-inline'"],
@@ -138,7 +151,15 @@ db.initDb()
     // panel showing nothing in flight and the staged work invisible. Surface any
     // interrupted build so it can be resumed rather than restarted from zero.
     try {
-      require('./globalIndex').restoreInterrupted(require('./utils/languages').LANGUAGES.map(l => l.code));
+      const globalIndex = require('./globalIndex');
+      const langCodes = require('./utils/languages').LANGUAGES.map(l => l.code);
+      globalIndex.restoreInterrupted(langCodes);
+      // Not awaited: this is a rollup re-concatenation on an upgrade from an
+      // install whose rollup predates the hash columns, and does nothing at all
+      // on every other boot, so it must not hold up listening. Until it finishes,
+      // code-free scanning reports "not built" — which is the truth.
+      globalIndex.backfillRecall(langCodes)
+        .catch(err => console.warn('Could not derive missing recall indexes:', err.message));
     } catch (err) {
       console.warn('Could not restore interrupted global builds:', err.message);
     }
@@ -167,6 +188,11 @@ db.initDb()
       // sweep skips them and this is their only price refresh. No-op until the
       // user actually owns one.
       require('./tcgdexApi').updateCollectionPrices(true);
+      // TCGCSV runs LAST of the Pokémon sweeps on purpose. It writes the same
+      // columns as the other two and is the better source — TCGplayer market
+      // prices in USD, and 97% coverage against TCGdex's 8% — so it should have
+      // the final say on any card it can place.
+      require('./tcgcsvApi').updateCollectionPrices(true);
     }, 1000 * 60 * 60 * 24);
 
     // Shortly after startup, catch up if the last sweep was over a day ago.
@@ -177,6 +203,7 @@ db.initDb()
       tcgApi.updateCollectionPrices();
       scryfallApi.updateCollectionPrices();
       require('./tcgdexApi').updateCollectionPrices();
+      require('./tcgcsvApi').updateCollectionPrices();
     }, 30000);
 
     // Periodically purge expired sessions so the table doesn't grow unbounded
@@ -210,6 +237,9 @@ app.get('/api/health', async (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/shared', sharedRoutes);
 app.use('/api/admin', adminRoutes);
+// Ahead of the bare '/api' mounts so nothing shadows it. Its reads are
+// deliberately unauthenticated — a public shared collection renders card art too.
+app.use('/api/card-art', cardArtRoutes);
 app.use('/api', collectionRoutes);
 app.use('/api', storageRoutes);
 app.use('/api', statsRoutes);
@@ -222,7 +252,13 @@ app.use('/api/sets', setsRoutes);
 app.use('/api/decks', decksRoutes);
 app.use('/api/settings', settingsRoutes);
 
-// Serve production static assets from Frontend
+// Serve production static assets from Frontend.
+//
+// gzip matters here specifically because of the scanner: card detection runs in
+// the browser against OpenCV.js, which is an ~11 MB chunk. Uncompressed that is a
+// long wait on a phone over wifi and, worse, a stall that looks like a hang.
+// Compressed it is ~3.5 MB, and it is immutable-hashed so it is fetched once.
+app.use(compression());
 const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
 app.use(express.static(frontendBuildPath));
 

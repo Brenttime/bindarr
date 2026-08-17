@@ -54,7 +54,14 @@ async function fetchCard(name, url) {
 }
 
 // Place the card into a WxH scene at the given quad. Returns raw RGBA.
-async function compose(cardFile, sceneW, sceneH, quad, bgGray) {
+//
+// `mat` paints a bright surface UNDER the card first — a playmat, a binder page.
+// It has to happen here rather than in addClutter because the layering is the
+// whole point: the card must sit ON the surface, sharing its edge, so the two
+// close into one blob. Painted afterwards it would either cover the card or
+// leave a hole around it, and a hole is a card-shaped rectangle that exists in
+// no real photograph.
+async function compose(cardFile, sceneW, sceneH, quad, bgGray, mat = null) {
   const { data } = await sharp(cardFile).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const cardMat = cv.matFromImageData({ data: new Uint8ClampedArray(data), width: CARD_W, height: CARD_H });
   // Background with mild gradient + noise so OTSU has something realistic to bite.
@@ -64,6 +71,19 @@ async function compose(cardFile, sceneW, sceneH, quad, bgGray) {
       const i = (y * sceneW + x) * 4;
       const v = Math.max(0, Math.min(255, bgGray + Math.round((x / sceneW) * 18 - 9) + (Math.floor(x * 7 + y * 13) % 7) - 3));
       scene.data[i] = v; scene.data[i + 1] = v; scene.data[i + 2] = v; scene.data[i + 3] = 255;
+    }
+  }
+  if (mat) {
+    // Fractional bounds, not a symmetric inset: a real surface runs off the side
+    // of the capture rather than floating in the middle of it.
+    const x0 = Math.round(sceneW * (mat.x0 ?? 0)), x1 = Math.round(sceneW * (mat.x1 ?? 1));
+    const y0 = Math.round(sceneH * (mat.y0 ?? 0)), y1 = Math.round(sceneH * (mat.y1 ?? 1));
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = (y * sceneW + x) * 4;
+        const v = Math.max(0, Math.min(255, mat.gray + (Math.floor(x * 5 + y * 11) % 5) - 2));
+        scene.data[i] = v; scene.data[i + 1] = v; scene.data[i + 2] = v;
+      }
     }
   }
   const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, CARD_W, 0, CARD_W, CARD_H, 0, CARD_H]);
@@ -138,8 +158,44 @@ const CASES = [
   ['neighbour card', { deg: 5, tilt: 0.08, clutter: 'neighbour' }],
   ['hand holding', { deg: 4, tilt: 0.1, clutter: 'hand' }],
   ['glare', { deg: 3, tilt: 0.08, clutter: 'glare' }],
+  // A card on a bright surface (playmat, binder page, white desk) that itself
+  // runs off the edge of the capture, with a darker room visible past it.
+  //
+  // Honest scope: this scene is realistic and worth holding, but it does NOT
+  // reproduce the failure that motivated it. In a real photo of this shape the
+  // mat and card close into ONE blob, making the card's outline a CHILD contour;
+  // here they stay separable, so the case passes with or without the two fixes
+  // in detectCard (RETR_LIST, and the frame-edge quad rejection). Those were
+  // verified against the actual capture instead — each alone leaves the scan
+  // broken, and only together does it go from 7 inliers of unrelated cards to a
+  // correct 44-inlier match. Reproducing the merge synthetically is unsolved.
+  ['on a mat', { deg: 3, tilt: 0.06, bgOverride: 38, mat: { x0: 0, x1: 1, y0: 0, y1: 0.88, gray: 228 } }],
   ['low contrast bg', { deg: 6, tilt: 0.1, bgOverride: 105 }],
+  // The two conditions that separated a working real capture session from a
+  // failing one. Both sessions were the same card at the same frame size in the
+  // same room; only light and hand-shake differed, and the dark/blurred half lost
+  // the card's outline from the candidate list entirely — Canny's fixed 50/150
+  // thresholds reject border gradients once the histogram slides down.
+  //
+  // These are the cases the suite was missing: it scored 4.06 mean and zero bad
+  // crops while 7 of 65 real captures detected nothing and 19 of 58 produced a
+  // quad much larger than the region it came from.
+  ['dim room', { deg: 4, tilt: 0.08, dim: 0.35 }],
+  ['very dim', { deg: 3, tilt: 0.06, dim: 0.22 }],
+  ['motion blur', { deg: 4, tilt: 0.08, blur: 2.2 }],
+  ['dim + blur', { deg: 5, tilt: 0.1, dim: 0.4, blur: 1.8 }],
 ];
+
+// Apply room-light and motion-blur to a composed scene, returning raw RGBA.
+// `dim` is a brightness multiplier (0.35 is a lamp-lit room); `blur` is a
+// gaussian sigma in scene pixels (~2 is a handheld shot at a slow shutter).
+async function restage(scene, { dim, blur }) {
+  let img = sharp(Buffer.from(scene.data), { raw: { width: scene.width, height: scene.height, channels: 4 } });
+  if (dim) img = img.modulate({ brightness: dim });
+  if (blur) img = img.blur(blur);
+  const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
+  return { data: Buffer.from(data), width: info.width, height: info.height };
+}
 
 async function main() {
   const files = [];
@@ -151,9 +207,13 @@ async function main() {
     for (const [label, opts] of CASES) {
       for (const [bgName, bg] of [['light', 225], ['dark', 40]]) {
         const trueQuad = makeQuad(1200, 1600, opts);
-        const scene = await compose(file, 1200, 1600, trueQuad, opts.bgOverride ?? bg);
+        const scene = await compose(file, 1200, 1600, trueQuad, opts.bgOverride ?? bg, opts.mat);
         if (opts.clutter) addClutter(scene, opts.clutter);
-        const got = scanMatch.detectCard(new Uint8ClampedArray(scene.data), scene.width, scene.height);
+        // Room light and hand-shake apply to the WHOLE scene, after everything is
+        // in it — dimming only the card would leave its border in full contrast,
+        // which is the one thing a dark capture does not have.
+        const staged = (opts.dim || opts.blur) ? await restage(scene, opts) : scene;
+        const got = scanMatch.detectCard(new Uint8ClampedArray(staged.data), staged.width, staged.height);
         if (process.env.WHY && got) {
           const err = got.quad.reduce((s, p, i) => s + Math.hypot(p.x - trueQuad[i][0], p.y - trueQuad[i][1]), 0) / 4;
           console.log(`  WHY ${name} ${label}/${bgName}: cornerErr=${err.toFixed(0)}px pick=${JSON.stringify(got.pick)}`);

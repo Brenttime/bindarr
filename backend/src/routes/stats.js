@@ -17,8 +17,8 @@ router.get('/stats', async (req, res) => {
     // Retrieve all collection items to compute statistics
     const query = `
       SELECT
-        c.quantity, c.purchase_price, c.added_at, c.printing, c.condition, c.card_id,
-        cc.types, cc.subtypes, cc.supertype, cc.game, cc.rarity, cc.set_name, cc.set_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil,
+        c.quantity, c.purchase_price, c.added_at, c.printing, c.condition, c.card_id, c.market_value,
+        cc.types, cc.subtypes, cc.supertype, cc.game, cc.rarity, cc.set_name, cc.set_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition,
         cc.price_avg1, cc.price_avg7, cc.price_avg30,
         l.name as location_name
       FROM collection c
@@ -135,16 +135,22 @@ router.get('/stats', async (req, res) => {
         c.id AS entry_id, c.location_id, (SELECT name FROM locations WHERE id = c.location_id) AS location_name,
         (SELECT type FROM locations WHERE id = c.location_id) AS location_type,
         c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.is_trade, c.favorite, c.list_type,
+        c.grader, c.grade, c.market_value,
         cc.id as card_id, cc.name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
         cc.game, cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity, cc.price_trend,
-        cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil
+        cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ?${gameFilter}
       ORDER BY CASE
+        -- Mirrors resolveCardPrice, market_value first. A PSA 10 valued at 40x its
+        -- raw price has to be able to reach this list, and ranking it by the raw
+        -- price is exactly how it never would.
+        WHEN c.market_value IS NOT NULL AND c.market_value > 0 THEN c.market_value
         WHEN c.printing = 'Holofoil' AND cc.price_holofoil IS NOT NULL AND cc.price_holofoil > 0 THEN cc.price_holofoil
         WHEN c.printing = 'Reverse Holofoil' AND cc.price_reverse_holofoil IS NOT NULL AND cc.price_reverse_holofoil > 0 THEN cc.price_reverse_holofoil
         WHEN c.printing = 'Normal' AND cc.price_normal IS NOT NULL AND cc.price_normal > 0 THEN cc.price_normal
+        WHEN c.printing = '1st Edition' AND cc.price_1st_edition IS NOT NULL AND cc.price_1st_edition > 0 THEN cc.price_1st_edition
         ELSE cc.price_trend
       END DESC
       LIMIT 6
@@ -203,9 +209,10 @@ router.get('/stats', async (req, res) => {
       SELECT c.id AS entry_id, c.location_id, (SELECT name FROM locations WHERE id = c.location_id) AS location_name,
              (SELECT type FROM locations WHERE id = c.location_id) AS location_type,
              c.quantity, c.condition, c.printing, c.language, c.added_at, c.is_trade, c.favorite, c.list_type,
+             c.grader, c.grade, c.market_value,
              cc.id as card_id, cc.name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
              cc.game, cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity,
-             cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil
+             cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ?${gameFilter}
@@ -279,7 +286,7 @@ router.get('/stats/history', async (req, res) => {
 
     // Retrieve all collection items to compute history
     const query = `
-      SELECT c.quantity, c.added_at, c.printing, cc.id as card_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil
+      SELECT c.quantity, c.added_at, c.printing, c.market_value, cc.id as card_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ?${gameFilter}
@@ -311,6 +318,11 @@ router.get('/stats/history', async (req, res) => {
     // used here was actually recorded or is the actual current price — never
     // a fabricated curve.
     const realPriceAt = (item, targetTime) => {
+      // price_history tracks the PRINTING, so for a copy with its own value (a
+      // slab) it is the wrong series entirely — a PSA 10 does not follow the raw
+      // card down. There is no per-copy history to draw instead, so it holds flat
+      // at the value on record rather than reporting the raw card's movement.
+      if (item.market_value > 0) return item.market_value;
       const hist = historyByCard[item.card_id];
       if (!hist || hist.length === 0) return resolveCardPrice(item);
       let best = null;
@@ -371,6 +383,70 @@ router.get('/stats/history', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to compute timeline history' });
+  }
+});
+
+// 7c. Net worth, on its own, for scripts and dashboards (issue #33).
+//
+// /stats already contains these numbers, but it also runs the type/rarity/set
+// aggregation, a per-set progress query and two top-N queries to get there —
+// which is the wrong thing to hand a finance tracker polling every five minutes.
+// This is one pass over the collection and nothing else.
+//
+// Pair it with an API key (Settings -> API access): that credential is read-only
+// and does not expire, so an external tracker keeps working without a login.
+router.get('/stats/networth', async (req, res) => {
+  try {
+    const { game } = req.query;
+    const gameFilter = game ? ` AND cc.game = ?` : '';
+    const params = game ? [req.user.id, game] : [req.user.id];
+
+    const rows = await db.all(`
+      SELECT c.quantity, c.purchase_price, c.printing, c.market_value, cc.game, cc.price_currency,
+             cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
+      FROM collection c
+      JOIN card_cache cc ON c.card_id = cc.id
+      WHERE c.user_id = ? AND c.list_type = 'collection'${gameFilter}
+    `, params);
+
+    let totalCards = 0, totalValue = 0, totalSpent = 0;
+    const byGame = {};
+    const currencies = new Set();
+    for (const row of rows) {
+      const qty = row.quantity || 1;
+      const value = qty * resolveCardPrice(row);
+      totalCards += qty;
+      totalValue += value;
+      totalSpent += qty * (row.purchase_price || 0);
+      if (value > 0) currencies.add(row.price_currency || 'USD');
+      const g = row.game || 'unknown';
+      if (!byGame[g]) byGame[g] = { cards: 0, value: 0 };
+      byGame[g].cards += qty;
+      byGame[g].value += value;
+    }
+
+    const round = (n) => parseFloat(n.toFixed(2));
+    res.json({
+      totalValue: round(totalValue),
+      totalSpent: round(totalSpent),
+      // The unrealized gain, which is the number a finance tracker actually wants
+      // next to the total: value minus what it cost. Null percentage rather than
+      // zero when nothing has a purchase price, because "0% return" is a claim.
+      gain: round(totalValue - totalSpent),
+      gainPct: totalSpent > 0 ? parseFloat((((totalValue - totalSpent) / totalSpent) * 100).toFixed(1)) : null,
+      totalCards,
+      uniqueEntries: rows.length,
+      byGame: Object.fromEntries(Object.entries(byGame).map(([g, v]) => [g, { cards: v.cards, value: round(v.value) }])),
+      // Plural and honest: providers quote in different currencies (Scryfall and
+      // TCGplayer in USD, TCGdex in EUR), and the totals above sum them as-is —
+      // the same arithmetic the dashboard has always done. More than one entry
+      // here means the total is mixed, which a consumer converting it needs to know.
+      currencies: [...currencies].sort(),
+      asOf: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to compute net worth' });
   }
 });
 

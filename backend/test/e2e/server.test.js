@@ -22,7 +22,9 @@ async function runTests() {
   const port = '3009';
   const base = `http://localhost:${port}`;
   const server = spawn('node', [path.join(projectRoot, 'backend/src/server.js')], {
-    env: { ...process.env, PORT: port, DB_PATH: tmpDb }
+    // HTTPS_PORT blanked for the same reason as in scryfall-mock.js, which this
+    // one server is not preloaded with: a fixed TLS port cannot be shared.
+    env: { ...process.env, PORT: port, DB_PATH: tmpDb, HTTPS_PORT: '' }
   });
 
   try {
