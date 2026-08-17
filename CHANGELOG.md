@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
 [GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
 
+## [1.7.2] - 2026-08-17
+
+### Fixed
+- **`EACCES: permission denied, mkdir '/app/database/index/.staging-mtg'` — a scan-index build could not write to its own data directory.** The entrypoint handed the volume to the `node` user only when `/app/database` itself was root-owned, so a root-owned *subdirectory* inside an already-handed-over volume was never fixed: the entrypoint's own `mkdir -p` creates `index/` and `sets/` as root, and on any volume that had already passed the old check they stayed that way. It now hands over whatever is not node-owned, which costs one stat walk and no writes on a healthy volume. Running installs can be fixed without upgrading: `docker exec -u root bindarr chown -R node:node /app/database`.
+
 ## [1.7.1] - 2026-08-17
 
 ### Fixed
