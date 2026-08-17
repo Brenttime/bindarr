@@ -206,11 +206,26 @@ export default function ScanIndexPanel({ t, showToast, formatBytes }) {
   const pollRef = useRef(null);
   const mounted = useRef(true);
 
+  // Every admin response below is meant to be JSON. When one isn't — a 404 from a
+  // backend older than this panel, an HTML error page from a reverse proxy, an
+  // empty body from a server that died mid-request — res.json() reported
+  // "JSON.parse: unexpected character at line 1 column 1", which names neither the
+  // request, the status, nor what actually came back. Say all three instead.
+  const readJson = async (res, url) => {
+    const body = await res.text();
+    try { return JSON.parse(body); }
+    catch {
+      const snippet = body.replace(/\s+/g, ' ').trim().slice(0, 120);
+      throw new Error(`HTTP ${res.status} from ${url} — ${snippet || 'empty response'}`);
+    }
+  };
+
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
     try {
-      const res = await fetch(`/api/admin/scan-indexes?game=${game}&lang=${lang}`);
-      const body = await res.json();
+      const url = `/api/admin/scan-indexes?game=${game}&lang=${lang}`;
+      const res = await fetch(url);
+      const body = await readJson(res, url);
       if (!mounted.current) return false;
       if (!res.ok) { setError(body.error || 'Failed to load'); return false; }
       setError('');
@@ -305,7 +320,7 @@ export default function ScanIndexPanel({ t, showToast, formatBytes }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ game, lang, ...body }),
       });
-      const j = await res.json();
+      const j = await readJson(res, '/api/admin/scan-indexes/build');
       if (res.ok) { showToast(j.message); await load(false); startPoll(); }
       else showToast(j.error || t('admin.errGlobalBuild'));
     } catch (e) {
@@ -332,8 +347,9 @@ export default function ScanIndexPanel({ t, showToast, formatBytes }) {
 
   const stop = async () => {
     if (!window.confirm(t('admin.confirmStopGlobal', { game: `${game.toUpperCase()} (${langName(lang)})` }))) return;
-    const res = await fetch(`/api/admin/global-indexes/${game}?lang=${lang}`, { method: 'DELETE' });
-    const j = await res.json();
+    const url = `/api/admin/global-indexes/${game}?lang=${lang}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    const j = await readJson(res, url).catch(e => ({ error: e.message }));
     showToast(j.message || j.error);
     load(false);
   };

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
 [GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
 
+## [1.7.1] - 2026-08-17
+
+### Fixed
+- **A scan-index build that could not start took the server down with it.** `globalIndex.startBuild` launched the build without catching its promise, and the staging-directory setup runs before `build()`'s own `try` — so an unwritable data directory rejected unhandled, which ends the process on Node 20. The click that started it got a dead connection, or a reverse proxy's HTML error page, instead of a message.
+- **The scan-index panel reported every non-JSON response as `JSON.parse: unexpected character at line 1 column 1`.** It called `res.json()` unconditionally, so a 404 from an older backend, an HTML error page from a proxy, or an empty body all arrived as the same message naming neither the request nor the status. It now reports the status, the URL, and what actually came back.
+
 ## [1.7.0] - 2026-08-17
 
 ### Added

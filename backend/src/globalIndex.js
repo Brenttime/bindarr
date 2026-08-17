@@ -894,7 +894,16 @@ function startBuild(game, lang = 'en', { resume = false, rollup = true, only = n
   if (!resume && progress[k] && progress[k].status === 'error') {
     delete progress[k];
   }
-  build(game, lang, { resume, rollup, only, filter });
+  // build() catches everything inside its own walk, but not the staging-dir prep
+  // that runs before that try — and an unhandled rejection ends the process on
+  // Node 20. So a build that could not even start took the server down with it,
+  // and the panel's "index all" got a dead connection (or a reverse proxy's HTML
+  // error page) where it expected JSON.
+  build(game, lang, { resume, rollup, only, filter }).catch(e => {
+    running[k] = null;
+    progress[k] = { ...progress[k], status: 'error', error: e.message };
+    console.error(`globalIndex: ${tag(game, lang)} build could not start: ${e.message}`);
+  });
   return true;
 }
 
