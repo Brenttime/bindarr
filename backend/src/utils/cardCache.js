@@ -11,7 +11,8 @@ const COLUMNS = [
   'number', 'image_url', 'price_trend', 'price_normal', 'price_holofoil',
   'price_reverse_holofoil', 'price_avg1', 'price_avg7', 'price_avg30', 'cmc',
   'color_identity', 'game', 'language', 'printed_name',
-  'tcgplayer_url', 'cardmarket_url',
+  'tcgplayer_url', 'cardmarket_url', 'tcgplayer_product_id',
+  'price_currency', 'price_source',
 ];
 
 // A page of results can be 250 cards and one round trip per card cost more than
@@ -47,6 +48,8 @@ async function cacheNormalizedCards(cards, game, opts = {}) {
         JSON.stringify(c.color_identity || []), game,
         c.language || 'English', c.printed_name || null,
         c.tcgplayer_url || null, c.cardmarket_url || null,
+        num(c.tcgplayer_product_id),
+        c.price_currency || 'USD', c.price_source || null,
       );
     }
     await db.run(

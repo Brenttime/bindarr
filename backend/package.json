@@ -6,12 +6,12 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node test/sort.test.js && node test/split.test.js && node test/deckrules.test.js && node test/auth.test.js && node test/tcgretry.test.js && node test/cardsources.test.js && node test/clippreprocess.test.js && node test/orbunion.test.js && node test/embedunion.test.js && node test/absentsets.test.js && node test/outofscope.test.js && node test/indexstate.test.js && node test/setcatalogue.test.js && node test/pokemonprovider.test.js && node test/cardsearchsql.test.js && node test/printingexpansion.test.js && node test/globalverify.test.js && node test/languages.test.js && node test/setindexlang.test.js && node test/crop.test.js && node test/tls.test.js && node test/e2e/schema.test.js && node test/e2e/cross_feature.test.js && node test/e2e/scenarios.test.js && node test/e2e/scryfall.test.js && node test/e2e/run.js",
+    "test": "node test/sort.test.js && node test/split.test.js && node test/stackquantity.test.js &&node test/deckrules.test.js && node test/auth.test.js && node test/tcgretry.test.js && node test/cardsources.test.js && node test/orbunion.test.js && node test/absentsets.test.js && node test/outofscope.test.js && node test/indexstate.test.js && node test/setcatalogue.test.js && node test/pokemonprovider.test.js && node test/cardsearchsql.test.js && node test/printingexpansion.test.js && node test/globalverify.test.js && node test/languages.test.js && node test/marketplacelinks.test.js && node test/slabgrading.test.js && node test/marketvalue.test.js && node test/tcgcsv.test.js && node test/setindexlang.test.js && node test/crop.test.js && node test/tls.test.js && node test/e2e/schema.test.js && node test/e2e/cross_feature.test.js && node test/e2e/scenarios.test.js && node test/e2e/scryfall.test.js && node test/e2e/run.js",
     "test:e2e": "node test/e2e/run.js"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
     "axios": "^1.6.8",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

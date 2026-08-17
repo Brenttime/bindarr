@@ -10,6 +10,7 @@ import CardInspectorModal from './CardInspectorModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { LANGUAGES, langName } from '../utils/languages';
+import { requestDetect, stopDetect, smoothQuad, quadDrift, DETECT_W } from '../utils/cardDetector';
 import { defaultGame, gameOptions, showGamePicker } from '../utils/games';
 import { isNative } from '../apiBase';
 import { useT } from '../utils/i18n';
@@ -21,13 +22,29 @@ import { useT } from '../utils/i18n';
 // Below the gate the scan shows the candidates for manual selection.
 const SCAN_MATCH_MIN_SCORE = 0.55;
 const SCAN_MATCH_MIN_INLIERS = 12;
+// Margin around the guide box when cropping. The box is an aim hint and a card
+// can overhang it, so the crop runs slightly wider than the box itself.
+const CROP_PAD = 0.05;
+// Live-outline cadence. Detection is local, so this is bounded by CPU rather
+// than by a network round trip: ~80ms per frame on a desktop, ~300ms on a phone.
+// The loop is self-pacing, so a slower device simply updates less often.
+const DETECT_INTERVAL_MS = 80;
+// How still the corners must be, in normalised units, to count a frame as steady.
+const STEADY_DRIFT = 0.012;
+// Consecutive steady frames before auto-capture will fire.
+const STEADY_FRAMES_NEEDED = 3;
 // Scan-detail presets (quick↔accurate slider). Higher index = more upload
 // resolution, deeper server CLIP recall + more ORB features, longer cooldown:
 // slower but more accurate. Lower = faster, less accurate. Turbo keeps ORB
 // verify but with the fewest recall candidates + features — leanest ORB pass.
 const SCAN_PROFILES = [
-  { label: 'Turbo',    uploadW: 400,  cooldown: 400,  countdown: 0, recallK: 28,  orb: 240, cadence: 2000 },
-  { label: 'Fast',     uploadW: 640,  cooldown: 1200, countdown: 1, recallK: 60,  orb: 300 },
+  // uploadW floors at 720 even on the fastest preset: the guide crop is already
+  // most of the way down from the capture, so a 400px upload delivered a ~250px
+  // card, and exact-printing measures 76.0% at 250px against 91.0% at 420px.
+  // That is 15 points given away for a few KB of JPEG, not a speed/accuracy
+  // trade — recallK and orb below are where the real trade lives.
+  { label: 'Turbo',    uploadW: 720,  cooldown: 400,  countdown: 0, recallK: 28,  orb: 240, cadence: 2000 },
+  { label: 'Fast',     uploadW: 800,  cooldown: 1200, countdown: 1, recallK: 60,  orb: 300 },
   { label: 'Balanced', uploadW: 900,  cooldown: 2000, countdown: 2, recallK: 120, orb: 400 },
   { label: 'Accurate', uploadW: 1280, cooldown: 3000, countdown: 2, recallK: 250, orb: 500 },
 ];
@@ -61,6 +78,15 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const [captureCountdown, setCaptureCountdown] = useState(null);
   // Draggable/rotatable scan guide: translate (px, relative to centered) + angle
   // (deg). Lets the user aim the crop at an off-center or tilted card.
+  // Latest detector result for the live outline, or null. Kept small on purpose:
+  // { detected, quad(0..1 of the CROP), pick }.
+  const [detectQuad, setDetectQuad] = useState(null);
+  const [showDetectOutline, setShowDetectOutline] = useState(() => localStorage.getItem('scan_outline') !== '0');
+  const outlineCanvas = useRef(null);   // one canvas, reused every update
+  const smoothed = useRef(null);        // eased corners, what actually gets drawn
+  const lastRawQuad = useRef(null);     // previous RAW detection, for drift
+  const steadyFrames = useRef(0);       // consecutive low-drift detections
+  const bestFrame = useRef(null);       // latest { sharp, fill, steady } for capture gating
   const [guideOffset, setGuideOffset] = useState({ x: 0, y: 0 });
   const [guideAngle, setGuideAngle] = useState(0);
   const [guideScale, setGuideScale] = useState(1);
@@ -151,6 +177,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const resolvedDupIdRef = useRef(null);
   const beepCtxRef = useRef(null); // reused AudioContext for the scan cue
   const handleCaptureRef = useRef(null); // always the latest handleCapture, for timers
+  // Same trick for the capture gate: the metronome interval closes over its first
+  // render, so it needs a ref to reach the current predicate.
+  const frameWorthCaptureRef = useRef(null);
   const captureBlockedRef = useRef(false); // true while a modal/picker/drawer is up
   const loadingRef = useRef(false); // mirrors `loading` for the metronome interval
 
@@ -419,6 +448,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
       const remaining = nextFireAt - Date.now();
       if (remaining > 0) { setCaptureCountdown(remaining); return; }
       if (loadingRef.current) { setCaptureCountdown(0); return; } // scan busy: wait
+      // Hold the beat until the frame is worth spending a scan on.
+      if (!frameWorthCaptureRef.current?.()) { setCaptureCountdown(0); return; }
       handleCaptureRef.current?.();
       nextFireAt = Date.now() + cadence;
       setCaptureCountdown(cadence);
@@ -427,6 +458,25 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraActive, autoScan, scanDetail]);
 
+  // Is this moment worth taking the picture?
+  //
+  // What local detection buys beyond the outline. Auto-scan used to fire on a
+  // timer and send whatever frame the clock landed on — including motion-blurred
+  // ones, which measurably produced confident WRONG answers that no amount of
+  // recall tuning could rescue. Now it waits for the detector to have a
+  // card-shaped quad that has stopped moving.
+  //
+  // Permissive by default: if the outline is off, or nothing has been seen yet,
+  // say yes. A scanner that refuses to take pictures is worse than one that
+  // occasionally takes a mediocre one.
+  const frameWorthCapturing = () => {
+    if (!showDetectOutline) return true;              // outline off: no opinion
+    const b = bestFrame.current;
+    if (!b) return true;                              // nothing seen: do not stall
+    if (Date.now() - b.at > 1500) return true;        // stale read: do not stall
+    return b.steady >= STEADY_FRAMES_NEEDED && b.fill >= 0.7;
+  };
+
   // After-completion scheduler (non-Turbo tiers): capture cooldown ms after the
   // previous scan finishes (loading drops).
   useEffect(() => {
@@ -434,7 +484,12 @@ function CameraScanner({ onAddSuccess, showToast }) {
     let timerId;
     if (cameraActive && autoScan && !isDrawerOpen && !loading && scanMatches.length === 0 && !autoAddTargetCard && !dupConfirmCard) {
       timerId = setTimeout(() => {
-        handleCaptureRef.current?.();
+        // Re-check at fire time, not schedule time — the card may have moved
+        // during the cooldown. If it is not worth it, look again shortly rather
+        // than burning a scan; the retry is what keeps auto-scan feeling
+        // continuous instead of stalling.
+        if (frameWorthCapturing()) handleCaptureRef.current?.();
+        else timerId = setTimeout(() => handleCaptureRef.current?.(), 300);
       }, profile.cooldown);
     }
     return () => {
@@ -442,6 +497,82 @@ function CameraScanner({ onAddSuccess, showToast }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraActive, autoScan, isDrawerOpen, loading, scanMatches, autoAddTargetCard, dupConfirmCard, scanDetail]);
+
+  // Live "where does the scanner think the card is" outline.
+  //
+  // Every crop failure used to be invisible until after the shutter: you framed a
+  // card, got a wrong answer, and had no way to see the detector had locked onto a
+  // sleeve edge or nothing at all. This closes that loop.
+  //
+  // The cost model is the entire design, because the first attempt at this froze
+  // the app. Per update it does exactly one canvas draw and one async encode:
+  //   · ONE canvas, reused (allocating per frame exhausts mobile canvas memory,
+  //     after which new canvases come back blank rather than failing)
+  //   · toBlob, not toDataURL — the latter is a SYNCHRONOUS JPEG encode
+  //   · no getImageData anywhere — each call is a GPU readback
+  //   · self-pacing: the next request is scheduled after the last one lands, so a
+  //     slow phone or a slow network stretches the interval instead of queueing
+  //   · paused entirely while a real scan is running; that result is what matters
+  // Roughly 1.5 requests/second of small JPEGs, and nothing synchronous.
+  useEffect(() => {
+    if (!cameraActive || !showDetectOutline) { setDetectQuad(null); return; }
+    let stopped = false;
+    let timer;
+
+    // Applied when the worker answers, not when the frame was submitted.
+    const onDetectResult = (found) => {
+      if (stopped) return;
+      if (!found.detected) {
+        steadyFrames.current = 0;
+        smoothed.current = null;
+        lastRawQuad.current = null;
+        bestFrame.current = null;
+        setDetectQuad(null);
+        return;
+      }
+      // Drift is measured between RAW results; the smoothed quad is only what
+      // gets drawn, and easing it would make everything look steady.
+      const drift = quadDrift(lastRawQuad.current, found.quad);
+      lastRawQuad.current = found.quad;
+      smoothed.current = smoothQuad(smoothed.current, found.quad);
+      steadyFrames.current = drift < STEADY_DRIFT ? steadyFrames.current + 1 : 0;
+      bestFrame.current = {
+        at: Date.now(),
+        sharp: found.sharp || 0,
+        fill: found.pick?.fill ?? 0,
+        steady: steadyFrames.current,
+      };
+      setDetectQuad({ ...found, quad: smoothed.current });
+    };
+
+    const tick = () => {
+      if (stopped) return;
+      try {
+        const guideElement = document.querySelector('.scan-card-guide');
+        // Skip while a scan owns the pipeline, or before the video has a frame to
+        // copy: videoWidth is set at metadata, but there are no pixels until
+        // readyState reaches HAVE_CURRENT_DATA, and drawing early yields black.
+        const v = videoRef.current;
+        if (!loadingRef.current && guideElement && v?.videoWidth && v.readyState >= 2) {
+          if (!outlineCanvas.current) outlineCanvas.current = document.createElement('canvas');
+          const c = buildFramedCanvas(v, guideElement, DETECT_W, outlineCanvas.current);
+          // Fire-and-forget: the worker answers on its own schedule and a frame
+          // is skipped rather than queued while one is in flight. Queueing would
+          // only produce results describing a scene that has already moved.
+          if (c) requestDetect(c, onDetectResult);
+        }
+      } catch {
+        // A dropped preview frame is not worth surfacing; the next tick retries.
+        if (!stopped) setDetectQuad(null);
+      }
+      // Self-pacing: schedule from the END of the work, so a slow device stretches
+      // the interval instead of queueing frames it cannot keep up with.
+      if (!stopped) timer = setTimeout(tick, DETECT_INTERVAL_MS);
+    };
+    timer = setTimeout(tick, 400);   // let the camera settle before the first look
+    return () => { stopped = true; clearTimeout(timer); stopDetect(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraActive, showDetectOutline]);
 
   const updateAdvancedConstraints = (track, newAdvancedProps) => {
     try {
@@ -519,8 +650,14 @@ function CameraScanner({ onAddSuccess, showToast }) {
       const constraints = {
         video: {
           facingMode: 'environment', // Use back camera on phones
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          // 1080p, not 720p. The guide box crops to roughly a third of the frame,
+          // so 720p delivered a ~250px-wide card to a pipeline whose reference
+          // images are 500px — and accuracy falls off a cliff right there.
+          // Measured on 100 MTG cards: exact-printing 76.0% at a 250px card,
+          // 91.0% at 420px, 90.0% at 800px. `ideal` rather than `min` so a camera
+          // that cannot manage it degrades instead of failing getUserMedia.
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         },
         audio: false
       };
@@ -659,6 +796,54 @@ function CameraScanner({ onAddSuccess, showToast }) {
     return canvas;
   };
 
+  // The guide-box region of the current frame, oriented and deskewed to the box.
+  //
+  // ONE implementation, shared by the capture and by the live overlay. The
+  // overlay's whole value is that it shows what the SCAN will see, so if it
+  // framed the picture even slightly differently it would be confidently
+  // misleading — and a preview that lies is worse than none.
+  //
+  // `maxW` downscales for the overlay (a detection frame needs far fewer pixels
+  // than a match does); `target` reuses a canvas rather than allocating one per
+  // frame, which is what mobile browsers punish by handing back BLANK canvases
+  // once their per-tab canvas memory is exhausted.
+  const buildFramedCanvas = (video, guideElement, maxW = 0, target = null) => {
+    if (!video?.videoWidth || !guideElement) return null;
+    const oc = getOrientedVideoCanvas(video);
+    const videoRect = video.getBoundingClientRect();
+    const guideRect = guideElement.getBoundingClientRect();
+    // Cover-transform mapping from displayed video px to oriented-canvas px
+    // (matches object-fit:cover on the preview).
+    const k = Math.max(videoRect.width / oc.width, videoRect.height / oc.height);
+    const offX = (videoRect.width - oc.width * k) / 2;
+    const offY = (videoRect.height - oc.height * k) / 2;
+    // Box centre (rotation is about the element centre, so the rotated AABB
+    // centre from getBoundingClientRect is still the true centre).
+    const cx = ((guideRect.left + guideRect.width / 2) - videoRect.left - offX) / k;
+    const cy = ((guideRect.top + guideRect.height / 2) - videoRect.top - offY) / k;
+    // offsetWidth/Height are the unscaled layout size; the CSS scale transform
+    // does not change them, so fold guideScale in here.
+    const fullW = Math.max(1, Math.round((guideElement.offsetWidth * guideScale / k) * (1 + 2 * CROP_PAD)));
+    const fullH = Math.max(1, Math.round((guideElement.offsetHeight * guideScale / k) * (1 + 2 * CROP_PAD)));
+    const s = (maxW && fullW > maxW) ? maxW / fullW : 1;
+    const destW = Math.max(1, Math.round(fullW * s));
+    const destH = Math.max(1, Math.round(fullH * s));
+
+    const canvas = target || document.createElement('canvas');
+    canvas.width = destW;                       // also resets pixels + transform
+    canvas.height = destH;
+    const fctx = canvas.getContext('2d');
+    // Sample the (possibly rotated, off-centre) box region upright: dest centre
+    // maps to the box centre, undo the box rotation, draw the frame. Pixels past
+    // the box come through black; the server auto-detects the card inside.
+    fctx.scale(s, s);
+    fctx.translate(fullW / 2, fullH / 2);
+    fctx.rotate(-(guideAngle * Math.PI) / 180);
+    fctx.translate(-cx, -cy);
+    fctx.drawImage(oc, 0, 0);
+    return canvas;
+  };
+
   // Present the image-match results: show the picker, and on a single result
   // take the fast path (auto-add / quick-
   // add per mode). autoSingle lets the caller allow the fast path for a single MTG
@@ -770,43 +955,13 @@ function CameraScanner({ onAddSuccess, showToast }) {
       return;
     }
 
-    // 1. Capture and correctly orient the video frame onto a canvas
-    const orientedCanvas = getOrientedVideoCanvas(video);
-
-    // Map the dashed guide box's rendered rect into oriented-canvas pixels through
-    // the preview's object-fit:cover transform, then pad it: the box is an aim
-    // hint, but a card can overhang it, so crop wider so a frame-filling card
-    // isn't clipped. Server auto-detects/deskews the card inside this region.
-    const CROP_PAD = 0.05; // 5% tight margin around guide box
-    const oc = orientedCanvas;
-    const videoRect = video.getBoundingClientRect();
-    const guideRect = guideElement.getBoundingClientRect();
-    // Cover-transform mapping from displayed video px to oriented-canvas px
-    // (matches object-fit:cover on the preview; overflow crop offsets handled below).
-    const k = Math.max(videoRect.width / oc.width, videoRect.height / oc.height);
-    const offX = (videoRect.width - oc.width * k) / 2;
-    const offY = (videoRect.height - oc.height * k) / 2;
-    // Box center (rotation is about the element center, so the rotated AABB
-    // center from getBoundingClientRect is still the true center) and unrotated
-    // size (offsetWidth/Height ignore the CSS transform).
-    const cx = ((guideRect.left + guideRect.width / 2) - videoRect.left - offX) / k;
-    const cy = ((guideRect.top + guideRect.height / 2) - videoRect.top - offY) / k;
-    // offsetWidth/Height are the unscaled layout size; the CSS scale transform
-    // doesn't change them, so fold guideScale in here.
-    const destW = Math.max(1, Math.round((guideElement.offsetWidth * guideScale / k) * (1 + 2 * CROP_PAD)));
-    const destH = Math.max(1, Math.round((guideElement.offsetHeight * guideScale / k) * (1 + 2 * CROP_PAD)));
-    const rad = (guideAngle * Math.PI) / 180;
-    const framedCanvas = document.createElement('canvas');
-    framedCanvas.width = destW;
-    framedCanvas.height = destH;
-    const fctx = framedCanvas.getContext('2d');
-    // Sample the (possibly rotated, off-center) box region upright: dest center
-    // maps to the box center, undo the box rotation, draw the frame. Pixels past
-    // the box (pad / frame overhang) come through black; server auto-detects the card.
-    fctx.translate(destW / 2, destH / 2);
-    fctx.rotate(-rad);
-    fctx.translate(-cx, -cy);
-    fctx.drawImage(oc, 0, 0);
+    // 1. Capture the guide-box region, oriented and deskewed to the box.
+    const framedCanvas = buildFramedCanvas(video, guideElement);
+    if (!framedCanvas) {
+      setLoading(false);
+      setScanStatus('Error: could not read a camera frame.');
+      return;
+    }
     // Picture is now taken — fire the instant cue (click + vibrate + flash) so
     // the user can move the card immediately, before the server lookup runs.
     signal('capture');
@@ -916,6 +1071,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // Keep the ref pointing at the latest handleCapture so timers (metronome /
   // cooldown) always invoke the current closure, never a stale one.
   handleCaptureRef.current = handleCapture;
+  frameWorthCaptureRef.current = frameWorthCapturing;
   // Metronome reads this (not effect deps) to decide whether to fire a capture,
   // so a modal/picker/drawer pauses the beat without restarting the interval.
   captureBlockedRef.current = isDrawerOpen || scanMatches.length > 0 || !!autoAddTargetCard || !!dupConfirmCard;
@@ -1188,6 +1344,41 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 }}
               >
                 {loading && <div className="scan-line"></div>}
+                {/* Live detection outline.
+
+                    Drawn as a child of the guide box, so it inherits the box's
+                    translate/rotate/scale for free and needs no coordinate maths
+                    of its own — the earlier attempt mapped screen coordinates by
+                    hand and got them wrong. Inset by -CROP_PAD on each side
+                    because the quad is normalised to the CROP, which is the box
+                    plus that margin.
+
+                    Green = the detector has a card-like quad and the scan will
+                    work from it. No outline = it has nothing, which is the state
+                    worth seeing before pressing the shutter rather than after. */}
+                {showDetectOutline && detectQuad?.detected && detectQuad.quad && (
+                  <svg
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    style={{
+                      position: 'absolute',
+                      left: `${-CROP_PAD * 100}%`,
+                      top: `${-CROP_PAD * 100}%`,
+                      width: `${(1 + 2 * CROP_PAD) * 100}%`,
+                      height: `${(1 + 2 * CROP_PAD) * 100}%`,
+                      pointerEvents: 'none',
+                      overflow: 'visible',
+                    }}
+                  >
+                    <polygon
+                      points={detectQuad.quad.map(p => `${p.x * 100},${p.y * 100}`).join(' ')}
+                      fill="rgba(74,222,128,0.15)"
+                      stroke="rgb(74,222,128)"
+                      strokeWidth="2"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </svg>
+                )}
               </div>
               {(guideOffset.x !== 0 || guideOffset.y !== 0 || guideAngle !== 0 || guideScale !== 1) && (
                 <button
@@ -1392,6 +1583,21 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 </div>
               )}
             </div>
+
+            {/* Live outline of what the detector currently sees. On by default:
+                it turns aiming into a feedback loop, and it is the only way a bad
+                crop is visible BEFORE the shutter rather than inferred from a
+                wrong answer afterwards. Off is offered because it costs a small
+                request roughly every 650ms. */}
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', background: 'rgba(0,0,0,0.2)', padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', cursor: 'pointer' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('scan.showDetectOutline')}</span>
+              <input
+                type="checkbox"
+                checked={showDetectOutline}
+                onChange={(e) => { setShowDetectOutline(e.target.checked); localStorage.setItem('scan_outline', e.target.checked ? '1' : '0'); }}
+                style={{ accentColor: 'var(--type-grass)' }}
+              />
+            </label>
 
             {/* Scan Detail: quick↔accurate tradeoff. Lower = faster upload,
                 shorter cooldown, shallower server match; higher = more accurate. */}

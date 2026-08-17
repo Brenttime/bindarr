@@ -3,8 +3,15 @@ const fs = require('fs');
 const os = require('os');
 const assert = require('assert');
 
-// Point the db module at a throwaway file BEFORE requiring it
+// Point the db module at a throwaway file BEFORE requiring it.
+//
+// The name is keyed by PID and the file was never cleaned up, so once the OS
+// recycled a PID this opened a database from an OLD run — one that already held
+// this test's fixture rows — and the inserts below failed on a UNIQUE
+// constraint. Rare, entirely dependent on which PID the OS handed out, and it
+// looked like a real regression when it finally fired. Start from empty.
 const tmpDb = path.join(os.tmpdir(), `bindarr-schema-test-${process.pid}.db`);
+try { fs.rmSync(tmpDb, { force: true }); } catch { /* nothing to remove */ }
 process.env.DB_PATH = tmpDb;
 
 const db = require('../../src/db');

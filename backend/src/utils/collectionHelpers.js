@@ -188,6 +188,69 @@ async function splitStackedEntries(database) {
   return created;
 }
 
+// The rows the collection view stacks together with this one: same card, same
+// printing details, same list. Ordered as trim candidates — unplaced copies
+// first, then newest — so a copy already filed into a binder is the last one
+// removed. The edited row itself is excluded: it is never the row deleted.
+async function stackSiblings(dbClient, userId, row, entryId) {
+  return dbClient.all(`
+    SELECT id, quantity FROM collection
+    WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ?
+      AND language = ? AND list_type = ? AND id != ?
+    ORDER BY (location_id IS NULL) DESC, id DESC
+  `, [userId, row.card_id, row.condition, row.printing, row.language, row.list_type, entryId]);
+}
+
+// Make the number of copies this stack represents equal `target`, keeping the
+// edited row. The quantity field in the card popup is absolute — "how many of
+// these I own" — and the stacked collection view sums the identical rows into
+// that one number, so the edit has to reconcile the whole group both ways.
+// Growing inserts single-card rows (one physical card = one row, mirroring the
+// edited row's placement); shrinking removes the trim candidates first and only
+// then reduces the edited row's own quantity, which a legacy stacked row can
+// still have above 1. Returns the net change in copies.
+async function setStackQuantity(database, userId, entryId, target) {
+  const dbClient = database || db;
+  const row = await dbClient.get(`SELECT * FROM collection WHERE id = ? AND user_id = ?`, [entryId, userId]);
+  if (!row) return 0;
+  const siblings = await stackSiblings(dbClient, userId, row, entryId);
+
+  const start = (row.quantity || 1) + siblings.reduce((n, s) => n + (s.quantity || 1), 0);
+  let current = start;
+
+  for (let i = 0; current < target; i++, current++) {
+    await dbClient.run(`
+      INSERT INTO collection (
+        card_id, user_id, quantity, condition, printing, language, purchase_price,
+        location_id, compartment_id, position, is_trade, favorite, list_type, game
+      ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      row.card_id, userId, row.condition, row.printing, row.language, row.purchase_price,
+      row.location_id, row.compartment_id, (row.position || 0) + (i + 1) * 0.001,
+      row.is_trade, row.favorite, row.list_type, row.game
+    ]);
+  }
+
+  for (const s of siblings) {
+    if (current <= target) break;
+    const have = s.quantity || 1;
+    const drop = Math.min(have, current - target);
+    current -= drop;
+    if (drop >= have) {
+      await dbClient.run(`DELETE FROM collection WHERE id = ? AND user_id = ?`, [s.id, userId]);
+    } else {
+      await dbClient.run(`UPDATE collection SET quantity = quantity - ? WHERE id = ? AND user_id = ?`, [drop, s.id, userId]);
+    }
+  }
+
+  if (current > target) {
+    await dbClient.run(`UPDATE collection SET quantity = ? WHERE id = ? AND user_id = ?`, [target, entryId, userId]);
+    current = target;
+  }
+
+  return current - start;
+}
+
 module.exports = {
   getCompartmentOccupancy,
   defaultCompartmentPlan,
@@ -196,4 +259,5 @@ module.exports = {
   describePlacement,
   normalizeRuleConfig,
   splitStackedEntries,
+  setStackQuantity,
 };

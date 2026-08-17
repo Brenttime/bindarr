@@ -3,6 +3,8 @@ const router = express.Router();
 const db = require('../db');
 const { parseThirdPartyCSV } = require('../utils/csvMappers');
 const { generateExportCSV } = require('../utils/csvExporters');
+const { resolveCardPrice } = require('../utils/priceHelpers');
+const { isBinderType } = require('../utils/compartmentSort');
 
 // Export endpoint
 router.get('/export', async (req, res) => {
@@ -17,8 +19,6 @@ router.get('/export', async (req, res) => {
         c.printing,
         c.language,
         c.purchase_price,
-        c.sub_location_1,
-        c.sub_location_2,
         c.added_at,
         cc.id as card_id,
         cc.name as name,
@@ -29,14 +29,46 @@ router.get('/export', async (req, res) => {
         cc.set_name,
         cc.number as collector_number,
         cc.image_url,
-        cc.price_trend as market_price,
-        l.name as location_name
+        c.grader,
+        c.grade,
+        c.market_value,
+        cc.price_trend,
+        cc.price_normal,
+        cc.price_holofoil,
+        cc.price_reverse_holofoil,
+        cc.price_1st_edition,
+        l.name as location_name,
+        l.type as location_type,
+        cp.idx as compartment_idx,
+        cp.label as compartment_label,
+        c.position
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       LEFT JOIN locations l ON c.location_id = l.id
+      LEFT JOIN compartments cp ON c.compartment_id = cp.id
       WHERE c.user_id = ?
     `;
-    const rows = await db.all(query, [req.user.id]);
+    const raw = await db.all(query, [req.user.id]);
+    // market_price used to be cc.price_trend flat, which exported the wrong number
+    // for every foil, every 1st Edition and every slab — the same three cases
+    // resolveCardPrice exists to get right. An export that disagrees with the
+    // dashboard is worse than no export: it is a spreadsheet someone will trust.
+    // price_trend is destructured OUT along with the per-printing columns: the CSV
+    // strategies read `item.price_trend || item.market_price`, so leaving it in
+    // would win over the resolved number and export the raw price anyway.
+    const rows = raw.map(({ price_trend, price_normal, price_holofoil, price_reverse_holofoil, price_1st_edition, ...keep }) => ({
+      ...keep,
+      market_price: resolveCardPrice({ price_trend, price_normal, price_holofoil, price_reverse_holofoil, price_1st_edition, ...keep }),
+      // The two sub-location columns the exporters read. They used to be selected
+      // straight off the collection table as sub_location_1/2 — columns db.js has
+      // DROPPED the table to remove, so every export answered
+      // "no such column: c.sub_location_1" and 500'd. Rebuilt from the compartment
+      // the card actually lives in, the same way the collection view labels it.
+      sub_location_1: keep.compartment_idx == null
+        ? ''
+        : (keep.compartment_label || `${isBinderType(keep.location_type) ? 'Page' : 'Row'} ${keep.compartment_idx}`),
+      sub_location_2: keep.position >= 1000 ? String(Math.floor(keep.position / 1000)) : '',
+    }));
 
     if (format.toLowerCase() === 'json') {
       res.setHeader('Content-Type', 'application/json');

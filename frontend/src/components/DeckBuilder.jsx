@@ -7,6 +7,7 @@ import CheckoutWizardModal from './CheckoutWizardModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { buildDeckExport, parseDeckLine } from '../utils/deckText';
 import { defaultGame, gameOptions, showGamePicker } from '../utils/games';
+import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 
 // Basic Energy (Pokémon) & Basic Lands (MTG) are exempt from the "max 4 of a card" deck rule.
@@ -1443,7 +1444,7 @@ function DeckBuilder({ showToast }) {
                           return (
                             <div key={card.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.35rem 0.5rem', background: 'rgba(255,255,255,0.02)', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
-                                <img src={card.image_url} alt={card.name} style={{ width: '24px', height: '33px', objectFit: 'cover', borderRadius: '2px' }} />
+                                <CardImage card={card} style={{ width: '24px', height: '33px', objectFit: 'cover', borderRadius: '2px' }} />
                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                                   <span style={{ fontSize: '0.8rem', color: 'var(--text-strong)' }}>{card.name} ({card.set_name} • #{card.number})</span>
                                   <span style={{ fontSize: '0.65rem', color: isAtMaxOwned ? 'var(--accent-red)' : 'var(--text-secondary)' }}>Owned: {ownedQty} | In Deck: {qtyInDeck}</span>
@@ -1513,7 +1514,7 @@ function DeckBuilder({ showToast }) {
                               {list.map(card => (
                                 <div key={card.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.01)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
-                                    <img src={card.image_url} alt={card.name} style={{ width: '32px', height: '44px', objectFit: 'cover', borderRadius: '2px' }} />
+                                    <CardImage card={card} style={{ width: '32px', height: '44px', objectFit: 'cover', borderRadius: '2px' }} />
                                     <div>
                                       <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-strong)' }}>{card.name}</div>
                                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{card.set_name} • #{card.number}</div>
@@ -1553,7 +1554,7 @@ function DeckBuilder({ showToast }) {
                               {list.map(card => (
                                 <div key={card.id} style={{ position: 'relative', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', transition: 'transform 0.15s' }}>
                                   <div style={{ position: 'relative', width: '100%', aspectRatio: 0.718, cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
-                                    <img src={card.image_url} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    <CardImage card={card} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                     <span style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.85)', color: 'var(--accent-yellow)', fontSize: '0.75rem', fontWeight: 800, padding: '1px 6px', borderRadius: '10px', border: '1px solid var(--accent-yellow)' }}>
                                       x{card.quantity}
                                     </span>
@@ -1987,7 +1988,7 @@ function DeckBuilder({ showToast }) {
                     position: 'relative',
                     cursor: 'pointer'
                   }} onClick={() => setPreviewCard(card)}>
-                    <img src={card.image_url} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <CardImage card={card} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   </div>
                 ))
               )}
@@ -2161,9 +2162,8 @@ function DeckBuilder({ showToast }) {
             <button className="btn btn-secondary btn-icon-only" onClick={() => setPreviewCard(null)} style={{ position: 'absolute', top: '0.5rem', right: '0.5rem', borderRadius: '50%', zIndex: 10 }}>
               <X size={16} />
             </button>
-            <img
-              src={previewCard.image_url}
-              alt={previewCard.name}
+            <CardImage
+              card={previewCard}
               style={{ width: '100%', borderRadius: '10px', boxShadow: '0 8px 24px rgba(0,0,0,0.6)' }}
             />
             <h4 style={{ color: 'var(--text-strong)', margin: '0.75rem 0 0.25rem 0', fontSize: '1rem' }}>{previewCard.name}</h4>

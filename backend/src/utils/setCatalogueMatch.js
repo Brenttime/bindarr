@@ -31,12 +31,18 @@
 // Keys that more than one catalogue row claims are dropped rather than guessed
 // at: a wrong join here silently shows one set's release date and card count
 // under another set's name, which is worse than the blank it replaces.
-const normId = (s) => String(s || '').toLowerCase().replace(/^mtg-/, '').replace(/[^a-z0-9]/g, '');
+// Diacritics are folded BEFORE the a-z filter, not stripped by it. Dropping the
+// accent as an illegal character turns "Pokémon GO" into "pokmongo" while a
+// provider spelling it "Pokemon GO" gives "pokemongo" — two keys for one set, and
+// the join silently misses. Decomposing first makes both "pokemongo".
+const fold = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+const normId = (s) => fold(s).toLowerCase().replace(/^mtg-/, '').replace(/[^a-z0-9]/g, '');
 
 // Only zeros sitting between a letter and a digit — see the note above.
 const unpadId = (s) => normId(s).replace(/([a-z])0+(\d)/g, '$1$2');
 
-const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const normName = (s) => fold(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 
 // Index `rows` (anything with .id and .name) under all three keys at once.
 function index(rows, { idOf = (r) => r.id, nameOf = (r) => r.name } = {}) {
@@ -69,4 +75,4 @@ function matcher(rows, opts) {
   };
 }
 
-module.exports = { matcher, index, normId, unpadId, normName };
+module.exports = { matcher, index, normId, unpadId, normName, fold };

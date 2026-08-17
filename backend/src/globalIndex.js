@@ -7,39 +7,44 @@
 //   Scanning WITH a set code needs only that set's index, which the scan path
 //   already builds on demand (see collection.js /prepare-set).
 //
-//   Scanning WITHOUT one needs every set indexed, plus two whole-game rollups:
-//     · a CLIP recall table  (src/embedUnion.js) — one vector per artwork, scanned
-//       linearly to shortlist candidates.
-//     · an ORB feature index (src/orbUnion.js)   — every printing, keyed by
-//       set|number and read per candidate to name the exact printing.
+//   Scanning WITHOUT one needs every set indexed, plus ONE whole-game artifact:
+//     · an ORB feature index (src/orbUnion.js) — every printing, keyed by
+//       set|number and read per candidate to name the exact printing. Its meta
+//       also carries each printing's perceptual hash, which is what recall
+//       sweeps, so recall is not a separate artifact at all.
 //
-// Both rollups are concatenations of the per-set files, so a build is one walk
-// over the sets: each set is fetched once, its images downloaded once, and both
-// its ORB features and its CLIP vectors computed from the same buffers. That is
+// The ORB rollup is a concatenation of the per-set files, so a build is one walk
+// over the sets: each set is fetched once and its images downloaded once. That is
 // also what makes the language dimension correct — the per-set fetch already asks
 // the right provider for the right language, where the bulk card sources this
 // used to page had no language dimension at all.
 //
+// Recall costs no walk and, now, no second artifact. It used to be a CLIP
+// embedding table (a second model over every image, one row per ARTWORK, so it
+// could only propose the printing Scryfall picked), then a BoVW visual-word
+// index derived from the ORB descriptors. BoVW was dropped after ablation: over
+// 100 MTG cards it moved exact-printing accuracy 90.0% -> 91.0% versus the hash
+// channel alone, for a 427 MB file and most of the per-scan verification budget.
+//
 // Because the unit of work is a set, an interrupted build costs one set rather
 // than hours, and any set the user already indexed for set-scoped scanning is
-// reused (its ORB half at least — see setIndex.hasEmbeddings).
+// reused as-is.
 //
 // Rollups are written to a staging dir and swapped over the live files at the very
 // end, so scans keep using the previous tables until a build actually finishes.
 const fs = require('fs');
 const path = require('path');
 const scanMatch = require('./scanMatch');
-const embedMatch = require('./embedMatch');
 const setIndex = require('./setIndex');
 const orbUnion = require('./orbUnion');
-const embedUnion = require('./embedUnion');
+const { buildBovw } = require('./buildBovw');
 const languages = require('./utils/languages');
 const gpaths = require('./utils/globalIndexPaths');
 const setCatalogueMatch = require('./utils/setCatalogueMatch');
 const pokemonProvider = require('./utils/pokemonProvider');
 
 // Where the rollups live and what they are called comes from utils/globalIndexPaths
-// — the same module embedMatch and scanMatch read them through. This file used to
+// — the same module scanMatch reads them through. This file used to
 // carry its own copy of the naming rules, which is the one duplication that cannot
 // be caught by anything: a build writes files the readers never look for, and the
 // scanner reports "not built yet" about an index sitting right there on disk.
@@ -112,8 +117,11 @@ const tag = gpaths.tag;         // 'mtg' for English, 'mtg-ja' otherwise
 const idKey = gpaths.key;       // progress/running key for one (game, language)
 
 const FILES = gpaths.filesOf;
-const metaName = (game, lang, kind) =>
-  (kind === 'embed' ? gpaths.names.embedMeta : gpaths.names.orbMeta)(game, lang);
+// Every whole-game artifact a code-free scan needs, in build order: the BoVW
+// recall index is derived from the ORB rollup, so it can only be built after it.
+// The other recall channel — the perceptual hash — rides on the rollup's own
+// meta and so is not a separate artifact.
+const KINDS = ['orb', 'bovw'];
 
 const progress = {};   // "game|lang" -> { phase, done, total, status, error?, ... }
 const running = {};    // "game|lang" -> { child?: ChildProcess, cancelled?: boolean }
@@ -126,18 +134,19 @@ function statOf(name) {
 function stagingDir(game, lang) { return path.join(DATA_DIR, `.staging-${tag(game, lang)}`); }
 function progressFile(game, lang) { return path.join(stagingDir(game, lang), 'progress.json'); }
 
-// Row count and scope of one rollup meta, cached against the file's mtime+size.
+// Row count and scope of the ORB rollup meta, cached against the file's
+// mtime+size.
 //
-// These are the biggest JSON files the app owns — the MTG ORB meta carries a row
-// per printing — and the two things anyone asks of them are a count and a small
+// This is the biggest JSON file the app owns — the MTG ORB meta carries a row
+// per printing — and the two things anyone asks of it are a count and a small
 // scope object. Parsing the whole file for that is affordable once and not at
 // all on a 1.5s poll, which is what the scan-index panel does while a build
 // runs. The stamp means a swapped-in rollup is re-read on its next use, so the
 // cache can never outlive the file it describes.
 const rollupMetas = new Map();   // meta filename -> { stamp, summary }
 
-function rollupMeta(game, lang, kind) {
-  const file = path.join(DATA_DIR, metaName(game, lang, kind));
+function rollupMeta(game, lang) {
+  const file = path.join(DATA_DIR, gpaths.names.orbMeta(game, lang));
   let st;
   try { st = fs.statSync(file); } catch { rollupMetas.delete(file); return null; }
   const stamp = `${st.mtimeMs}|${st.size}`;
@@ -146,7 +155,16 @@ function rollupMeta(game, lang, kind) {
   let summary = null;
   try {
     const parsed = JSON.parse(fs.readFileSync(file));
-    summary = { cards: Array.isArray(parsed.cards) ? parsed.cards.length : 0, scope: parsed.scope || null };
+    const rows = Array.isArray(parsed.cards) ? parsed.cards : [];
+    summary = {
+      cards: rows.length,
+      scope: parsed.scope || null,
+      // Columns 5 and 6 are the perceptual hash. A rollup written before they
+      // existed can still name a printing once ORB is given candidates, but it
+      // has nothing to GENERATE candidates from now that BoVW is gone — so it is
+      // not code-free ready, and saying so is what prompts a refresh.
+      hashed: rows.length > 0 && rows[0].length >= 7,
+    };
   } catch { summary = null; }   // not built yet, or half-written
   rollupMetas.set(file, { stamp, summary });
   return summary;
@@ -156,14 +174,16 @@ function rollupMeta(game, lang, kind) {
 // byte size, card/row count and build time. Drives the admin table.
 function statusOf(game, lang) {
   const kinds = {};
-  for (const kind of ['embed', 'orb']) {
+  const meta = rollupMeta(game, lang) || {};
+  const cards = meta.cards || 0;
+  for (const kind of KINDS) {
     const stats = FILES[kind](game, lang).map(statOf);
     const present = stats.every(Boolean);
     const bytes = stats.reduce((s, x) => s + (x ? x.size : 0), 0);
     const builtAt = stats.reduce((m, x) => Math.max(m, x ? x.mtime : 0), 0);
-    kinds[kind] = { present, bytes, builtAt, cards: (rollupMeta(game, lang, kind) || {}).cards || 0 };
+    kinds[kind] = { present, bytes, builtAt, cards: present ? cards : 0, hashed: present && !!meta.hashed };
   }
-  return { game, lang: langOf(lang), embed: kinds.embed, orb: kinds.orb };
+  return { game, lang: langOf(lang), orb: kinds.orb, bovw: kinds.bovw };
 }
 
 // Every (game, language) pair the UI may show a row for. `langs` defaults to
@@ -196,16 +216,16 @@ function update(game, lang, patch) {
 
 // --- the walk: one pass over the sets, producing both artifacts -----------
 
-// Build (or reuse) every set's index for one game+language, asking for CLIP
-// vectors as it goes, then roll both halves up into the whole-game files.
+// Build (or reuse) every set's index for one game+language, roll them up into the
+// whole-game ORB index, then derive the BoVW recall index from that rollup.
 //
-// This replaced a separate CLIP builder that paged its own card source. That
-// source had no language dimension — pokemontcg.io is English only, and
-// Scryfall's unique_artwork bulk is not language-scoped — so a Japanese build
-// either failed outright or, worse, produced an English table under a Japanese
-// name. The per-set fetch already asks the right provider for the right language,
-// so deriving the recall table from it makes the language correct by construction
-// and downloads each image once instead of twice.
+// The rollup is built from the per-set indexes rather than from a bulk card
+// source. Those sources had no language dimension — pokemontcg.io is English
+// only, and Scryfall's unique_artwork bulk is not language-scoped — so a Japanese
+// build either failed outright or, worse, produced an English table under a
+// Japanese name. The per-set fetch already asks the right provider for the right
+// language, so deriving everything from it makes the language correct by
+// construction.
 //
 // `rollup: false` stops after the set walk: that is the "index every set" action,
 // which is exactly the same work minus the whole-game tables.
@@ -243,10 +263,7 @@ async function runWalk(game, lang, staging, { rollup = true, only = null, filter
     const set = sets[i];
     let err = null, flagged = null;
     try {
-      // Always with embeddings. A set indexed without them looks built but is
-      // invisible to a code-free scan, and fixing that later costs a full
-      // re-download of the set.
-      if (await setIndex.ensureSet(game, set, code, { embed: true })) built++;
+      if (await setIndex.ensureSet(game, set, code)) built++;
       else {
         // ensureSet swallows the throw, so the remembered failure is where the
         // message AND the absence flag have to come from.
@@ -291,8 +308,8 @@ async function runWalk(game, lang, staging, { rollup = true, only = null, filter
   // The rollups cover every set that HAS an index, not just the ones this run
   // touched. Code-free scanning means "search everything indexed", so a build of
   // 3 sets must not throw away the 40 that were already there — it adds to them.
-  const indexed = all.filter(s => setIndex.hasEmbeddings(game, s, code));
-  if (!indexed.length) throw new Error(`no ${game} (${code}) sets carry embeddings — nothing to search`);
+  const indexed = all.filter(s => setIndex.isReady(game, s, code));
+  if (!indexed.length) throw new Error(`no ${game} (${code}) sets are indexed — nothing to search`);
 
   // Which sets could not be built and why — carried across runs, because most
   // runs do not walk the whole catalogue. A scoped build touches a handful of
@@ -325,21 +342,8 @@ async function runWalk(game, lang, staging, { rollup = true, only = null, filter
 
   const resolveSet = (set) => setIndex.paths(game, set, code);
 
-  // Both rollups iterate `indexed`, not the sets this run walked — a rollup-only
+  // The rollup iterates `indexed`, not the sets this run walked — a rollup-only
   // refresh walks nothing at all, and `total: 0` reads as a finished bar.
-  update(game, code, { phase: 'recall', done: 0, total: indexed.length });
-  const embedOut = {
-    bin: path.join(staging, gpaths.names.embedBin(game, code)),
-    meta: path.join(staging, gpaths.names.embedMeta(game, code)),
-  };
-  const embedStats = await embedUnion.unionEmbeddings({
-    sets: indexed, resolveSet, outPaths: embedOut, lang: code, scope,
-    onSet: (i, total) => update(game, code, { done: i, total }),
-  });
-  embedUnion.verifyUnion(embedOut);
-  console.log(`[global ${tag(game, code)}/recall] ${embedStats.cards} artworks ` +
-    `(${embedStats.duplicates} reprints deduped, ${embedStats.missing} sets without embeddings)`);
-
   update(game, code, { phase: 'orb', done: 0, total: indexed.length });
   const orbOut = {
     desc: path.join(staging, gpaths.names.orbDesc(game, code)),
@@ -355,7 +359,21 @@ async function runWalk(game, lang, staging, { rollup = true, only = null, filter
   console.log(`[global ${tag(game, code)}/orb] ${orbStats.cards} printings, ${orbStats.descriptors} descriptors ` +
     `(${orbStats.missing} sets missing, ${orbStats.skipped} rows skipped)`);
 
-  return { sets: sets.length, failed, embed: embedStats, orb: orbStats };
+  // One of the two recall channels needs no pass at all — orbUnion wrote each
+  // printing's perceptual hash into the rollup meta as it concatenated. The other
+  // does: BoVW is derived from the rollup that was just STAGED, not from the live
+  // one, which is a build behind and on a first build does not exist at all.
+  update(game, code, { phase: 'recall', done: 0, total: orbStats.cards });
+  const bovwStats = await buildBovw({
+    game, lang: code,
+    orbPaths: orbOut,
+    outPath: path.join(staging, gpaths.names.bovw(game, code)),
+    onProgress: (i, total) => update(game, code, { done: i, total }),
+  });
+  console.log(`[global ${tag(game, code)}/recall] BoVW over ${bovwStats.totalCards} printings, ` +
+    `${bovwStats.numLeaves} visual words`);
+
+  return { sets: sets.length, failed, orb: orbStats, bovw: bovwStats };
 }
 
 // How many of a game+language's sets are indexed, for the coverage display. The
@@ -363,13 +381,8 @@ async function runWalk(game, lang, staging, { rollup = true, only = null, filter
 async function coverage(game, lang = 'en') {
   const code = langOf(lang);
   const sets = await setIndex.listAllSets(game, code);
-  let indexed = 0, embedded = 0;
-  for (const set of sets) {
-    if (!setIndex.isReady(game, set, code)) continue;
-    indexed++;
-    if (setIndex.hasEmbeddings(game, set, code)) embedded++;
-  }
-  return { game, lang: code, total: sets.length, indexed, embedded };
+  const indexed = sets.filter(s => setIndex.isReady(game, s, code)).length;
+  return { game, lang: code, total: sets.length, indexed };
 }
 
 // THE unified getter: everything the scan-index UI needs for one game+language in
@@ -425,7 +438,6 @@ async function listSetIndexes(game, lang = 'en') {
   });
 
   const indexed = rows.filter(r => r.indexed).length;
-  const embedded = rows.filter(r => r.embedded).length;
   const status = statusOf(game, code);
   const scope = rollupScope(game, code);
   return {
@@ -434,9 +446,8 @@ async function listSetIndexes(game, lang = 'en') {
     summary: {
       total: rows.length,
       indexed,
-      embedded,
       bytes: rows.reduce((n, r) => n + r.bytes, 0),
-      codeFreeReady: status.embed.present && status.orb.present,
+      codeFreeReady: status.orb.present && (status.orb.hashed || status.bovw.present),
       rollup: status,
       scope,
       ...coverageBreakdown(rows, scope),
@@ -524,16 +535,12 @@ function coverageBreakdown(rows, scope) {
 function setIndexState(game, set, lang) {
   const p = setIndex.paths(game, set, lang);
   let bytes = 0, builtAt = 0;
-  for (const f of [p.desc, p.kp, p.meta, p.embed]) {
+  for (const f of [p.desc, p.kp, p.meta]) {
     try { const st = fs.statSync(f); bytes += st.size; builtAt = Math.max(builtAt, st.mtimeMs); }
     catch { /* that part not written */ }
   }
   const cards = (setIndex.metaSummary(game, set, lang) || {}).cards || 0;
-  return {
-    indexed: setIndex.isReady(game, set, lang),
-    embedded: setIndex.hasEmbeddings(game, set, lang),
-    cards, bytes, builtAt,
-  };
+  return { indexed: setIndex.isReady(game, set, lang), cards, bytes, builtAt };
 }
 
 // The set list with display metadata (names, release dates, logos). Separate from
@@ -609,7 +616,7 @@ const normSet = setCatalogueMatch.normId;
 // see scanMatch, which reports "outside your indexed range" rather than handing
 // back the nearest indexed artwork as if it were the answer.
 function rollupScope(game, lang) {
-  return (rollupMeta(game, lang, 'embed') || {}).scope || null;
+  return (rollupMeta(game, lang) || {}).scope || null;
 }
 
 // --- swap ---------------------------------------------------------------
@@ -627,20 +634,15 @@ async function swapFile(from, to) {
 // Every staged file must exist and be non-empty before anything is swapped: a
 // half-written staging dir must not be able to replace a working index piecemeal.
 function checkStaged(game, lang, staging) {
-  for (const kind of ['embed', 'orb']) {
+  for (const kind of KINDS) {
     for (const name of FILES[kind](game, lang)) {
       const p = path.join(staging, name);
       if (!fs.existsSync(p)) throw new Error(`staged ${name} is missing — not swapping`);
       if (fs.statSync(p).size === 0) throw new Error(`staged ${name} is empty — not swapping`);
     }
   }
-  const embedMeta = JSON.parse(fs.readFileSync(path.join(staging, metaName(game, lang, 'embed'))));
-  const embedBytes = fs.statSync(path.join(staging, FILES.embed(game, lang)[0])).size;
-  const expected = embedMeta.cards.length * embedMeta.dim * 4;
-  if (embedBytes !== expected) {
-    throw new Error(`staged embed.bin is ${embedBytes} bytes, meta describes ${expected} — not swapping`);
-  }
-  if (!embedMeta.cards.length) throw new Error('staged embed index has no cards — not swapping');
+  const orbMeta = JSON.parse(fs.readFileSync(path.join(staging, gpaths.names.orbMeta(game, lang))));
+  if (!orbMeta.cards.length) throw new Error('staged ORB index has no cards — not swapping');
 }
 
 // One job, two completeness targets.
@@ -700,11 +702,10 @@ async function build(game, lang, { resume = false, rollup = true, only = null, f
     // Windows refuses to rename a file any process still holds open, and the pool
     // workers cache their own descriptors on the global .bin files — so evicting
     // only the main thread's caches would leave the swap failing.
-    embedMatch.reload(game, code);
     scanMatch.reload(game, code);
     try { await require('./scanPool').closeGlobalFiles(); }
     catch (e) { console.warn(`globalIndex: could not close pool file handles: ${e.message}`); }
-    for (const kind of ['embed', 'orb']) {
+    for (const kind of KINDS) {
       for (const name of FILES[kind](game, code)) {
         await swapFile(path.join(staging, name), path.join(DATA_DIR, name));
       }
@@ -733,10 +734,10 @@ async function build(game, lang, { resume = false, rollup = true, only = null, f
 // an hour in — which is how issue #29 was found.
 //
 // It deliberately exercises THE PATH THE BUILD USES: the set list, then one real
-// set's card list in the requested language, then one of that set's images, then
-// the encoder. An earlier version checked a bulk card file that the build no
-// longer reads, and which had no language dimension — so it would happily pass
-// for Japanese Pokémon while the build itself queried an English-only API.
+// set's card list in the requested language. An earlier version checked a bulk
+// card file that the build no longer reads, and which had no language dimension —
+// so it would happily pass for Japanese Pokémon while the build itself queried an
+// English-only API.
 async function preflight(game, lang = 'en') {
   const code = langOf(lang);
   const detail = [];
@@ -783,121 +784,59 @@ async function preflight(game, lang = 'en') {
     detail.push(`note: ${probeErrors.length} of ${probeSets.length} sampled sets have no ${languages.toName(code)} data — coverage will be partial`);
   }
 
-  // And the encoder, since a recall table cannot be built without it.
-  const clip = require('./utils/clipPreprocess');
-  await clip.getExtractor(clip.MODEL);
-  detail.push(`encoder OK: ${clip.MODEL} (${clip.PREPROCESS})`);
-
   return { sets: sets.length, probeSet: probe.set, detail };
 }
 
-// --- background embedding top-up ----------------------------------------
+// --- folding newly-indexed sets in --------------------------------------
 //
-// There is exactly one path that folds newly-indexed sets into the whole-game
-// tables, and it is below: top up a set's CLIP vectors, then refresh the rollups.
-// A `scheduleRollupRefresh` used to sit here as a second, standalone entry point
-// promising to fold in any set index the moment it appeared — but nothing ever
-// called it, and it had no work to do if anything had: a rollup only changes when
-// a set gains embeddings, and the two things that grant them (a full build, and
-// the top-up) each refresh the rollups themselves.
-
-// Sets built by the scan path have ORB features but no CLIP vectors, so they are
-// scannable by set code yet invisible to a code-free scan. This walks those sets
-// afterwards and adds the vectors, then refreshes the rollups.
+// A set indexed by the on-demand scan path is immediately eligible for the
+// whole-game rollup: recall is derived from its ORB features, which that path
+// already wrote. So there is nothing to top up — the rollup just has to be
+// refreshed, which is now a plain concatenation.
 //
-// Deliberately in the background and one set at a time: the user who triggered the
-// build is already scanning, and CLIP encoding competes with the scan worker pool
-// for the same cores. Adding vectors means re-downloading that set's images —
-// unavoidable, since caching every card image would cost tens of GB — which is
-// exactly why it must not happen while someone waits.
-//
-// And it only runs for a game+language that ALREADY has whole-game rollups. The
-// top-up maintains code-free scanning; it does not create it. Ungated, one
-// set-scoped scan by one user would enqueue every ORB-only set in the game —
-// hundreds of sets, every image re-downloaded, hours of provider traffic and CPU
-// — to produce vectors for a table that does not exist and that nobody has asked
-// for. Building code-free scanning is a deliberate multi-hour act with a
-// confirmation and a progress bar; a scan must not start it by side effect.
-//
-// The gate is on the rollup files rather than on a setting because that is the
-// honest signal of intent: the rollups exist precisely when someone ran the build
-// that creates them. Once they do, letting each newly scanned set fold itself in
-// is the whole point — otherwise code-free coverage silently rots as sets are
-// added, and the only repair is the multi-hour rebuild again.
-const topUpQueue = [];
-let topUpRunning = false;
-const topUpTimers = {};
-const TOPUP_DEBOUNCE_MS = 30000;
+// This used to be a whole background subsystem, because recall was CLIP: a
+// scan-built set had ORB features but no vectors, so it was scannable by set
+// code yet invisible to a code-free scan, and granting it vectors meant
+// re-downloading every image in the set. Removing CLIP removed the problem
+// rather than the workaround.
 
 // Has code-free scanning been built for this game+language? Cheap: stats plus a
 // cached meta summary, no provider calls.
+//
+// The gate matters: refreshing MAINTAINS code-free scanning, it does not create
+// it. Building it is a deliberate multi-hour act with a confirmation and a
+// progress bar, and a scan must not start one by side effect. The rollup files
+// existing is the honest signal that someone already asked for it.
 function hasRollup(game, lang) {
   const s = statusOf(game, lang);
-  return s.embed.present && s.orb.present;
+  return s.orb.present && (s.orb.hashed || s.bovw.present);
 }
 
-function scheduleEmbedTopUp(game, lang = 'en') {
+// Fold sets indexed since the last rollup into it, once the churn stops.
+//
+// Debounced because a multi-set scan calls this once per set, and refreshing is
+// not free: it rewrites the whole concatenated rollup.
+// ponytail: one refresh rebuilds the whole index rather than adding the new set's
+// postings to it. Incremental insertion is worth writing only if this shows up as
+// a real cost — it runs in the background, 30s after the last set lands.
+const refreshTimers = {};
+const REFRESH_DEBOUNCE_MS = 30000;
+
+function scheduleRollupRefresh(game, lang = 'en') {
   const code = langOf(lang);
   const k = idKey(game, code);
-  if (!hasRollup(game, code)) return;   // nothing to maintain — see above
-  if (topUpTimers[k]) clearTimeout(topUpTimers[k]);
-  topUpTimers[k] = setTimeout(() => {
-    delete topUpTimers[k];
-    if (!topUpQueue.some(j => j.game === game && j.lang === code)) topUpQueue.push({ game, lang: code });
-    drainTopUp();
-  }, TOPUP_DEBOUNCE_MS);
-  if (topUpTimers[k].unref) topUpTimers[k].unref();
+  if (!hasRollup(game, code)) return;   // maintains code-free scanning, never creates it
+  if (refreshTimers[k]) clearTimeout(refreshTimers[k]);
+  refreshTimers[k] = setTimeout(() => {
+    delete refreshTimers[k];
+    refreshRollups(game, code)
+      .catch(e => console.warn(`globalIndex: rollup refresh for ${tag(game, code)} failed: ${e.message}`));
+  }, REFRESH_DEBOUNCE_MS);
+  if (refreshTimers[k].unref) refreshTimers[k].unref();
 }
 
-async function drainTopUp() {
-  if (topUpRunning) return;
-  topUpRunning = true;
-  try {
-    while (topUpQueue.length) {
-      const { game, lang } = topUpQueue.shift();
-      // Never fight a full build for the same target.
-      if (running[idKey(game, lang)]) continue;
-      try { await topUpEmbeddings(game, lang); }
-      catch (e) { console.warn(`globalIndex: embedding top-up failed for ${tag(game, lang)}: ${e.message}`); }
-    }
-  } finally {
-    topUpRunning = false;
-  }
-}
-
-// Add CLIP vectors to every set that has an index but no embeddings.
-//
-// Re-checked here, not just at schedule time: the queue is debounced by 30s and
-// drained one job at a time, so a rollup can be deleted between a scan enqueuing
-// this and the walk actually starting.
-async function topUpEmbeddings(game, lang = 'en') {
-  const code = langOf(lang);
-  if (!hasRollup(game, code)) return { toppedUp: 0, skipped: 'no rollup to maintain' };
-  const all = await setIndex.listAllSets(game, code);
-  const pending = all.filter(s => setIndex.isReady(game, s, code) && !setIndex.hasEmbeddings(game, s, code));
-  if (!pending.length) return { toppedUp: 0 };
-
-  console.log(`globalIndex: topping up embeddings for ${pending.length} ${tag(game, code)} set(s) in the background`);
-  let done = 0;
-  for (const set of pending) {
-    if (running[idKey(game, code)]) break;      // a real build took over
-    try {
-      // Rebuilding the set is what adds the vectors; its ORB half is rewritten
-      // identically from the same images.
-      if (await setIndex.ensureSet(game, set, code, { embed: true })) done++;
-    } catch (e) {
-      console.warn(`globalIndex: top-up of ${set} failed: ${e.message}`);
-    }
-  }
-  if (done) {
-    console.log(`globalIndex: topped up ${done}/${pending.length} ${tag(game, code)} set(s)`);
-    await refreshRollups(game, code).catch(e => console.warn(`globalIndex: rollup after top-up failed: ${e.message}`));
-  }
-  return { toppedUp: done, pending: pending.length };
-}
-
-// Rebuild the whole-game tables from every set that currently has embeddings.
-// Cheap relative to a build: file concatenation only.
+// Rebuild the whole-game tables from every set that is currently indexed.
+// Cheap relative to a build: no downloads, no provider calls.
 async function refreshRollups(game, lang = 'en') {
   const code = langOf(lang);
   const k = idKey(game, code);
@@ -919,15 +858,14 @@ async function refreshRollups(game, lang = 'en') {
     update(game, code, { phase: 'recall', status: 'running', done: 0, total: 0, game, lang: code });
     const stats = await runWalk(game, code, staging, { rollup: true, only: [], rollupOnly: true });
     checkStaged(game, code, staging);
-    embedMatch.reload(game, code);
     scanMatch.reload(game, code);
     try { await require('./scanPool').closeGlobalFiles(); } catch { /* pool may be disabled */ }
-    for (const kind of ['embed', 'orb']) {
+    for (const kind of KINDS) {
       for (const name of FILES[kind](game, code)) {
         await swapFile(path.join(staging, name), path.join(DATA_DIR, name));
       }
     }
-    console.log(`globalIndex: ${tag(game, code)} rollup refreshed (${stats.embed ? stats.embed.cards : '?'} artworks)`);
+    console.log(`globalIndex: ${tag(game, code)} rollup refreshed (${stats.orb ? stats.orb.cards : '?'} printings)`);
     return stats;
   } finally {
     // On disk as well as in memory: update() mirrors progress into the BUILD's
@@ -992,6 +930,41 @@ function stopBuild(game, lang = 'en') {
   return true;
 }
 
+// Upgrade path: a rollup written before orbUnion carried the perceptual-hash
+// columns has no recall at all now that BoVW is gone, so code-free scanning reads
+// as "not built" the moment the server restarts on the new version.
+//
+// Without this the only repair offered is Rebuild, which walks the whole
+// catalogue — and while it re-downloads nothing (every set index is already
+// complete), it still calls loadSet on ~460 sets, pulling each one's desc+kp
+// pair into a cache that is never evicted. Hours of wall-clock and gigabytes of
+// RAM to reproduce something the per-set metas already hold.
+//
+// A rollup refresh is that repair: it re-concatenates from those metas, copying
+// their hash columns forward, with no provider calls. It cannot help a set index
+// that itself predates the columns — that one genuinely needs rebuilding — so
+// the refresh is attempted and the result speaks for itself.
+async function backfillRecall(langs = ['en']) {
+  for (const game of GAMES) {
+    for (const lang of [...new Set(langs.map(langOf))]) {
+      const k = idKey(game, lang);
+      if (running[k]) continue;                       // a real build owns this target
+      const s = statusOf(game, lang);
+      if (!s.orb.present || s.orb.hashed) continue;
+      console.log(`globalIndex: ${tag(game, lang)} rollup predates the hash columns — refreshing it from the per-set indexes`);
+      try {
+        await refreshRollups(game, lang);
+        const after = statusOf(game, lang);
+        console.log(after.orb.hashed
+          ? `globalIndex: ${tag(game, lang)} recall restored — code-free scanning is back`
+          : `globalIndex: ${tag(game, lang)} still has no hashes after refresh — its set indexes predate them and need rebuilding`);
+      } catch (e) {
+        console.warn(`globalIndex: could not refresh ${tag(game, lang)} rollup: ${e.message}`);
+      }
+    }
+  }
+}
+
 // On boot, surface any build that a restart interrupted so the UI can offer
 // Resume instead of pretending nothing was in flight.
 function restoreInterrupted(langs = ['en']) {
@@ -1013,8 +986,8 @@ function restoreInterrupted(langs = ['en']) {
 
 module.exports = {
   listGlobals, getProgress, startBuild, stopBuild, resumeBuild, pendingResume,
-  restoreInterrupted, statusOf, preflight, coverage, listSetIndexes,
-  refreshRollups, scheduleEmbedTopUp, topUpEmbeddings, hasRollup,
+  restoreInterrupted, backfillRecall, statusOf, preflight, coverage, listSetIndexes,
+  refreshRollups, scheduleRollupRefresh, hasRollup,
   // test/absentsets.test.js: the absent-vs-failed classifier decides whether a
   // non-English build is allowed to finish, so it is worth pinning down.
   _isAbsentForTest: isAbsent,

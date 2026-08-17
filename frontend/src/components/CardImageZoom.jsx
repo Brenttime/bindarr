@@ -1,13 +1,17 @@
 import { X } from 'lucide-react';
+import CardImage from './CardImage';
 
 // Full-screen card art viewer, shared by the collection inspector and the
 // Search & Add quick-add drawer so "tap the art to enlarge" works the same
 // everywhere. Callers own the open/closed flag and render this when open.
 //
+// Takes the whole card rather than a URL so a card with no art enlarges to its
+// card back instead of to a broken image at full screen size.
+//
 // stopPropagation on every click: both callers sit inside an overlay whose own
 // click handler dismisses the popup, so without it, closing the zoom would
 // dismiss the popup underneath as well.
-export default function CardImageZoom({ src, alt, onClose }) {
+export default function CardImageZoom({ card, onClose }) {
   return (
     <div
       className="modal-overlay"
@@ -40,9 +44,8 @@ export default function CardImageZoom({ src, alt, onClose }) {
       >
         <X size={20} />
       </button>
-      <img
-        src={src}
-        alt={alt}
+      <CardImage
+        card={card}
         onClick={(e) => e.stopPropagation()}
         style={{
           maxHeight: '88vh',

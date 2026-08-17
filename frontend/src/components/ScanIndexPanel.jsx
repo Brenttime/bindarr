@@ -403,7 +403,7 @@ export default function ScanIndexPanel({ t, showToast, formatBytes }) {
     : (summary && summary.total ? Math.round((summary.indexed / summary.total) * 100) : 0);
   const phaseLabel = {
     check: t('scanIndex.phaseCheck'), sets: t('admin.phaseSets'), recall: t('admin.phaseRecall'),
-    orb: 'ORB', verify: t('admin.phaseVerify'), gather: t('admin.phaseGather'), embed: t('admin.phaseEmbeddings'),
+    orb: 'ORB', verify: t('admin.phaseVerify'), gather: t('admin.phaseGather'),
   }[progress?.phase] || progress?.phase || '';
 
   return (
@@ -501,7 +501,7 @@ export default function ScanIndexPanel({ t, showToast, formatBytes }) {
             <span style={{ color: summary.codeFreeReady ? 'var(--accent-green, #4ade80)' : 'var(--accent-yellow)' }}>
               {summary.codeFreeReady
                 ? t('scanIndex.codeFreeCovers', {
-                  covered: summary.scope ? summary.scope.covered : summary.embedded,
+                  covered: summary.scope ? summary.scope.covered : summary.indexed,
                   // The rollup's OWN catalogue size, not today's. The live tables
                   // were built against whatever the catalogue was at the time, so
                   // pairing their covered count with the current total compares
@@ -510,8 +510,8 @@ export default function ScanIndexPanel({ t, showToast, formatBytes }) {
                   // sets the 203 no longer contains).
                   total: (summary.scope && summary.scope.catalogue) || summary.total,
                 })
-                : (summary.embedded > 0
-                  ? t('scanIndex.codeFreePending', { count: summary.embedded })
+                : (summary.indexed > 0
+                  ? t('scanIndex.codeFreePending', { count: summary.indexed })
                   : t('scanIndex.codeFreeNone'))}
             </span>
             <span style={{ color: 'var(--text-secondary)' }}>{formatBytes(summary.bytes || 0)}</span>
@@ -742,10 +742,12 @@ export default function ScanIndexPanel({ t, showToast, formatBytes }) {
                     </td>
                     <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{s.bytes ? formatBytes(s.bytes) : '—'}</td>
                     <td style={{ fontSize: '0.75rem' }}>
+                      {/* One state, not two. A set index used to be either
+                          ORB-only (set scans) or ORB+CLIP (also code-free); recall
+                          is now derived from the ORB features, so anything indexed
+                          serves both. */}
                       {s.indexed
-                        ? <span style={{ color: 'var(--accent-green, #4ade80)' }}>
-                          {s.embedded ? t('scanIndex.stateFull') : t('scanIndex.stateSetOnly')}
-                        </span>
+                        ? <span style={{ color: 'var(--accent-green, #4ade80)' }}>{t('admin.statusReady')}</span>
                         : <span style={{ color: 'var(--text-secondary)' }}>{t('admin.statusNotBuilt')}</span>}
                     </td>
                     <td>

@@ -12,6 +12,12 @@ function parseSqliteUtc(str) {
 
 function resolveCardPrice(card) {
   if (!card) return 0;
+  // A value set on the copy wins over every provider price. It is either what the
+  // owner typed or what a graded-price provider returned for this exact slab, and
+  // both know something card_cache cannot: a PSA 10 is worth a multiple of the raw
+  // price, and the raw price is all the card APIs quote. Only rows selected with
+  // collection.market_value carry it, so a bare card_cache row is unaffected.
+  if (card.market_value > 0) return card.market_value;
   if (card.printing === 'Holofoil' && card.price_holofoil !== null && card.price_holofoil > 0) {
     return card.price_holofoil;
   }
@@ -20,6 +26,13 @@ function resolveCardPrice(card) {
   }
   if (card.printing === 'Normal' && card.price_normal !== null && card.price_normal > 0) {
     return card.price_normal;
+  }
+  // '1st Edition' has been a legal printing since v1.0 but had no price of its own,
+  // so it fell through to price_trend — the UNLIMITED price. On a Base Set Charizard
+  // that understates the card by thousands. Only TCGCSV fills this column, so the
+  // fallthrough below still covers every row nothing has priced that way.
+  if (card.printing === '1st Edition' && card.price_1st_edition !== null && card.price_1st_edition > 0) {
+    return card.price_1st_edition;
   }
   return card.price_trend || 0;
 }
@@ -91,10 +104,15 @@ const PRICE_SWEEP_INTERVAL_MS = 1000 * 60 * 60 * 24;
 // tcgdex gets its own clock: it serves the non-English Pokémon cards that
 // pokemontcg.io has no rows for, so the two sweep different cards and letting
 // either one mark the other's gate would silently skip a whole language.
+// Every provider that sweeps needs an entry here, and an unknown key is treated as
+// "do not sweep" — so a provider added to server.js but forgotten here goes quiet
+// instead of loud: shouldSweepPrices returns false, the boot catch-up skips, and
+// markPricesSwept no-ops. That is exactly what happened to tcgcsv on first run.
 const SWEEP_COLUMN = {
   mtg: 'mtg_prices_swept_at',
   pokemon: 'pokemon_prices_swept_at',
   tcgdex: 'tcgdex_prices_swept_at',
+  tcgcsv: 'tcgcsv_prices_swept_at',
 };
 
 // Has this game's price sweep gone stale enough to be worth running again?

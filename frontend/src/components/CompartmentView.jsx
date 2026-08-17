@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { useDroppable, useDraggable } from '@dnd-kit/core';
 import { Lock, Edit3 } from 'lucide-react';
 import { getPrintingBadgeStyle, getPrintingBadgeLabel, getFoilOverlayClass } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
@@ -7,6 +8,7 @@ import { typeCategory } from '../utils/cardSort';
 import { isBinderType } from '../utils/cardOptions';
 import { displayName } from '../utils/languages';
 import { useLongPress } from '../utils/useLongPress';
+import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 
 const infoChipStyle = { fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' };
@@ -121,6 +123,63 @@ export function getPrimaryCategory(card, sortOrder, setsList = []) {
   }
   if (!field) return null;
   return categoryForField(card, field, setsList);
+}
+
+// A binder pocket that accepts a dragged card. Two components, not one with a
+// conditional hook: CompartmentView also renders inside CheckoutWizardModal,
+// which has no DndContext above it, so the hook must not mount there at all.
+function ActiveDroppable({ dropId, dropData, style, children, ...divProps }) {
+  const { setNodeRef, isOver } = useDroppable({ id: dropId, data: dropData });
+  return (
+    <div
+      ref={setNodeRef}
+      style={isOver ? { ...style, outline: '3px solid var(--accent-green)', outlineOffset: '2px' } : style}
+      {...divProps}
+    >
+      {children}
+    </div>
+  );
+}
+
+// A pocket holding a card is BOTH: you can drop onto it and drag the card out of
+// it, which is what makes re-filing possible at all — a card that can only be
+// dragged in has to be tapped back out. One node, two hooks, refs composed by
+// hand because dnd-kit has no combiner.
+//
+// The card rides along as `data` so the drag overlay can draw it without the
+// container having to look the id up: the queue knows its own cards, but a card
+// dragged out of a pocket is not in that list.
+function ActiveDragDropPocket({ dropId, dropData, dragId, dragCard, style, children, ...divProps }) {
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: dropId, data: dropData });
+  const { setNodeRef: setDragRef, attributes, listeners, isDragging } = useDraggable({ id: dragId, data: { card: dragCard } });
+  return (
+    <div
+      ref={(node) => { setDropRef(node); setDragRef(node); }}
+      style={{
+        ...style,
+        cursor: 'grab',
+        ...(isDragging ? { opacity: 0.4 } : {}),
+        ...(isOver && !isDragging ? { outline: '3px solid var(--accent-green)', outlineOffset: '2px' } : {}),
+      }}
+      {...attributes}
+      {...listeners}
+      {...divProps}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DroppablePocket({ enabled, dropId, dropData, dragId, dragCard, children, ...divProps }) {
+  if (!enabled) return <div {...divProps}>{children}</div>;
+  if (dragId) {
+    return (
+      <ActiveDragDropPocket dropId={dropId} dropData={dropData} dragId={dragId} dragCard={dragCard} {...divProps}>
+        {children}
+      </ActiveDragDropPocket>
+    );
+  }
+  return <ActiveDroppable dropId={dropId} dropData={dropData} {...divProps}>{children}</ActiveDroppable>;
 }
 
 function PrintingBadge({ printing }) {
@@ -244,7 +303,12 @@ export default function CompartmentView({
   placementMode = false,
   pickedEntryId = null,
   onPickCard = null,
-  onPlaceSlot = null
+  onPlaceSlot = null,
+
+  // Drag-and-drop filing: makes every pocket on this page a drop target for a
+  // card dragged from elsewhere. Requires a DndContext above this component —
+  // LocationManager provides one; nothing else that renders this view does.
+  dropEnabled = false
 }) {
   const { t } = useT();
   const isBinder = isBinderType(locationType);
@@ -442,6 +506,9 @@ export default function CompartmentView({
       const recIdx = Math.min(recommendedSpot.index, pockets.length - 1);
       const ghostObj = {
         __ghost: true,
+        // Spread the card first so the ghost preview can resolve contributed art
+        // and the right game's card back, same as the grid ghost above.
+        ...(recommendedSpot.card || {}),
         image_url: recommendedSpot.image_url,
         name: recommendedSpot.name,
         set_name: recommendedSpot.set_name
@@ -555,7 +622,7 @@ export default function CompartmentView({
               if (card && card.__ghost) {
                 return (
                   <div key={`ghost-${i}`} id="recommended-spot" className={`binder-pocket recommended-ghost ${categoryStart ? 'set-start' : ''}`}>
-                    {card.image_url && <img src={card.image_url} alt={card.name} loading="lazy" decoding="async" style={{ opacity: 0.85 }} />}
+                    <CardImage card={card} loading="lazy" decoding="async" style={{ opacity: 0.85 }} />
                     <div className="rec-ghost-label">Slot {pos}</div>
                     {newDividers.length > 0 && (
                       <div style={{ position: 'absolute', top: 0, left: 0, transform: 'translateY(-100%)', display: 'flex', flexDirection: 'column', gap: '2px', paddingBottom: '2px', zIndex: 20 }}>
@@ -568,7 +635,12 @@ export default function CompartmentView({
                 );
               }
               return card ? (
-                <div
+                <DroppablePocket
+                  enabled={dropEnabled}
+                  dropId={`pocket-${compartment.id}-${pos}`}
+                  dropData={{ compartmentId: compartment.id, slot: pos, occupantEntryId: card.entry_id || null }}
+                  dragId={card.entry_id || null}
+                  dragCard={card}
                   key={card.entry_id || `slot-${i}`}
                   id={card.entry_id ? `card-${card.entry_id}` : undefined}
                   className={`binder-pocket ${categoryStart ? 'set-start' : ''} ${card.entry_id === focusEntryId ? 'focus-flash' : ''}`}
@@ -600,7 +672,7 @@ export default function CompartmentView({
                     else setCurrentActiveId(card.entry_id);
                   }}
                 >
-                  <img src={card.image_url} alt={displayName(card)} title={displayName(card)} loading="lazy" decoding="async" />
+                  <CardImage card={card} alt={displayName(card)} title={displayName(card)} loading="lazy" decoding="async" />
                   {getFoilOverlayClass(card.printing) && <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: '4px' }} />}
                   <PrintingBadge printing={card.printing} />
                   {(pullMode ? pulledSet.has(card.entry_id) : card.checked_out_qty > 0) && (
@@ -624,9 +696,12 @@ export default function CompartmentView({
                   {isTarget && (
                     <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'var(--accent-green)', color: '#000', width: '30px', height: '30px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1rem', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }}>✓</div>
                   )}
-                </div>
+                </DroppablePocket>
               ) : (
-                <div
+                <DroppablePocket
+                  enabled={dropEnabled}
+                  dropId={`pocket-${compartment.id}-${pos}`}
+                  dropData={{ compartmentId: compartment.id, slot: pos, occupantEntryId: null }}
                   key={`empty-${i}`}
                   className="binder-pocket empty"
                   onClick={placementMode && pickedEntryId ? () => onPlaceSlot(compartment.id, pos, null) : undefined}
@@ -642,7 +717,7 @@ export default function CompartmentView({
                   {placementMode && pickedEntryId && !isTarget && (
                     <div style={{ color: 'var(--accent-red)', fontWeight: 'bold', fontSize: '0.7rem', marginTop: '0.4rem' }}>{t('compartment.place')}</div>
                   )}
-                </div>
+                </DroppablePocket>
               );
             })})()}
         </div>
@@ -921,7 +996,7 @@ export default function CompartmentView({
                       style={{ transform, zIndex, opacity: opacity * 0.85, filter }}
                       onClick={() => setCoverflowActiveIndex(i)}
                     >
-                      {card.image_url && absOffset <= IMG_WINDOW && <img src={card.image_url} alt={card.name} decoding="async" />}
+                      {absOffset <= IMG_WINDOW && <CardImage card={card} decoding="async" />}
                       <div className="rec-ghost-label">Slot {pos}</div>
                     </div>
                   );
@@ -952,7 +1027,7 @@ export default function CompartmentView({
                       else setCoverflowActiveIndex(i);
                     }}
                   >
-                    {absOffset <= IMG_WINDOW && <img src={card.image_url} alt={card.name} decoding="async" />}
+                    {absOffset <= IMG_WINDOW && <CardImage card={card} decoding="async" />}
                     {getFoilOverlayClass(card.printing) && <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: '4.5px' }} />}
                     <PrintingBadge printing={card.printing} />
                     {(pullMode ? pulledSet.has(card.entry_id) : card.checked_out_qty > 0) && (

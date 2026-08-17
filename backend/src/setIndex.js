@@ -63,11 +63,9 @@ const paths = (game, set, lang) => {
     desc: `${base}-desc.bin`,
     kp: `${base}-kp.bin`,
     meta: `${base}-meta.json`,
-    // CLIP vectors for the same cards, written only when a build asks for them
-    // (see buildSet's `embed` option). The whole-game recall table is the
-    // concatenation of these, exactly as the global ORB index is the
-    // concatenation of the desc/kp files. Named off the stem, not the -orb base,
-    // because these are not ORB data.
+    // Legacy CLIP vectors. Nothing writes or reads these any more — recall is
+    // derived from the ORB descriptors — but remove() still names the file so a
+    // rebuilt set cleans up the gigabytes an older Bindarr left behind.
     embed: `${stem}-embed.bin`,
   };
 };
@@ -100,14 +98,10 @@ function readMetaSummary(metaPath) {
   let summary = null;
   try {
     const parsed = JSON.parse(fs.readFileSync(metaPath));
-    const e = parsed.embed;
     summary = {
       set: parsed.set || null,
       lang: parsed.lang || null,
       cards: Array.isArray(parsed.cards) ? parsed.cards.length : 0,
-      embed: e && Array.isArray(e.cards)
-        ? { cards: e.cards.length, dim: e.dim, model: e.model, preprocess: e.preprocess }
-        : null,
     };
   } catch { summary = null; }   // unreadable/corrupt meta: cache the miss too
   metaSummaries.set(metaPath, { stamp, summary });
@@ -374,10 +368,9 @@ async function listAllSets(game, lang) {
 // split, flip, adventure, saga) carry one top-level image. Double-faced cards
 // (transform, modal DFC, art series, reversible) have no top-level image and one
 // distinct image per face — index every face so scanning either side matches.
-// Returns [{ img, illustrationId }] — the id lets a recall table keep one vector
-// per artwork instead of one per printing, which is what stops a reprint-heavy
-// game from bloating the array CLIP has to scan linearly. Each face of a
-// double-faced card has its own illustration, so the id is read per face.
+// Returns [{ img, illustrationId }]. The id is carried for callers that want to
+// group printings by artwork; each face of a double-faced card has its own
+// illustration, so it is read per face.
 function mtgCardImages(c) {
   if (c.image_uris?.normal) return [{ img: c.image_uris.normal, illustrationId: c.illustration_id || null }];
   return (c.card_faces || [])
@@ -495,17 +488,12 @@ async function fetchPokemonSet(set) {
 
 // Fetch every printing in a set, in one language, ORB-index each, persist.
 //
-// Also computes each card's CLIP vector from the SAME downloaded buffer and writes
-// a per-set embed file. That is what lets code-free scanning search every indexed
-// set without downloading any image a second time: the recall table is just the
-// concatenation of these per-set files.
-//
-// On by default, and that default matters: a set indexed WITHOUT embeddings cannot
-// take part in code-free scanning, and adding them later means re-downloading every
-// image in the set. Making the cheap-but-crippled variant the default would quietly
-// leave sets that look indexed but are invisible to a code-free scan. `embed: false`
-// exists only for callers that explicitly want the faster, set-scoped-only index.
-async function buildSet(game, set, lang, { embed = true, excludeChildCodes = [] } = {}) {
+// One index, good for both kinds of scan. A set indexed here is immediately
+// eligible for the whole-game rollup: it writes each printing's perceptual hash
+// into its own meta, and the rollup copies those columns straight through, so
+// recall needs no separate pass over anything. There is no fast-but-crippled
+// variant, and no image is ever downloaded twice.
+async function buildSet(game, set, lang, { excludeChildCodes = [] } = {}) {
   const k = key(game, set, lang);
   const code = langOf(lang);
   if (game !== 'mtg' && game !== 'pokemon') throw new Error('set index only supports mtg/pokemon');
@@ -561,14 +549,6 @@ async function buildSet(game, set, lang, { embed = true, excludeChildCodes = [] 
     const meta = [];
     let offset = 0;
 
-    // The embed side is tracked independently of the ORB side: a card whose ORB
-    // extraction failed may still embed fine, and vice versa. Sharing one row
-    // list would silently misalign the two whenever exactly one of them failed.
-    const clip = embed ? require('./utils/clipPreprocess') : null;
-    const embedFd = embed ? fs.openSync(p.embed, 'w') : null;
-    const embedMeta = [];
-    if (clip) await clip.getExtractor(clip.MODEL);   // pay the model load once, not per card
-
     for (let i = 0; i < cards.length; i += concurrency) {
       const chunk = cards.slice(i, i + concurrency);
       const results = await Promise.all(chunk.map(async (c) => {
@@ -579,7 +559,7 @@ async function buildSet(game, set, lang, { embed = true, excludeChildCodes = [] 
           let f = await scanPool.extract(raw, info.width, info.height);
           if (!f) f = extractCard(raw, info.width, info.height);
           const h = await dhash(buf); // recall pre-filter hash, same image as the features
-          return { card: c, f, h, buf };
+          return { card: c, f, h };
         } catch {
           return null;
         }
@@ -588,41 +568,20 @@ async function buildSet(game, set, lang, { embed = true, excludeChildCodes = [] 
       for (const res of results) {
         progress[k].done++;
         if (!res) continue;
-        const { card: c, f, h, buf } = res;
+        const { card: c, f, h } = res;
         if (f) {
           fs.writeSync(descFd, Buffer.from(f.desc.buffer, 0, f.desc.length), 0, f.desc.length, offset * DESC_BYTES);
           fs.writeSync(kpFd, Buffer.from(f.kp.buffer, 0, f.kp.byteLength), 0, f.kp.byteLength, offset * 2 * 4);
           meta.push([c.name, c.set, c.number, offset, f.count, h.hi, h.lo]);
           offset += f.count;
         }
-        // Encoding is serial on purpose: it is CPU-bound on the main thread, and
-        // the download concurrency above is what keeps it fed.
-        if (clip) {
-          try {
-            const v = await clip.embedImage(buf, clip.MODEL);
-            fs.writeSync(embedFd, Buffer.from(v.buffer, v.byteOffset, v.byteLength), 0, v.byteLength, embedMeta.length * clip.DIM * 4);
-            // illustrationId lets the recall table keep one vector per artwork
-            // rather than one per printing; null where the provider has no such id.
-            embedMeta.push([c.name, c.set, c.number, c.illustrationId || null]);
-          } catch (e) {
-            console.warn(`setIndex: embed failed for ${c.name} [${c.set}/${c.number}]: ${e.message}`);
-          }
-        }
       }
     }
     fs.closeSync(descFd); fs.closeSync(kpFd);
-    if (embedFd !== null) fs.closeSync(embedFd);
     // `lang` in the meta so listBuilds can report a build's language without
     // having to parse it back out of the filename.
-    const metaOut = { set, lang: code, hashed: true, cards: meta };
-    if (clip) {
-      metaOut.embed = { model: clip.MODEL, dim: clip.DIM, preprocess: clip.PREPROCESS, cards: embedMeta };
-    }
-    fs.writeFileSync(p.meta, JSON.stringify(metaOut));
-    console.log(
-      `setIndex: ${set} (${code}) indexed ${meta.length} cards` +
-      (clip ? ` + ${embedMeta.length} embeddings` : '')
-    );
+    fs.writeFileSync(p.meta, JSON.stringify({ set, lang: code, hashed: true, cards: meta }));
+    console.log(`setIndex: ${set} (${code}) indexed ${meta.length} cards`);
     progress[k].status = 'done';
   } catch (e) {
     // `absent` rides along with the message: ensureSet swallows the throw and
@@ -641,26 +600,6 @@ function loadSet(game, set, lang) {
   const parsed = JSON.parse(fs.readFileSync(p.meta));
   cache[k] = { meta: parsed.cards, hashed: !!parsed.hashed, desc: fs.readFileSync(p.desc), kp: fs.readFileSync(p.kp) };
   return cache[k];
-}
-
-// Does this set's index already carry CLIP vectors? A set built by the on-demand
-// scan path has ORB only, so a later global build has to run the embed pass over
-// it — which is why ensureSet takes `embed` into account rather than treating any
-// existing index as complete.
-function hasEmbeddings(game, set, lang) {
-  const p = paths(game, set, lang);
-  try {
-    const bytes = fs.statSync(p.embed).size;
-    if (bytes === 0) return false;
-    const e = (readMetaSummary(p.meta) || {}).embed;
-    if (!e || !e.cards) return false;
-    // A vector count that disagrees with the file size means a half-written pass.
-    if (bytes !== e.cards * e.dim * 4) return false;
-    // Vectors built by a different recipe are not comparable to anything this
-    // server can produce, so they do not count as present.
-    const clip = require('./utils/clipPreprocess');
-    return e.preprocess === clip.PREPROCESS && e.model === clip.MODEL;
-  } catch { return false; }
 }
 
 // Has this index already tried and failed, and was the failure an expected
@@ -686,16 +625,13 @@ function buildFailed(game, set, lang) {
 // someone else's API, with the UI still showing "fetching card list" because each
 // restart reset the progress the client was about to read. Retrying is now an
 // explicit act (startBuild, i.e. the user pressing Rebuild).
-async function ensureSet(game, set, lang, { retry = false, embed = true } = {}) {
+async function ensureSet(game, set, lang, { retry = false } = {}) {
   const k = key(game, set, lang);
-  // `embed` raises the bar for "already built": an ORB-only index satisfies a
-  // set-scoped scan but not a global recall table, so asking for embeddings on a
-  // set that lacks them must rebuild rather than return the existing index.
-  const complete = () => !!loadSet(game, set, lang) && (!embed || hasEmbeddings(game, set, lang));
+  const complete = () => !!loadSet(game, set, lang);
   if (complete()) return true;
   if (!retry && buildFailed(game, set, lang)) return false;
   if (!building[k]) {
-    building[k] = buildSet(game, set, lang, { embed })
+    building[k] = buildSet(game, set, lang)
       .then(() => { delete cache[k]; loadSet(game, set, lang); })
       .catch(e => { console.error('setIndex build failed:', e.message); throw e; })
       .finally(() => { delete building[k]; });
@@ -915,10 +851,9 @@ module.exports = {
   ensureSet, isReady, buildFailed, buildFailure, matchSet, verifySlice, extractCard, dhash,
   listBuilds, getProgress, setProgress, deleteBuild, previewSet, startBuild,
   getMtgChildSets, getMtgChildSetMap, getScanExclusions, digitalSetIds,
-  // For src/globalIndex.js, which assembles the whole-game indexes out of these
-  // per-set ones (src/orbUnion.js for ORB, src/embedUnion.js for CLIP): it needs
-  // to know which sets exist, where each index lives, whether a set already
-  // carries embeddings, and the geometry they were all built with. metaSummary
-  // is how it reports card counts for hundreds of sets without loading any.
-  listAllSets, paths, hasEmbeddings, metaSummary, CAP, REF_WIDTH,
+  // For src/globalIndex.js, which assembles the whole-game index out of these
+  // per-set ones (src/orbUnion.js): it needs to know which sets exist, where each
+  // index lives, and the geometry they were all built with. metaSummary is how it
+  // reports card counts for hundreds of sets without loading any.
+  listAllSets, paths, metaSummary, CAP, REF_WIDTH,
 };

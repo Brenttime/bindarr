@@ -68,6 +68,12 @@ function extractPrices(pricing) {
     price_avg1: cm.avg1 > 0 ? cm.avg1 : null,
     price_avg7: cm.avg7 > 0 ? cm.avg7 : null,
     price_avg30: cm.avg30 > 0 ? cm.avg30 : null,
+    // Which of the two answered, so the UI can name it instead of guessing. TCGdex
+    // carries a tcgplayer block for some Western cards and Cardmarket for the rest,
+    // and the two are different currencies — that mixing is what price_currency
+    // exists to record. tcgcsvApi overwrites both for any card it can place.
+    price_source: 'tcgdex',
+    price_currency: market(tp.normal) != null || market(tp.holofoil) != null ? 'USD' : 'EUR',
   };
 }
 

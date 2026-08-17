@@ -160,6 +160,7 @@ router.get('/users', async (req, res) => {
             WHEN c.printing = 'Holofoil' AND cc.price_holofoil IS NOT NULL AND cc.price_holofoil > 0 THEN cc.price_holofoil
             WHEN c.printing = 'Reverse Holofoil' AND cc.price_reverse_holofoil IS NOT NULL AND cc.price_reverse_holofoil > 0 THEN cc.price_reverse_holofoil
             WHEN c.printing = 'Normal' AND cc.price_normal IS NOT NULL AND cc.price_normal > 0 THEN cc.price_normal
+            WHEN c.printing = '1st Edition' AND cc.price_1st_edition IS NOT NULL AND cc.price_1st_edition > 0 THEN cc.price_1st_edition
             ELSE cc.price_trend
           END) as total_value
         FROM collection c
@@ -400,7 +401,7 @@ router.post('/scan-indexes/build', (req, res) => {
 
 // --- Global scan index build management ---
 
-// On-disk status of the whole-game CLIP+ORB indexes plus any in-flight build.
+// On-disk status of the whole-game ORB rollup plus any in-flight build.
 //
 // `langs` is a comma-separated list (default English) so the panel only lists the
 // languages the user actually collects — each one is a separate multi-hour build,

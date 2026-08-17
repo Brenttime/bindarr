@@ -94,7 +94,10 @@ router.post('/login', authLimiter, async (req, res) => {
         share_token: user.share_token,
         share_enabled: user.share_enabled,
         share_locations: user.share_locations,
-        tcg_api_key: user.tcg_api_key || ''
+        tcg_api_key: user.tcg_api_key || '',
+        psa_api_token: user.psa_api_token || '',
+        graded_price_api_key: user.graded_price_api_key || '',
+        api_key: user.api_key || ''
       }
     });
   } catch (error) {
@@ -121,12 +124,45 @@ router.post('/logout', authenticateToken, async (req, res) => {
 
 // Get current user profile
 router.get('/me', authenticateToken, (req, res) => {
+  // An API key is a read-only credential for scripts. Handing it the account's
+  // OTHER provider keys would make it a credential-theft tool: it can be pasted
+  // into a dashboard config, and what leaks with it must stay read-only data.
+  if (req.user.via_api_key) {
+    const { tcg_api_key, psa_api_token, graded_price_api_key, ...safe } = req.user; // eslint-disable-line no-unused-vars
+    return res.json({ user: safe });
+  }
   res.json({ user: req.user });
+});
+
+// Issue (or rotate) this account's read-only API key — issue #33: a finance
+// tracker needs a credential that outlives a login session. POST returns the key
+// in full; it is also readable later from /me, deliberately, because a key that
+// can only be seen once is a key people rotate until they catch it, and read-only
+// is what keeps that acceptable.
+router.post('/api-key', authenticateToken, async (req, res) => {
+  try {
+    const key = `bnd_${crypto.randomBytes(24).toString('hex')}`;
+    await db.run(`UPDATE users SET api_key = ? WHERE id = ?`, [key, req.user.id]);
+    res.json({ api_key: key });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create API key' });
+  }
+});
+
+router.delete('/api-key', authenticateToken, async (req, res) => {
+  try {
+    await db.run(`UPDATE users SET api_key = NULL WHERE id = ?`, [req.user.id]);
+    res.json({ message: 'API key revoked' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to revoke API key' });
+  }
 });
 
 // Update settings (password, sharing)
 router.put('/settings', authenticateToken, async (req, res) => {
-  const { current_password, password, share_enabled, share_locations, regenerate_share_token, tcg_api_key } = req.body;
+  const { current_password, password, share_enabled, share_locations, regenerate_share_token, tcg_api_key, psa_api_token, graded_price_api_key } = req.body;
 
   try {
     if (password !== undefined) {
@@ -153,6 +189,14 @@ router.put('/settings', authenticateToken, async (req, res) => {
       await db.run(`UPDATE users SET tcg_api_key = ? WHERE id = ?`, [tcg_api_key.trim(), req.user.id]);
     }
 
+    if (psa_api_token !== undefined) {
+      await db.run(`UPDATE users SET psa_api_token = ? WHERE id = ?`, [psa_api_token.trim(), req.user.id]);
+    }
+
+    if (graded_price_api_key !== undefined) {
+      await db.run(`UPDATE users SET graded_price_api_key = ? WHERE id = ?`, [graded_price_api_key.trim(), req.user.id]);
+    }
+
     let newShareToken = req.user.share_token;
     if (regenerate_share_token) {
       newShareToken = crypto.randomBytes(16).toString('hex');
@@ -160,7 +204,7 @@ router.put('/settings', authenticateToken, async (req, res) => {
     }
 
     // Retrieve updated info
-    const updatedUser = await db.get(`SELECT username, role, share_token, share_enabled, share_locations, tcg_api_key FROM users WHERE id = ?`, [req.user.id]);
+    const updatedUser = await db.get(`SELECT username, role, share_token, share_enabled, share_locations, tcg_api_key, psa_api_token, graded_price_api_key, api_key FROM users WHERE id = ?`, [req.user.id]);
     res.json({
       message: 'Settings updated successfully',
       user: {
@@ -169,7 +213,10 @@ router.put('/settings', authenticateToken, async (req, res) => {
         share_token: updatedUser.share_token,
         share_enabled: updatedUser.share_enabled,
         share_locations: updatedUser.share_locations,
-        tcg_api_key: updatedUser.tcg_api_key || ''
+        tcg_api_key: updatedUser.tcg_api_key || '',
+        psa_api_token: updatedUser.psa_api_token || '',
+        graded_price_api_key: updatedUser.graded_price_api_key || '',
+        api_key: updatedUser.api_key || ''
       }
     });
   } catch (error) {

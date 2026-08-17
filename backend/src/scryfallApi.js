@@ -243,7 +243,20 @@ function normalizeCard(raw, lang) {
     // than rebuilding: they search the English name, which is what TCGplayer and
     // Cardmarket actually index, so they resolve for a Japanese printing too.
     tcgplayer_url: raw.purchase_uris?.tcgplayer || null,
-    cardmarket_url: raw.purchase_uris?.cardmarket || null
+    cardmarket_url: raw.purchase_uris?.cardmarket || null,
+    // The TCGplayer product id, which `purchase_uris.tcgplayer` only sometimes
+    // contains: when Scryfall has no product for a printing it wraps a name
+    // SEARCH in the same affiliate link, indistinguishable from the outside
+    // without parsing the URL. The id says so plainly — a card either has one or
+    // is not listed on TCGplayer.
+    //
+    // `tcgplayer_etched_id` is the fallback because an etched-only printing (some
+    // Commander foils) carries no plain id, and etched is still the right product
+    // to link at: it is the one TCGplayer actually sells for that printing.
+    tcgplayer_product_id: raw.tcgplayer_id ?? raw.tcgplayer_etched_id ?? null,
+    // Scryfall's `prices.usd` is TCGplayer's number, quoted in USD.
+    price_source: 'scryfall',
+    price_currency: 'USD'
   };
 }
 

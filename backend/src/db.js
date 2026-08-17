@@ -219,11 +219,15 @@ async function initDb() {
       price_avg1 REAL,
       price_avg7 REAL,
       price_avg30 REAL,
+      price_1st_edition REAL,
+      price_currency TEXT DEFAULT 'USD',
+      price_source TEXT,
       cmc REAL,
       color_identity TEXT,
       game TEXT DEFAULT 'pokemon',
       language TEXT DEFAULT 'English',
       printed_name TEXT,
+      tcgplayer_product_id INTEGER,
       last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -310,6 +314,44 @@ async function initDb() {
     )
   `);
 
+  // card_cache id -> TCGplayer productId, for the Pokémon rows whose providers do
+  // not carry one (TCGdex supplies none at all; Scryfall gives MTG its id directly,
+  // so MTG never needs a row here).
+  //
+  // Its own table rather than a card_cache column because the mapping is derived,
+  // not provider data: it is rebuilt by matching set+number against TCGplayer's
+  // catalogue, and `confidence` records how — 1 for an exact set match, 0.8 for one
+  // recovered from a name suffix. Keeping it separate means a rebuild can be
+  // discarded and redone without touching a single real card row.
+  await run(`
+    CREATE TABLE IF NOT EXISTS tcgplayer_product (
+      card_id TEXT PRIMARY KEY,
+      product_id INTEGER NOT NULL,
+      category_id INTEGER NOT NULL,
+      confidence REAL DEFAULT 1,
+      matched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(card_id) REFERENCES card_cache(id)
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_tcgplayer_product_pid ON tcgplayer_product(product_id)`);
+
+  // Cached PSA cert lookups. Cached forever, with no staleness check anywhere —
+  // deliberate, and the only table in this schema like that: a cert describes a
+  // slab that was sealed once and graded once. The grade cannot change, so a
+  // second request can only return the same answer while spending quota from a
+  // rate-limited token.
+  //
+  // `payload` is the provider response as received, not a parsed subset. The
+  // fields worth reading are still being learned, and re-deriving them from a
+  // stored response beats re-fetching 400 certs to pick up one more column.
+  await run(`
+    CREATE TABLE IF NOT EXISTS psa_cert (
+      cert_number TEXT PRIMARY KEY,
+      payload TEXT NOT NULL,
+      fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   await run(`
     CREATE TABLE IF NOT EXISTS decks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -362,6 +404,10 @@ async function initDb() {
   }
   if (!appSettingsCols.some(c => c.name === 'tcgdex_prices_swept_at')) {
     await run(`ALTER TABLE app_settings ADD COLUMN tcgdex_prices_swept_at DATETIME`);
+  }
+  // TCGCSV mirrors TCGplayer once a day, so its gate is the same 24h as the rest.
+  if (!appSettingsCols.some(c => c.name === 'tcgcsv_prices_swept_at')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN tcgcsv_prices_swept_at DATETIME`);
   }
 
   // Whether non-admin members may trigger an individual set index build from the
@@ -421,6 +467,65 @@ async function initDb() {
       await run(`ALTER TABLE card_cache ADD COLUMN ${col} TEXT`);
     }
   }
+  // TCGplayer's own product id, which is what turns a link into the actual card.
+  // The stored `tcgplayer_url` above is NOT reliably a product page: Scryfall
+  // hands back a name search whenever it has no product for a printing (6,109 of
+  // 106,163 cached MTG rows), and TCGdex supplies no TCGplayer link at all. An id
+  // is unambiguous — /product/<id> either resolves or the card is not listed.
+  //
+  // Provider-agnostic on purpose: Scryfall publishes it as `tcgplayer_id`, and
+  // the Pokémon rows get theirs from the TCGCSV catalogue mapping.
+  // collection.printing has allowed '1st Edition' since v1.0, and resolveCardPrice
+  // had no column to read for it — so a 1st Edition Base Set card was valued at the
+  // Unlimited price, which for a Charizard is a difference of thousands. TCGplayer
+  // prices the two separately and always has; this is where that number lands.
+  if (!cardCacheCols.some(c => c.name === 'price_1st_edition')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN price_1st_edition REAL`);
+  }
+
+  // Which marketplace a row's prices came from, and in what currency.
+  //
+  // The price columns have always been unit-less, and until now they mixed
+  // TCGplayer USD (English) with Cardmarket EUR (everything TCGdex served) while
+  // the UI rendered one '$' over both. Recording the source per row is what lets
+  // the inspector say which number it is showing, instead of inferring it from
+  // whether a Cardmarket URL happens to exist.
+  if (!cardCacheCols.some(c => c.name === 'price_currency')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN price_currency TEXT DEFAULT 'USD'`);
+  }
+  if (!cardCacheCols.some(c => c.name === 'price_source')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN price_source TEXT`);
+    // Backfill from what each row's id already tells us: TCGdex is the only source
+    // that ever wrote EUR, and its ids are prefixed. No network needed.
+    await run(`UPDATE card_cache SET price_source = 'scryfall', price_currency = 'USD' WHERE id LIKE 'mtg-%'`);
+    await run(`UPDATE card_cache SET price_source = 'tcgdex', price_currency = 'EUR' WHERE id LIKE 'tcgdex-%'`);
+    await run(`UPDATE card_cache SET price_source = 'pokemontcg', price_currency = 'USD' WHERE price_source IS NULL AND game = 'pokemon'`);
+  }
+  if (!cardCacheCols.some(c => c.name === 'tcgplayer_product_id')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN tcgplayer_product_id INTEGER`);
+    // Backfill from the URLs already cached, rather than re-fetching 100k+ rows
+    // from Scryfall to learn something we are already holding: a product-page URL
+    // literally contains the id. Runs once, inside the column-added branch, so a
+    // reboot does not re-scan the table.
+    //
+    // Two encodings, because Scryfall wraps its link in an affiliate redirect that
+    // percent-encodes the inner URL ('%2Fproduct%2F') while a plain product URL
+    // does not ('/product/'). The SEARCH form is '%2Fproduct%3F' — a different
+    // string, so it cannot match either pattern and correctly stays NULL.
+    //
+    // CAST stops at the first non-digit, which is how the trailing '%3Fpage%3D1'
+    // is discarded; the > 0 guard drops anything that produced no digits at all.
+    for (const [needle, skip] of [['%2Fproduct%2F', 13], ['/product/', 9]]) {
+      await run(
+        `UPDATE card_cache
+            SET tcgplayer_product_id = CAST(substr(tcgplayer_url, instr(tcgplayer_url, ?) + ?) AS INTEGER)
+          WHERE tcgplayer_product_id IS NULL
+            AND instr(tcgplayer_url, ?) > 0
+            AND CAST(substr(tcgplayer_url, instr(tcgplayer_url, ?) + ?) AS INTEGER) > 0`,
+        [needle, skip, needle, needle, skip]
+      );
+    }
+  }
 
   const collectionCols = await all(`PRAGMA table_info(collection)`);
   if (!collectionCols.some(c => c.name === 'user_id')) {
@@ -447,6 +552,58 @@ async function initDb() {
   if (!collectionCols.some(c => c.name === 'notes')) {
     await run(`ALTER TABLE collection ADD COLUMN notes TEXT DEFAULT ''`);
   }
+  // Grading lives on the COPY, not on the printing. A PSA 10 and a raw copy of the
+  // same card share one card_cache row and differ only in what the owner holds —
+  // which is exactly what the collection table records. Putting a grade on
+  // card_cache would make every owner of that printing share one grade.
+  //
+  // `grade` is REAL, not INTEGER: PSA uses whole numbers plus 10, but BGS and CGC
+  // issue half grades (9.5, 8.5), and the 'Graded Slab Box' container type has been
+  // in db.js since v1.0 with nothing to put in it.
+  if (!collectionCols.some(c => c.name === 'grader')) {
+    await run(`ALTER TABLE collection ADD COLUMN grader TEXT CHECK(grader IN ('Raw','PSA','BGS','CGC','SGC','TAG')) DEFAULT 'Raw'`);
+  }
+  if (!collectionCols.some(c => c.name === 'grade')) {
+    await run(`ALTER TABLE collection ADD COLUMN grade REAL`);
+  }
+  if (!collectionCols.some(c => c.name === 'cert_number')) {
+    await run(`ALTER TABLE collection ADD COLUMN cert_number TEXT`);
+  }
+  // What this copy is actually worth, when the card_cache price is wrong for it.
+  // A PSA 10 is a multiple of the raw price the providers quote, and no free
+  // provider prices every grader — so the value of a slab is either typed in or
+  // fetched from a graded-price provider, and both land here. One column, because
+  // everything downstream (net worth, set totals, sorting by price) then has one
+  // number to read regardless of where it came from.
+  //
+  // Per COPY, like grade and cert: two PSA 10s of the same card in different
+  // markets are still one card_cache row.
+  if (!collectionCols.some(c => c.name === 'market_value')) {
+    await run(`ALTER TABLE collection ADD COLUMN market_value REAL`);
+  }
+  // 'manual' or a provider name. Kept so a refresh knows which rows it may
+  // overwrite: a fetched number is stale in a week, a typed one is the owner's
+  // considered judgement and nothing should quietly replace it.
+  if (!collectionCols.some(c => c.name === 'market_value_source')) {
+    await run(`ALTER TABLE collection ADD COLUMN market_value_source TEXT`);
+  }
+  if (!collectionCols.some(c => c.name === 'market_value_at')) {
+    await run(`ALTER TABLE collection ADD COLUMN market_value_at DATETIME`);
+  }
+  // A cert number identifies one physical slab, so entering it twice is a mistake
+  // rather than a second copy — unlike raw cards, where two identical rows are
+  // normal and `quantity` exists for exactly that reason.
+  //
+  // Scoped per user, and partial. Per user because this instance cannot know that
+  // two accounts naming the same cert are wrong (a sold slab legitimately appears
+  // in the buyer's collection and the seller's history); partial because the
+  // overwhelming majority of rows are raw and have no cert, and a plain UNIQUE
+  // would collapse all of them into one.
+  await run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_cert
+       ON collection(user_id, grader, cert_number)
+     WHERE cert_number IS NOT NULL AND cert_number != ''`
+  );
 
   const locationsCols = await all(`PRAGMA table_info(locations)`);
   if (!locationsCols.some(c => c.name === 'user_id')) {
@@ -469,6 +626,25 @@ async function initDb() {
   if (!usersCols.some(c => c.name === 'share_locations')) {
     await run(`ALTER TABLE users ADD COLUMN share_locations INTEGER DEFAULT 0`);
   }
+  // PSA's public API token. Per user, alongside tcg_api_key, because PSA issues
+  // these per account and rate-limits per token — one shared instance token would
+  // let one member's bulk entry exhaust everyone's quota.
+  if (!usersCols.some(c => c.name === 'psa_api_token')) {
+    await run(`ALTER TABLE users ADD COLUMN psa_api_token TEXT DEFAULT ''`);
+  }
+  // PokemonPriceTracker key, for graded (PSA 8/9/10) prices. Same per-user
+  // reasoning as the PSA token: its free tier is 100 credits/day per key.
+  if (!usersCols.some(c => c.name === 'graded_price_api_key')) {
+    await run(`ALTER TABLE users ADD COLUMN graded_price_api_key TEXT DEFAULT ''`);
+  }
+  // Read-only key for scripts and dashboards (issue #33): a Bearer credential that
+  // does not expire the way a session does, so a finance tracker polling net worth
+  // is not logged out overnight. authenticateToken refuses anything but GET on it,
+  // which is what makes a long-lived credential acceptable in the first place.
+  if (!usersCols.some(c => c.name === 'api_key')) {
+    await run(`ALTER TABLE users ADD COLUMN api_key TEXT`);
+  }
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key) WHERE api_key IS NOT NULL`);
 
   const deckCardsCols = await all(`PRAGMA table_info(deck_cards)`);
   if (!deckCardsCols.some(c => c.name === 'checked_out')) {

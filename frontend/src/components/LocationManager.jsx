@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { DndContext, DragOverlay, MouseSensor, useSensor, useSensors, useDraggable, useDroppable, pointerWithin } from '@dnd-kit/core';
 import { Plus, Trash2, X, MoreVertical, Settings, RefreshCw, Lock, LayoutGrid, List, MousePointerClick, ChevronDown, ChevronUp, Edit3 } from 'lucide-react';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
@@ -10,8 +11,57 @@ import { displayName } from '../utils/languages';
 import CompartmentView, { FocusedCardInfo } from './CompartmentView';
 import { SortBuilder, FilterBuilder } from './SortFilterBuilder';
 import CreateContainerModal from './CreateContainerModal';
+import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useT } from '../utils/i18n';
+
+// An Unsorted-queue card that can be dragged into a binder pocket. Split in two
+// so the hook only mounts when dragging is on — the queue also renders for
+// auto-sorted and locked containers, where there is nothing to drag to.
+// MouseSensor activates on mousedown, while hold-to-select listens on
+// pointerdown, so both sets of listeners can be spread onto the same element.
+function ActiveDraggable({ entryId, card, style, children, ...divProps }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: entryId, data: { card } });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ ...style, cursor: 'grab', ...(isDragging ? { opacity: 0.4 } : {}) }}
+      {...attributes}
+      {...listeners}
+      {...divProps}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DraggableCard({ enabled, entryId, card, children, ...divProps }) {
+  if (!enabled) return <div {...divProps}>{children}</div>;
+  return <ActiveDraggable entryId={entryId} card={card} {...divProps}>{children}</ActiveDraggable>;
+}
+
+// The Unsorted queue as a drop target, so a filed card can be dragged back OUT
+// of the binder. Without it the queue is one-way: cards go in by drag and only
+// come back by opening the card and clearing its container.
+function UnsortedDropZone({ enabled, children }) {
+  const { setNodeRef, isOver } = useDroppable({ id: 'unsorted-queue' });
+  if (!enabled) return <>{children}</>;
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        // An empty queue is exactly when you most want to drag a card out of the
+        // binder, and an empty div is nothing to aim at — so it keeps a target
+        // worth of height whether or not there is anything in it.
+        minHeight: '90px',
+        borderRadius: 'var(--radius-sm)',
+        ...(isOver ? { outline: '3px solid var(--accent-green)', outlineOffset: '-3px' } : {}),
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId, setSelectedLocationId, focusEntryId }) {
   const { t } = useT();
@@ -601,19 +651,21 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
     setPickedEntryId(prev => (prev === entryId ? null : entryId));
   };
 
-  // Place the picked card at a slot. Binder + occupied pocket = swap; otherwise
-  // send the slot and let the backend place absolutely (binder) or insert (box).
-  const handlePlaceSlot = async (compartmentId, slotNumber, occupantEntryId) => {
+  // Place a card at a slot. Binder + occupied pocket = swap; otherwise send the
+  // slot and let the backend place absolutely (binder) or insert (box). The card
+  // defaults to the tap-picked one; drag-and-drop passes the dragged card
+  // explicitly, because its id is known before setPickedEntryId would land.
+  const handlePlaceSlot = async (compartmentId, slotNumber, occupantEntryId, entryId = pickedEntryId) => {
     if (selectedLoc?.locked) {
       showToast(t('loc.lockedArrange'));
       return;
     }
-    if (!pickedEntryId || occupantEntryId === pickedEntryId) { setPickedEntryId(null); return; }
+    if (!entryId || occupantEntryId === entryId) { setPickedEntryId(null); return; }
     const body = { compartment_id: compartmentId };
     if (isBinderType && occupantEntryId) body.swap_with = occupantEntryId;
     else body.slot = slotNumber;
     try {
-      const res = await fetch(`/api/collection/${pickedEntryId}/place`, {
+      const res = await fetch(`/api/collection/${entryId}/place`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
@@ -626,6 +678,56 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         showToast(data.error === 'COMPARTMENT_FULL' ? 'That page/row is full.' : (data.error || 'Failed to place card.'));
       }
     } catch (err) { console.error(err); showToast(t('loc.errPlace')); }
+  };
+
+  // --- Drag-and-drop filing ---
+  // Drop lands on the same handler tap-to-place uses, so the lock guard, the
+  // swap rule and the backend call are shared. Only custom-order binders: the
+  // /place route rejects anything else, and a box's coverflow has no stable
+  // drop geometry to aim at.
+  const [draggingCard, setDraggingCard] = useState(null);
+  const dndEnabled = isBinderType && isCustom && !selectedLoc?.locked;
+  // ponytail: mouse only. A distance-activated touch drag would swallow the
+  // binder's page-swipe and the queue's scroll; touch still files by tapping
+  // under Arrange. Add a delay-activated TouchSensor if that proves too slow.
+  const dndSensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 8 } }));
+
+  // Drag a filed card back out. The bulk endpoint with a null target is what the
+  // Move-to-Unassigned action already uses, so unfiling has one implementation
+  // and one set of rules whichever way it is triggered.
+  const unfileCard = async (entryId) => {
+    if (selectedLoc?.locked) {
+      showToast(t('loc.lockedArrange'));
+      return;
+    }
+    try {
+      const res = await fetch('/api/collection/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry_ids: [entryId], action: 'move', value: null })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        showToast(body?.error || t('loc.errPlace'));
+        return;
+      }
+      showToast(t('loc.movedToUnsorted'));
+      setPickedEntryId(null);
+      await refreshAll(); onUpdate();
+    } catch (err) { console.error(err); showToast(t('loc.errPlace')); }
+  };
+
+  const handleDragEnd = ({ active, over }) => {
+    setDraggingCard(null);
+    if (!over) return;
+    // Dropped on the queue: the card leaves the binder rather than moving inside it.
+    if (over.id === 'unsorted-queue') {
+      unfileCard(active.id);
+      return;
+    }
+    const pocket = over.data?.current;
+    if (!pocket) return;
+    handlePlaceSlot(pocket.compartmentId, pocket.slot, pocket.occupantEntryId, active.id);
   };
 
   const handleDeleteCard = async (entryId) => {
@@ -871,7 +973,26 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
   if (loading) return <div className="spinner" />;
 
   return (
+    <DndContext
+      sensors={dndSensors}
+      collisionDetection={pointerWithin}
+      // The dragged card travels as drag data: a card pulled OUT of a pocket is
+      // not in the queue's list, so looking it up there would leave the overlay
+      // empty for exactly the drags that move cards around inside the binder.
+      onDragStart={({ active }) => setDraggingCard(active.data?.current?.card || unsortedCards.find(c => c.entry_id === active.id) || null)}
+      onDragCancel={() => setDraggingCard(null)}
+      onDragEnd={handleDragEnd}
+    >
     <div className="storage-workspace-grid">
+      {draggingCard && (
+        <DragOverlay dropAnimation={null}>
+          <img
+            src={draggingCard.image_url}
+            alt={displayName(draggingCard)}
+            style={{ width: '90px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '4px', boxShadow: '0 8px 20px rgba(0,0,0,0.6)', cursor: 'grabbing' }}
+          />
+        </DragOverlay>
+      )}
       {showCreate && (
         <CreateContainerModal
           onClose={() => setShowCreate(false)}
@@ -1259,6 +1380,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   pickedEntryId,
                   onPickCard: handlePickCard,
                   onPlaceSlot: handlePlaceSlot,
+                  dropEnabled: dndEnabled,
                   activeEntryId: binderActiveEntryId,
                   onActiveEntryIdChange: setBinderActiveEntryId,
                   hideFocusedCardInfo: true
@@ -1468,7 +1590,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
             
             {filingQueue[filingIndex] && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem' }}>
-                <img src={filingQueue[filingIndex].entry.image_url} alt={filingQueue[filingIndex].entry.name} style={{ width: 'min(120px, 26vh)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }} />
+                <CardImage card={filingQueue[filingIndex].entry} style={{ width: 'min(120px, 26vh)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }} />
                 
                 <div style={{ textAlign: 'center' }}>
                   <strong style={{ fontSize: '1rem', display: 'block' }}>{filingQueue[filingIndex].entry.name}</strong>
@@ -1502,7 +1624,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                       <strong style={{ fontSize: '1.2rem', color: '#ffc107', display: 'block', marginTop: '0.25rem' }}>Slot {Math.floor(rec.position / 1000)}</strong>
                       {rec.after ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', marginTop: '0.4rem' }}>
-                          {rec.after.image_url && <img src={rec.after.image_url} alt={rec.after.name} style={{ width: '26px', borderRadius: '3px' }} />}
+                          <CardImage card={rec.after} style={{ width: '26px', borderRadius: '3px' }} />
                           <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{t('loc.fileAfter')} <strong style={{ color: 'var(--text-strong)' }}>{rec.after.name}</strong></span>
                         </div>
                       ) : rec.before ? (
@@ -1658,6 +1780,8 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
               </div>
             )}
 
+            {/* Drop a filed card here to take it back out of the container. */}
+            <UnsortedDropZone enabled={dndEnabled}>
             {unsortedViewMode === 'grid' ? (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.6rem', marginTop: '0.25rem' }}>
                 {unsortedCards.map(card => {
@@ -1669,7 +1793,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   const printingBadgeLabel = getPrintingBadgeLabel(card.printing);
 
                   return (
-                    <div
+                    <DraggableCard
+                      enabled={dndEnabled}
+                      entryId={card.entry_id}
+                      card={card}
                       key={card.entry_id}
                       id={`card-${card.entry_id}`}
                       className={card.entry_id === focusEntryId ? 'focus-flash' : ''}
@@ -1699,7 +1826,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           ...rarityBorder
                         }}
                       >
-                        <img src={card.image_url} alt={card.name} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                        <CardImage card={card} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                         {foilClass && <div className={foilClass} style={{ borderRadius: 'var(--radius-sm)' }} />}
                         
                         {/* Selected / Picked checkmark badge */}
@@ -1765,7 +1892,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           {card.price_trend > 0 && <span style={{ color: 'var(--accent-yellow)', fontWeight: 600, flexShrink: 0 }}>${card.price_trend.toFixed(2)}</span>}
                         </div>
                       </div>
-                    </div>
+                    </DraggableCard>
                   );
                 })}
               </div>
@@ -1780,7 +1907,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   const printingBadgeLabel = getPrintingBadgeLabel(card.printing);
 
                   return (
-                    <div
+                    <DraggableCard
+                      enabled={dndEnabled}
+                      entryId={card.entry_id}
+                      card={card}
                       key={card.entry_id}
                       id={`card-${card.entry_id}`}
                       className={card.entry_id === focusEntryId ? 'focus-flash' : ''}
@@ -1803,7 +1933,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                       <div
                         style={{ position: 'relative', width: '42px', flexShrink: 0, overflow: 'hidden', borderRadius: '4px', ...rarityBorder }}
                       >
-                        <img src={card.image_url} alt={card.name} loading="lazy" decoding="async" style={{ width: '100%', aspectRatio: 0.718, objectFit: 'cover', display: 'block' }} />
+                        <CardImage card={card} loading="lazy" decoding="async" style={{ width: '100%', aspectRatio: 0.718, objectFit: 'cover', display: 'block' }} />
                         {foilClass && <div className={foilClass} style={{ borderRadius: '4px' }} />}
                         {isHighlighted && (
                           <div style={{ position: 'absolute', inset: 0, background: 'rgba(255, 71, 71, 0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-strong)', fontWeight: 900, fontSize: '0.8rem' }}>
@@ -1836,13 +1966,14 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           ${card.price_trend.toFixed(2)}
                         </span>
                       )}
-                    </div>
+                    </DraggableCard>
                   );
                 })}
               </div>
             )}
 
             {unsortedCards.length === 0 && <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.5rem' }}>{t('loc.nothingUnsorted')}</p>}
+            </UnsortedDropZone>
           </>
         )}
       </div>
@@ -1875,7 +2006,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
 
             {!filingBarCollapsed && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-              <img src={filingQueue[filingIndex].entry.image_url} alt={filingQueue[filingIndex].entry.name} style={{ width: '48px', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)', flexShrink: 0 }} />
+              <CardImage card={filingQueue[filingIndex].entry} style={{ width: '48px', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)', flexShrink: 0 }} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: '0.95rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {filingQueue[filingIndex].entry.name}
@@ -1904,7 +2035,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   </div>
                   {currentRecSpot.after ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.4rem' }}>
-                      {currentRecSpot.after.image_url && <img src={currentRecSpot.after.image_url} alt={currentRecSpot.after.name} style={{ width: '26px', borderRadius: '3px', flexShrink: 0 }} />}
+                      <CardImage card={currentRecSpot.after} style={{ width: '26px', borderRadius: '3px', flexShrink: 0 }} />
                       <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('loc.fileAfter')} <strong style={{ color: 'var(--text-strong)' }}>{currentRecSpot.after.name}</strong></span>
                     </div>
                   ) : currentRecSpot.before ? (
@@ -1946,6 +2077,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         showToast={showToast}
       />
     </div>
+    </DndContext>
   );
 }
 

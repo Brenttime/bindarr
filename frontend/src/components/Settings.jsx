@@ -2,10 +2,53 @@ import { useState, useEffect } from 'react';
 import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Layers, Languages } from 'lucide-react';
 import { GAMES, enabledGames, setGameEnabled, gameOptions, defaultGame } from '../utils/games';
 import { LOCALES, localeName, useT } from '../utils/i18n';
+import { REPO_URL } from '../utils/repo';
+
+// One secret: what it is called, what it buys you, and where to get one. Three of
+// these replaced three near-identical panels, so a fourth provider is a few lines
+// rather than another screenful.
+function KeyField({ id, label, hint, link, linkLabel, value, onChange, disabled, placeholder, t }) {
+  const [shown, setShown] = useState(false);
+  return (
+    <div className="form-group" style={{ marginBottom: 0 }}>
+      <label htmlFor={id}>{label}</label>
+      <div style={{ position: 'relative' }}>
+        <input
+          id={id}
+          type={shown ? 'text' : 'password'}
+          autoComplete="off"
+          className="input-control"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          style={{ fontFamily: 'monospace', paddingRight: '2.4rem', width: '100%' }}
+        />
+        <button
+          type="button"
+          onClick={() => setShown((v) => !v)}
+          aria-label={t(shown ? 'settings.hideApiKey' : 'settings.showApiKey')}
+          title={t(shown ? 'settings.hideApiKey' : 'settings.showApiKey')}
+          style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+        >
+          {shown ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </div>
+      {/* The link carries a whole clause rather than sitting mid-sentence: a
+          translator gets two complete units instead of two fragments whose order
+          their language may not allow. */}
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem', lineHeight: 1.45 }}>
+        {hint}{' '}
+        <a href={link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>
+          {linkLabel}
+        </a>
+      </div>
+    </div>
+  );
+}
 
 function Settings({ user, onUpdateUser, showToast }) {
   const { locale, setLocale, t } = useT();
-  const [showApiKey, setShowApiKey] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -16,7 +59,12 @@ function Settings({ user, onUpdateUser, showToast }) {
   const [shareLoading, setShareLoading] = useState(false);
 
   const [tcgApiKey, setTcgApiKey] = useState(user?.tcg_api_key || '');
-  const [apiKeyLoading, setApiKeyLoading] = useState(false);
+  const [psaToken, setPsaToken] = useState(user?.psa_api_token || '');
+  const [gradedKey, setGradedKey] = useState(user?.graded_price_api_key || '');
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [accessKey, setAccessKey] = useState(user?.api_key || '');
+  const [showAccessKey, setShowAccessKey] = useState(false);
+  const [accessKeyLoading, setAccessKeyLoading] = useState(false);
 
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
 
@@ -80,8 +128,6 @@ function Settings({ user, onUpdateUser, showToast }) {
   const versionSkew = appVersion && versionInfo?.version && appVersion !== versionInfo.version
     ? versionInfo.version
     : null;
-
-  const REPO_URL = 'https://github.com/thenotoriousJeremy/bindarr';
 
   // Prefill a bug report with the details that otherwise take three round trips
   // to obtain. Environment only — nothing about the user's collection.
@@ -173,6 +219,9 @@ function Settings({ user, onUpdateUser, showToast }) {
       setShareEnabled(user.share_enabled === 1 || user.share_enabled === true);
       setShareLocations(user.share_locations === 1 || user.share_locations === true);
       setTcgApiKey(user.tcg_api_key || '');
+      setPsaToken(user.psa_api_token || '');
+      setGradedKey(user.graded_price_api_key || '');
+      setAccessKey(user.api_key || '');
     }
   }, [user]);
 
@@ -319,29 +368,60 @@ function Settings({ user, onUpdateUser, showToast }) {
     }
   };
 
-  const handleApiKeyChange = async (e) => {
+  // All three provider keys in one PUT. They are independent services, but they
+  // are set up in one sitting and the settings route takes them together, so three
+  // buttons only ever meant three chances to save two of them.
+  const handleSaveKeys = async (e) => {
     e.preventDefault();
-    setApiKeyLoading(true);
+    setKeysLoading(true);
     try {
       const response = await fetch('/api/auth/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tcg_api_key: tcgApiKey })
+        body: JSON.stringify({
+          tcg_api_key: tcgApiKey,
+          psa_api_token: psaToken,
+          graded_price_api_key: gradedKey
+        })
       });
-
+      const data = await response.json().catch(() => null);
       if (response.ok) {
-        const data = await response.json();
         onUpdateUser(data.user);
-        showToast(t('settings.apiKeyUpdated'));
+        showToast(t('settings.keysUpdated'));
       } else {
-        const data = await response.json();
-        showToast(data.error || t('settings.errApiKey'));
+        showToast(data?.error || t('settings.errKeys'));
       }
     } catch (err) {
       console.error(err);
-      showToast(t('settings.errApiKeyGeneric'));
+      showToast(t('settings.errKeys'));
     } finally {
-      setApiKeyLoading(false);
+      setKeysLoading(false);
+    }
+  };
+
+  // Create/rotate/revoke the read-only API key. Rotating and revoking both break
+  // whatever is already using the old key, so both ask first.
+  const handleAccessKey = async (action) => {
+    if (action === 'create' && accessKey && !window.confirm(t('settings.accessConfirmRotate'))) return;
+    if (action === 'revoke' && !window.confirm(t('settings.accessConfirmRevoke'))) return;
+    setAccessKeyLoading(true);
+    try {
+      const response = await fetch('/api/auth/api-key', { method: action === 'revoke' ? 'DELETE' : 'POST' });
+      const data = await response.json().catch(() => null);
+      if (response.ok) {
+        const next = action === 'revoke' ? '' : (data?.api_key || '');
+        setAccessKey(next);
+        setShowAccessKey(action !== 'revoke');
+        onUpdateUser({ ...user, api_key: next });
+        showToast(t(action === 'revoke' ? 'settings.accessRevoked' : 'settings.accessCreated'));
+      } else {
+        showToast(data?.error || t('settings.errAccessKey'));
+      }
+    } catch (err) {
+      console.error(err);
+      showToast(t('settings.errAccessKey'));
+    } finally {
+      setAccessKeyLoading(false);
     }
   };
 
@@ -607,62 +687,114 @@ function Settings({ user, onUpdateUser, showToast }) {
           </form>
         </div>
 
-        {/* Pokémon TCG API Key Settings */}
+        {/* Every key in one panel. These were four panels — four headers, four
+            bordered intro boxes, four save buttons — for what is three text inputs
+            and a generated credential. The explanations survive as a line under
+            each field, because which key does what is the part nobody remembers. */}
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
             <KeyRound size={20} style={{ color: 'var(--accent-red)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.apiKeyTitle')}</h3>
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.keysTitle')}</h3>
           </div>
 
-          <form onSubmit={handleApiKeyChange} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ background: 'rgba(255, 71, 71, 0.03)', border: '1px solid var(--border-glass)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-              {/* The link carries a whole clause rather than sitting mid-sentence:
-                  a translator gets two complete units instead of two fragments
-                  whose order their language may not allow. */}
-              {t('settings.apiKeyIntro')}{' '}
-              <a href="https://dev.pokemontcg.io" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>
-                {t('settings.apiKeyGetOne')}
-              </a>
-            </div>
+          {/* One form and one save for all three: they are all "keys for outside
+              services", and three separate saves was three round trips to set up
+              an account once. */}
+          <form onSubmit={handleSaveKeys} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+            <KeyField
+              id="settings-tcg-api-key" label={t('settings.apiKeyTitle')} hint={t('settings.apiKeyIntro')}
+              link="https://dev.pokemontcg.io" linkLabel={t('settings.apiKeyGetOne')}
+              value={tcgApiKey} onChange={setTcgApiKey} disabled={keysLoading} t={t}
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            />
+            <KeyField
+              id="settings-psa-token" label={t('settings.psaTokenTitle')} hint={t('settings.psaTokenIntro')}
+              link="https://www.psacard.com/publicapi/documentation" linkLabel={t('settings.psaTokenGetOne')}
+              value={psaToken} onChange={setPsaToken} disabled={keysLoading} t={t}
+            />
+            <KeyField
+              id="settings-graded-key" label={t('settings.gradedKeyTitle')} hint={t('settings.gradedKeyIntro')}
+              link="https://www.pokemonpricetracker.com/api" linkLabel={t('settings.gradedKeyGetOne')}
+              value={gradedKey} onChange={setGradedKey} disabled={keysLoading} t={t}
+            />
 
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="settings-tcg-api-key">{t('settings.apiKeyLabel')}</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  id="settings-tcg-api-key"
-                  type={showApiKey ? 'text' : 'password'}
-                  name="tcg-api-key"
-                  autoComplete="off"
-                  className="input-control"
-                  placeholder="e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  value={tcgApiKey}
-                  onChange={(e) => setTcgApiKey(e.target.value)}
-                  disabled={apiKeyLoading}
-                  style={{ fontFamily: 'monospace', paddingRight: '2.4rem', width: '100%' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey((v) => !v)}
-                  aria-label={t(showApiKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
-                  title={t(showApiKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
-                  style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
-                >
-                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-            </div>
-
-            <button 
-              type="submit" 
-              className="btn btn-primary" 
-              disabled={apiKeyLoading}
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={keysLoading}
               style={{ padding: '0.6rem 1.2rem', alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
             >
-              {apiKeyLoading ? (
+              {keysLoading ? (
                 <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div>
-              ) : t('settings.saveApiKey')}
+              ) : t('settings.saveKeys')}
             </button>
           </form>
+
+          {/* The one key that points the other way: not a credential Bindarr uses
+              to reach a service, but one something else uses to read Bindarr. Shown
+              in full rather than once-at-creation — read-only is what makes that
+              acceptable, and a write-once secret is one people rotate repeatedly
+              until they manage to catch it. */}
+          <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label htmlFor="settings-access-key">{t('settings.accessTitle')}</label>
+              {accessKey ? (
+                <div style={{ position: 'relative' }}>
+                  <input
+                    id="settings-access-key"
+                    type={showAccessKey ? 'text' : 'password'}
+                    readOnly
+                    className="input-control"
+                    value={accessKey}
+                    onClick={(e) => e.target.select()}
+                    style={{ fontFamily: 'monospace', paddingRight: '2.4rem', width: '100%' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAccessKey((v) => !v)}
+                    aria-label={t(showAccessKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
+                    title={t(showAccessKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
+                    style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                  >
+                    {showAccessKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t('settings.accessNone')}</div>
+              )}
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem', lineHeight: 1.45 }}>
+                {t('settings.accessIntro')} {t('settings.accessNetWorth')}
+              </div>
+              <pre style={{ margin: '0.4rem 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                {`curl -H "Authorization: Bearer ${accessKey || '<key>'}" ${origin}/api/stats/networth`}
+              </pre>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={accessKeyLoading}
+                onClick={() => handleAccessKey('create')}
+                style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {accessKeyLoading ? (
+                  <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div>
+                ) : t(accessKey ? 'settings.accessRotate' : 'settings.accessCreate')}
+              </button>
+              {accessKey && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={accessKeyLoading}
+                  onClick={() => handleAccessKey('revoke')}
+                  style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}
+                >
+                  {t('settings.accessRevoke')}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Collection Backup & Data Options Panel */}

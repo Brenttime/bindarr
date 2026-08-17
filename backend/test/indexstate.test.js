@@ -1,13 +1,13 @@
 // Reading the STATE of a set index must never cost what reading the index costs.
 //
-// isReady/hasEmbeddings/metaSummary are called once per set across the whole
-// catalogue — globalIndex.coverage walks every set, and the admin panel asks for
-// every set's row every 1.5s while a build runs. isReady used to answer by
-// calling loadSet, which pulls a set's whole desc+kp pair (~5 MB for a large MTG
-// set) into a cache that is never evicted: ~460 of those, on a timer, to report
-// two integers per set.
+// isReady/metaSummary are called once per set across the whole catalogue —
+// globalIndex.coverage walks every set, and the admin panel asks for every set's
+// row every 1.5s while a build runs. isReady used to answer by calling loadSet,
+// which pulls a set's whole desc+kp pair (~5 MB for a large MTG set) into a cache
+// that is never evicted: ~460 of those, on a timer, to report two integers per
+// set.
 //
-// So the properties worth pinning are that these three read only what they need,
+// So the properties worth pinning are that these two read only what they need,
 // that a half-written index does not read as usable, and that one unreadable meta
 // cannot take down an enumeration of the other 459.
 // Run: `node test/indexstate.test.js`
@@ -62,7 +62,6 @@ writeBins(bad);
 writeMeta(bad, '{ this is not json');
 assert.doesNotThrow(() => setIndex.isReady('mtg', 'corrupt'), 'isReady tolerates a corrupt meta');
 assert.strictEqual(setIndex.metaSummary('mtg', 'corrupt'), null, 'and reports no summary for it');
-assert.strictEqual(setIndex.hasEmbeddings('mtg', 'corrupt'), false, 'and claims no embeddings');
 assert.doesNotThrow(() => setIndex.listBuilds(), 'listBuilds skips it rather than aborting');
 assert.ok(!setIndex.listBuilds().some(b => b.set === 'corrupt'), 'the corrupt index is not listed');
 
@@ -77,14 +76,11 @@ writeBins(full);
 writeMeta(full, {
   set: 'sv1', lang: 'ja', hashed: true,
   cards: [['A', 'sv1', '1', 0, 1, 0, 0], ['B', 'sv1', '2', 1, 1, 0, 0]],
-  embed: { model: 'm', dim: 4, preprocess: 'p', cards: [['A', 'sv1', '1', null]] },
 });
 let summary = setIndex.metaSummary('pokemon', 'sv1', 'ja');
 assert.strictEqual(summary.cards, 2, 'card count');
 assert.strictEqual(summary.set, 'sv1');
 assert.strictEqual(summary.lang, 'ja');
-assert.strictEqual(summary.embed.cards, 1, 'embedded count is tracked separately from the ORB count');
-assert.strictEqual(summary.embed.dim, 4);
 assert.ok(!Array.isArray(summary.cards), 'the summary holds counts, not rows');
 
 // The language is part of the identity: an English index must not answer for ja.
@@ -100,7 +96,6 @@ writeMeta(full, {
 });
 summary = setIndex.metaSummary('pokemon', 'sv1', 'ja');
 assert.strictEqual(summary.cards, 3, 'a rewritten meta is re-read');
-assert.strictEqual(summary.embed, null, 'and losing the embed pass is reflected too');
 
 // Deleting the build invalidates it rather than leaving a summary for a file
 // that is gone.

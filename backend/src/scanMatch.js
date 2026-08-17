@@ -1,43 +1,68 @@
-// Hybrid card identification: CLIP embedding recall + ORB geometric verification.
+// Card identification: two-channel recall + ORB geometric verification.
 //
-// 1. Recall: embedMatch (CLIP) returns the top-RECALL_K visually-nearest cards.
-// 2. Verify: for each, match ORB descriptors to the query and fit a RANSAC
-//    homography; the inlier count is decisive (only the true card produces many
-//    geometrically-consistent matches). Rank by inliers.
+// 1. Recall, unioned from two sources that fail on DIFFERENT photos:
+//      · a 64-bit dHash of the rectified crop swept against every printing's
+//        stored hash — 110k popcounts, well under a millisecond — RECALL_K deep.
+//      · the HEAD of a BoVW visual-word list, BOVW_HEAD_K deep.
+// 2. Verify: for each candidate, match ORB descriptors to the query and fit a
+//    RANSAC homography; the inlier count is decisive (only the true card
+//    produces many geometrically-consistent matches). Rank by inliers.
 //
-// Falls back to CLIP-only ranking if the ORB DB for a game isn't built yet.
+// The split is 250 hash / 10 BoVW, and both numbers are measured rather than
+// guessed. Ablated over 100 MTG cards on one sample (exact printing / right
+// card / latency):
+//
+//   hash 250 + BoVW  10   91.0%  98.0%   772 ms   <- this
+//   hash  60 + BoVW 250   91.0%  98.0%  1328 ms   <- the old split
+//   hash 250 + BoVW   0   82.0%  90.0%   700 ms
+//   hash   0 + BoVW 250   84.0%  93.0%  1360 ms
+//
+// Neither channel alone reaches the pair: blur moves the local descriptors BoVW
+// quantizes while barely touching a brightness-gradient hash, and framing moves
+// the hash while leaving descriptors alone. BoVW earns its place in its first ten
+// results — its recall@1 is 48% against the hash's 32% — and nothing after that,
+// which is why it gets ten and the hash gets the rest of the verify budget.
+// Cutting BoVW entirely was tried and cost 9 points of exact printing here, plus
+// 8 of 65 real phone captures whose true printing sat at BoVW rank ~213.
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 const { cv } = require('opencv-wasm');
-const embedMatch = require('./embedMatch');
+const bovwMatch = require('./bovwMatch');
 const setIndex = require('./setIndex');
 const { parseSetList } = require('./utils/setQuery');
 const languages = require('./utils/languages');
 const gpaths = require('./utils/globalIndexPaths');
 
-const RECALL_K = 250;      // CLIP candidates to geometrically verify
+// Depth of the perceptual-hash channel — the bulk of the verify budget, and what
+// the client's Scan Detail slider scales. Measured on 65 real captures, the true
+// printing's hash rank was inside 60 in 42 cases and inside 250 in 45: the deeper
+// list is the tail, and the tail is where a blurred capture lands.
+const RECALL_K = 250;
+// Depth of the BoVW channel. Ten, not 250: its rank profile is 48% @1, 75% @10,
+// 86% @60, 89% @250 — so nearly everything it contributes it contributes
+// immediately, and the 240 candidates after the tenth were costing ~550 ms per
+// scan for a fraction of a point.
+const BOVW_HEAD_K = 10;
 const REF_WIDTH = 500;     // must match build-card-orb.mjs
 const DESC_BYTES = 32;
 const RATIO = 0.75;        // Lowe ratio test
 const RANSAC_PX = 5.0;
-const CARD_ASPECT = 2.5 / 3.5;
-const WARP_W = 500, WARP_H = Math.round(500 / CARD_ASPECT); // rectified card size
 
 // Printing disambiguation.
 //
-// The CLIP index is built from Scryfall's `unique_artwork` — one printing per
-// artwork — so recall can only ever propose the printing Scryfall picked. Scan a
-// reprint and you get the right card with the wrong set/number. The ORB index,
-// being the union of every per-set index, DOES contain all printings, so once
-// recall names a card we can verify each of its printings and let inliers pick the
-// real one (set symbol, frame and holo pattern differ between them).
+// This was written for CLIP recall, whose index held one row per ARTWORK — so it
+// could only ever propose the printing Scryfall picked, and scanning a reprint
+// gave the right card with the wrong set/number. Expanding a recall hit into its
+// other printings and letting inliers choose was the workaround.
 //
-// This is the one change here that trades scan latency for accuracy, so it is
-// bounded and off by default: only the top EXPAND_TOP recall candidates are
-// expanded, and no more than EXPAND_MAX extra printings are verified in total.
-// Turn on with GLOBAL_PRINTING_EXPANSION=1 and measure with
-// scripts/eval-global-index.mjs, which reports accuracy AND latency.
+// Hash recall indexes every printing directly, so the case this repairs mostly
+// does not arise any more. It is kept because it still helps where recall ranks a
+// sibling printing above the true one, and it stays bounded and off by default:
+// only the top EXPAND_TOP recall candidates are expanded, and no more than
+// EXPAND_MAX extra printings are verified in total. Turn on with
+// GLOBAL_PRINTING_EXPANSION=1 and measure with scripts/eval-global-index.mjs,
+// which reports accuracy AND latency.
 // Math.max(1, parseInt('typo')) is NaN, and `budget <= 0` is false for NaN — so a
 // mistyped env var would remove the bound entirely rather than fall back to it.
 function posInt(raw, fallback) {
@@ -45,8 +70,8 @@ function posInt(raw, fallback) {
   return Number.isFinite(n) && n >= 1 ? n : fallback;
 }
 // A partial index — one built from a filtered set selection rather than the whole
-// catalogue — cannot answer "I don't know". CLIP always returns its nearest
-// neighbour, so a card from an excluded set comes back as the closest artwork the
+// catalogue — cannot answer "I don't know". Recall always returns its nearest
+// neighbours, so a card from an excluded set comes back as the closest artwork the
 // table happens to hold, and ORB then verifies it weakly. Presented plainly that
 // is a confident wrong answer, which is worse for the user than a miss: they file
 // the card under the wrong name and never find out.
@@ -71,258 +96,58 @@ const EXPAND_PRINTINGS = process.env.GLOBAL_PRINTING_EXPANSION === '1';
 const EXPAND_TOP = posInt(process.env.GLOBAL_PRINTING_EXPANSION_TOP, 20);
 const EXPAND_MAX = posInt(process.env.GLOBAL_PRINTING_EXPANSION_MAX, 120);
 
-// Order 4 quad points as [tl, tr, br, bl].
+// The detector itself lives in shared/cardDetect.mjs so the browser can run the
+// IDENTICAL algorithm — the live overlay has to show what this code sees, and a
+// second implementation would drift. cv is injected because the two environments
+// load different OpenCV builds.
 //
-// The sum/diff trick is exact for an axis-aligned-ish quad but degenerates near
-// 45°, where one point can win two slots and leave another unused — that feeds
-// warpPerspective a collapsed quad and produces the badly sheared crops. So the
-// result is checked for duplicates and falls back to ordering by angle around the
-// centroid, which is rotation-proof.
-function orderQuad(pts) {
-  const bySum = [...pts].sort((a, b) => (a.x + a.y) - (b.x + b.y));
-  const byDiff = [...pts].sort((a, b) => (a.y - a.x) - (b.y - b.x));
-  const guess = [bySum[0], byDiff[0], bySum[3], byDiff[3]]; // tl, tr, br, bl
-  if (new Set(guess).size === 4) return guess;
-
-  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-  // Clockwise from the top-left-most quadrant so the order still reads tl,tr,br,bl.
-  const byAngle = [...pts].sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
-  const start = byAngle.reduce((bi, p, i) => (p.x + p.y < byAngle[bi].x + byAngle[bi].y ? i : bi), 0);
-  return [0, 1, 2, 3].map(i => byAngle[(start + i) % 4]);
-}
-
-// Geometry of an ordered quad, or null if it is too small to judge. Used to throw
-// out candidates that are not plausibly a card seen at an angle.
-function quadMetrics(pts) {
-  const [tl, tr, br, bl] = orderQuad(pts);
-  const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  const top = d(tl, tr), bottom = d(bl, br), left = d(tl, bl), right = d(tr, br);
-  if (Math.min(top, bottom, left, right) < 20) return null;
-  const w = (top + bottom) / 2, h = (left + right) / 2;
-  // How much the opposite sides agree. A real card (even in perspective) keeps
-  // this high; a blob merging the card with a hand or a neighbouring card does not.
-  const parallelism = (Math.min(top, bottom) / Math.max(top, bottom)) * (Math.min(left, right) / Math.max(left, right));
-  return { corners: [tl, tr, br, bl], w, h, ar: w / h, parallelism };
-}
-
-// Is this quad plausibly a portrait card?
-//
-// Portrait is required rather than rotated into place: the scanner's guide box is
-// portrait and every indexed reference image is portrait upright, so a landscape
-// quad means the detector merged the card with something else. Rotating it would
-// be a coin flip on which way is up, and dHash recall is rotation-sensitive — so a
-// landscape candidate is rejected instead of guessed at.
-function isCardQuad(m) {
-  return !!m && m.ar <= 0.95 && m.ar >= 0.5 && m.parallelism >= 0.6;
-}
-
-// Locate the card and return a rectified raw-RGBA image, or null if no card-like
-// region is found. Two strategies, tried in order:
-//   1. A clean 4-point convex quad -> perspective-warp flat (handles tilt/skew).
-//   2. Else the largest card-aspect region's bounding box -> plain crop (slinger
-//      cards sit flat and upright, so a crop is enough and works when the card is
-//      small/far where a crisp quad isn't found).
-// Both prefer the region nearest the frame center (the card the user aimed at).
-// The area floor is low (4%) so distant cards are still detected instead of
-// falling back to a background-dominated center crop.
-// Finds the 4 true perspective corners of a card contour by dynamically stepping
-// epsilon on its convex hull to simplify rounded corners into exactly 4 primary vertices.
-function findCardQuad(c) {
-  const hull = new cv.Mat();
-  cv.convexHull(c, hull);
-  const peri = cv.arcLength(hull, true);
-  let quad = null;
-
-  for (let epsScale = 0.015; epsScale <= 0.12; epsScale += 0.005) {
-    const approx = new cv.Mat();
-    cv.approxPolyDP(hull, approx, epsScale * peri, true);
-    if (approx.rows === 4 && cv.isContourConvex(approx)) {
-      quad = Array.from({ length: 4 }, (_, j) => ({
-        x: approx.data32S[j * 2],
-        y: approx.data32S[j * 2 + 1]
-      }));
-      approx.delete();
-      break;
-    }
-    approx.delete();
-  }
-  hull.delete();
-  return quad;
-}
-
-// Every way we know of turning a photo into "regions that might be a card".
-// One segmentation is not enough in practice:
-//   - OTSU (both polarities) is the cheapest and wins on a plain table, but it
-//     merges the card with anything of similar brightness touching it — a hand, a
-//     neighbouring card in the binder — and then the region's outline is not the
-//     card's outline, which is what produced skewed crops.
-//   - Canny keys on the card's BORDER instead of its brightness, so it survives a
-//     hand, glare, and a background whose tone is close to the card's.
-// Candidates from all of them compete on the same score, so adding a strategy can
-// only help: a wrong region still has to beat a right one on card-likeness.
-function segmentations(blur, w, h) {
-  const closeK = Math.max(15, Math.round(Math.min(w, h) * 0.035));
-  const kClose = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(closeK, closeK));
-  const masks = [];
-
-  for (const polarity of [cv.THRESH_BINARY_INV, cv.THRESH_BINARY]) {
-    const thresh = new cv.Mat(), closed = new cv.Mat();
-    cv.threshold(blur, thresh, 0, 255, polarity | cv.THRESH_OTSU);
-    cv.morphologyEx(thresh, closed, cv.MORPH_CLOSE, kClose);
-    thresh.delete();
-    masks.push(closed);
-  }
-
-  // Edge pass: Canny, then a light dilate to close the small gaps a card border
-  // picks up over busy art, then close to fill it into a solid region. The kernel
-  // is deliberately much smaller than the OTSU one — a big kernel is exactly what
-  // bridges the card to a hand resting against it.
-  const edges = new cv.Mat(), dil = new cv.Mat(), filled = new cv.Mat();
-  const kEdge = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-  const kFill = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.max(5, Math.round(Math.min(w, h) * 0.01)), Math.max(5, Math.round(Math.min(w, h) * 0.01))));
-  cv.Canny(blur, edges, 50, 150);
-  cv.dilate(edges, dil, kEdge);
-  cv.morphologyEx(dil, filled, cv.MORPH_CLOSE, kFill);
-  edges.delete(); dil.delete(); kEdge.delete(); kFill.delete();
-  masks.push(filled);
-
-  kClose.delete();
-  return masks;
-}
-
-// Card must cover at least this fraction of the frame. Low on purpose: a card held
-// back from the camera is small, and rejecting it means matching the whole photo —
-// background included — which is far worse than a slightly loose crop. (The old
-// floor was 0.15 while the comment above claimed 0.04; 4% is the intent.)
-const MIN_AREA_FRAC = 0.04;
-// Upper cap earns its keep: with the wrong OTSU polarity the BACKGROUND becomes
-// the blob, and "the whole frame" has whatever aspect the sensor has — 3:4 sails
-// through the card-aspect gate, scores enormously on area, and crops the entire
-// photo. Keep this comfortably below 1.
-const MAX_AREA_FRAC = 0.85;
-
-function detectCard(rgbaData, w, h) {
-  const src = cv.matFromImageData({ data: rgbaData, width: w, height: h });
-  const gray = new cv.Mat(), blur = new cv.Mat();
-  let out = null;
-  let masks = [];
-  try {
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
-
-    const imgArea = w * h, cx = w / 2, cy = h / 2, halfDiag = Math.hypot(w, h) / 2;
-    let best = null; // { score, pts }
-
-    // Freed in the finally below, not inline: an exception between here and there
-    // would otherwise strand three full-frame Mats on the wasm heap, which never
-    // shrinks — the failure mode that used to kill scanning after ~67 cards.
-    masks = segmentations(blur, w, h);
-    const MASK_NAMES = ['otsu-inv', 'otsu', 'canny'];
-    for (let mi = 0; mi < masks.length; mi++) {
-      const mask = masks[mi];
-      const maskName = MASK_NAMES[mi] || `mask${mi}`;
-      const contours = new cv.MatVector(), hier = new cv.Mat();
-      try {
-        cv.findContours(mask, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-        for (let i = 0; i < contours.size(); i++) {
-          const c = contours.get(i);
-          const area = cv.contourArea(c);
-          if (area >= MIN_AREA_FRAC * imgArea && area <= MAX_AREA_FRAC * imgArea) {
-            const rect = cv.minAreaRect(c);
-            let rw = rect.size.width;
-            let rh = rect.size.height;
-            if (rw > rh) { const tmp = rw; rw = rh; rh = tmp; } // ensure portrait
-            const ar = rw / rh; // ideal card aspect = 0.714
-
-            if (ar >= 0.55 && ar <= 0.88) {
-              const rcx = rect.center.x, rcy = rect.center.y;
-              const centrality = 1 - Math.min(1, Math.hypot(rcx - cx, rcy - cy) / halfDiag);
-              const aspectFit = 1 - Math.min(1, Math.abs(ar - CARD_ASPECT) / 0.15);
-
-              // opencv-wasm calls this rotatedRectPoints and returns the points
-              // directly. It has NO cv.boxPoints — the old code called that in its
-              // fallback branch, so any contour without a clean hull quad threw
-              // TypeError, aborted the whole detection (no catch inside), and the
-              // scan silently fell back to matching the uncropped photo.
-              const boxPts = cv.rotatedRectPoints(rect).map(p => ({ x: p.x, y: p.y }));
-
-              // The hull quad follows real perspective, so it beats the bounding
-              // box when it is trustworthy — but only then. An unvalidated quad was
-              // preferred outright (1.2x), which is how a hand-merged blob's
-              // garbage quad won over its own sane bounding box and sheared the crop.
-              const hullQuad = findCardQuad(c);
-              const hullMetrics = hullQuad && quadMetrics(hullQuad);
-              const rectArea = rect.size.width * rect.size.height;
-              const hullOk = isCardQuad(hullMetrics)
-                // A trustworthy quad also has to explain the region it came from:
-                // a sliver cutting across the blob does not.
-                && hullMetrics.w * hullMetrics.h >= 0.7 * rectArea;
-
-              const candidates = [];
-              if (hullOk) candidates.push({ pts: hullMetrics.corners, bonus: 1.2, par: hullMetrics.parallelism, m: hullMetrics });
-              const boxMetrics = quadMetrics(boxPts);
-              if (isCardQuad(boxMetrics)) candidates.push({ pts: boxMetrics.corners, bonus: 1.0, par: boxMetrics.parallelism, m: boxMetrics });
-
-              for (const cand of candidates) {
-                // Belt to the area cap's braces: a quad that spans essentially the
-                // whole frame is the background, not a card. Cropping to it is a
-                // no-op that still runs the image through a perspective warp.
-                if (cand.m.w >= 0.95 * w && cand.m.h >= 0.95 * h) continue;
-                // How much of the quad the region actually fills. A card fills its
-                // own outline almost completely; a region that merged the card with
-                // a hand or a neighbouring card is L-shaped, so the quad drawn
-                // around it is mostly empty.
-                const fill = Math.min(1, area / Math.max(1, cand.m.w * cand.m.h));
-                const score = (area / imgArea) * (aspectFit * aspectFit) * (0.4 + 0.6 * centrality) * cand.bonus * (0.5 + 0.5 * cand.par) * fill;
-                if (!best || score > best.score) best = { score, pts: cand.pts, source: maskName, fill, par: cand.par, ar };
-              }
-            }
-          }
-          c.delete();
-        }
-      } finally { contours.delete(); hier.delete(); }
-    }
-
-    if (best && best.pts) {
-      const [tl, tr, brc, bl] = orderQuad(best.pts);
-      const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, brc.x, brc.y, bl.x, bl.y]);
-      const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, WARP_W, 0, WARP_W, WARP_H, 0, WARP_H]);
-      const M = cv.getPerspectiveTransform(srcTri, dstTri);
-      const warped = new cv.Mat();
-      cv.warpPerspective(src, warped, M, new cv.Size(WARP_W, WARP_H));
-      // `quad`/`pick` are diagnostics only (preprocessCard ignores them); they make
-      // a bad crop debuggable — which segmentation won, and where it thought the
-      // card was — instead of guessable.
-      out = {
-        data: Buffer.from(warped.data), width: WARP_W, height: WARP_H, channels: 4,
-        quad: [tl, tr, brc, bl].map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })),
-        pick: { source: best.source, score: +best.score.toFixed(4), fill: +best.fill.toFixed(2), par: +best.par.toFixed(2), ar: +best.ar.toFixed(3) },
-      };
-      srcTri.delete(); dstTri.delete(); M.delete(); warped.delete();
-    }
-  } finally {
-    for (const m of masks) { try { m.delete(); } catch { /* already freed */ } }
-    src.delete(); gray.delete(); blur.delete();
-  }
-  return out;
-}
+// require() of an ESM module is stable on the Node this ships with, so there is
+// no build step and no duplicated source.
+const { createDetector } = require('../../shared/cardDetectPure.mjs');
+const { detectCard } = createDetector();
 
 // Produce the card image to match on: auto-crop + deskew to the detected card
 // outline (works on light and dark backgrounds via dual-polarity thresholding),
-// else fall back to the client's framed guide-box capture.
+// else fall back to matching the frame as sent.
 async function preprocessCard(imageBuffer) {
   try {
     const { data, info } = await sharp(imageBuffer).resize({ width: 1200, withoutEnlargement: true }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const card = detectCard(new Uint8ClampedArray(data), info.width, info.height);
     if (card) {
-      return await sharp(card.data, { raw: { width: card.width, height: card.height, channels: 4 } }).png().toBuffer();
+      const out = await sharp(card.data, { raw: { width: card.width, height: card.height, channels: 4 } }).png().toBuffer();
+      await dumpDebug(imageBuffer, out, card);
+      return out;
     }
+    await dumpDebug(imageBuffer, null, null);
   } catch (e) {
     console.warn('preprocessCard failed:', e.message);
   }
   return await sharp(imageBuffer).png().toBuffer();
+}
+
+// Create data/scan-debug/ and each scan writes its original frame and rectified
+// crop there, with the quad and the segmentation that won. Delete the directory
+// to turn it off. A bad crop is otherwise invisible from the outside: recall
+// returns unrelated cards and nothing in the logs says the geometry was wrong.
+//
+// Gated on the directory rather than an env var deliberately — an env var has to
+// survive however the server was launched, and dotenv resolves .env against the
+// working directory, which is not necessarily backend/.
+const DEBUG_DIR = path.join(gpaths.DATA_DIR, 'scan-debug');
+
+async function dumpDebug(original, cropped, card) {
+  if (!fs.existsSync(DEBUG_DIR)) return;
+  try {
+    const dir = DEBUG_DIR;
+    const stamp = `${Date.now()}`;
+    await sharp(original).jpeg({ quality: 85 }).toFile(path.join(dir, `${stamp}-frame.jpg`));
+    if (cropped) await sharp(cropped).jpeg({ quality: 90 }).toFile(path.join(dir, `${stamp}-crop.jpg`));
+    fs.writeFileSync(path.join(dir, `${stamp}-detect.json`),
+      JSON.stringify(card ? { quad: card.quad, pick: card.pick } : { detected: false }, null, 2));
+    console.log(`scanMatch: debug dump ${stamp} (${card ? `${card.pick.source} score=${card.pick.score} fill=${card.pick.fill} par=${card.pick.par} ar=${card.pick.ar}` : 'NO CARD DETECTED — matching the raw frame'})`);
+  } catch (e) {
+    console.warn(`scanMatch: debug dump failed: ${e.message}`);
+  }
 }
 
 const orbDbs = {};         // "game|lang" -> { map: Map(key->[{name,offset,count}]), descFd, kpFd } | null
@@ -364,9 +189,32 @@ function loadOrbDb(game, lang = 'en') {
       if (arr) arr.push(entry); else byName.set(c[0], [entry]);
     }
   }
-  orbDbs[k] = { map, byName, descFd: fs.openSync(descPath, 'r'), kpFd: fs.openSync(kpPath, 'r') };
+  // The dHash recall channel — now the ONLY one. Two typed arrays plus the row
+  // list the meta already holds — ~900 KB for MTG — so it costs nothing next to
+  // the index itself. Absent on rollups built before orbUnion carried the hash
+  // columns; such a rollup has no recall at all, so match() reports it as unbuilt
+  // rather than returning an empty candidate list with no explanation.
+  let hashes = null;
+  if (meta.cards.length && meta.cards[0].length >= 7) {
+    const hi = new Uint32Array(meta.cards.length);
+    const lo = new Uint32Array(meta.cards.length);
+    for (let i = 0; i < meta.cards.length; i++) {
+      hi[i] = meta.cards[i][5] >>> 0;
+      lo[i] = meta.cards[i][6] >>> 0;
+    }
+    hashes = { hi, lo, rows: meta.cards };
+  }
+
+  // `scope` says which sets this rollup covers — null on a full build, present
+  // with excluded > 0 on a partial one. It rides along on the meta we are already
+  // parsing, so the out-of-scope notice costs no extra file read.
+  orbDbs[k] = {
+    map, byName, hashes, scope: meta.scope || null,
+    descFd: fs.openSync(descPath, 'r'), kpFd: fs.openSync(kpPath, 'r'),
+  };
   console.log(
     `scanMatch: loaded ${gpaths.tag(game, lang)} ORB DB (${meta.cards.length} cards` +
+    `${hashes ? '' : ', NO dHash channel — rollup predates it, refresh to enable'}` +
     `${byName ? `, ${byName.size} distinct names, printing expansion ON` : ''})`
   );
   return orbDbs[k];
@@ -428,9 +276,54 @@ function inlierCount(bf, qDesc, qKp, cand) {
   return inl;
 }
 
+// Hamming distance between two 64-bit dHashes, held as 32-bit halves.
+function popcount32(x) {
+  x = x - ((x >> 1) & 0x55555555);
+  x = (x & 0x33333333) + ((x >> 2) & 0x33333333);
+  return (((x + (x >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
+}
+
+// Recall: the nearest cards by perceptual hash.
+//
+// A dHash is a downscaled brightness-gradient comparison, which blur barely
+// touches — that is why it outlasted the visual-word channel it used to share
+// this job with. Its weakness is the opposite one: it is sensitive to how the
+// crop is framed, so a skewed or loose crop moves it a long way down the list.
+// That makes detectCard's quality the thing recall depends on most.
+//
+// A full scan of 110k rows is ~110k popcount pairs, well under a millisecond,
+// so this is free next to the ORB verification it feeds.
+function hashRecall(db, qHash, topK) {
+  // topK <= 0 is not just an empty result: the loop below splices a candidate in,
+  // pops it straight back out, and then reads best[best.length - 1] on an empty
+  // array. Guard it here rather than in the loop — nothing reached it while the
+  // depth came from Math.min(HASH_RECALL_K, recallK), but the slider's recallK
+  // now feeds this directly, so a future profile could.
+  if (!db || !db.hashes || !qHash || topK <= 0) return [];
+  const { hi, lo, rows } = db.hashes;
+  const best = [];   // ascending by distance, length <= topK
+  let worst = 65;
+  for (let i = 0; i < hi.length; i++) {
+    const d = popcount32((qHash.hi ^ hi[i]) >>> 0) + popcount32((qHash.lo ^ lo[i]) >>> 0);
+    if (best.length < topK || d < worst) {
+      let pos = 0;
+      while (pos < best.length && best[pos].d <= d) pos++;
+      best.splice(pos, 0, { d, i });
+      if (best.length > topK) best.pop();
+      worst = best[best.length - 1].d;
+    }
+  }
+  return best.map(({ d, i }) => ({
+    name: rows[i][0], set: rows[i][1], number: rows[i][2],
+    // Map distance onto a descending score. Only ever a tie-break: inliers
+    // decide, and this is reported to the client alongside them.
+    score: (64 - d) / 64,
+  }));
+}
+
 const STRONG_INLIERS = 25; // enough to stop trying the other game
 
-// Score one game: CLIP recall + ORB verify against the shared query features.
+// Score one game: recall + ORB verify against the shared query features.
 // Async because verification is fanned out to the worker pool.
 async function verifyGame(game, q, bf, recall, topK, lang = 'en') {
   const db = loadOrbDb(game, lang);
@@ -455,8 +348,8 @@ async function verifyGame(game, q, bf, recall, topK, lang = 'en') {
       for (const other of db.byName.get(cand.name) || []) {
         if (budget <= 0) break;
         if (seen.has(other.k)) continue;
-        // Inherit the CLIP score: these were never ranked by CLIP, so this only
-        // acts as the tie-break when two printings match equally well on ORB.
+        // Inherit the recall score: these were never ranked by recall, so this
+        // only acts as the tie-break when two printings match equally on ORB.
         push(cand.name, other.set, other.number, cand.score);
         budget--;
       }
@@ -496,7 +389,7 @@ async function verifyGame(game, q, bf, recall, topK, lang = 'en') {
   }
   scored.sort((a, b) => (b.inliers - a.inliers) || (b.score - a.score));
   const top = scored[0];
-  // SCAN_RANK_LOG=1: measure where the ORB winner sat in the CLIP recall list.
+  // SCAN_RANK_LOG=1: measure where the ORB winner sat in the recall list.
   // 0-indexed rank; if these stay well below K, RECALL_K can be lowered losslessly.
   // Appended to a file (flushed) instead of stdout, which block-buffers through pipes.
   if (process.env.SCAN_RANK_LOG && top && top.inliers > 0) {
@@ -519,7 +412,7 @@ async function match(imageBuffer, requestedGame, topK = 8, setCode = '', opts = 
   // language with no rollup built says `englishOnly` rather than returning
   // confident lookalikes.
   const lang = languages.toCode(opts.lang);
-  // Scan-detail knobs (client "Scan Detail" slider). Fewer CLIP candidates to
+  // Scan-detail knobs (client "Scan Detail" slider). Fewer recall candidates to
   // verify + fewer ORB features = faster, less accurate. Clamped to sane bounds.
   const recallK = Math.max(10, Math.min(RECALL_K, opts.recallK || RECALL_K));
   const orbN = Math.max(150, Math.min(800, opts.orb || 500));
@@ -551,30 +444,66 @@ async function match(imageBuffer, requestedGame, topK = 8, setCode = '', opts = 
     // Game auto-detection is English-only: trying both games needs both games'
     // indexes for that language, and for anything but English that is far more
     // likely to mean "neither is built" than a genuine ambiguity.
-    const order = lang !== 'en'
-      ? [requestedGame]
-      : (requestedGame === 'pokemon' ? ['pokemon', 'mtg'] : ['mtg', 'pokemon']);
-    const usable = order.filter(g => embedMatch.isBuilt(g, lang));
+    // Recall is built if EITHER channel can answer. The hash rides on the ORB
+    // rollup's own meta, so a rollup written before those columns existed loads
+    // with hashes === null; BoVW is a separate file that may or may not be there.
+    // Requiring both would report a working scanner as unbuilt, and requiring
+    // neither would return an empty candidate list with no explanation.
+    const recallIsBuilt = (g, l) => !!(loadOrbDb(g, l) || {}).hashes || bovwMatch.isBuilt(g, l);
+
+    // Only try alternative game if auto-detect is explicitly enabled or requested
+    const order = (opts.autoDetect && lang === 'en')
+      ? (requestedGame === 'pokemon' ? ['pokemon', 'mtg'] : ['mtg', 'pokemon'])
+      : [requestedGame];
+
+    const usable = order.filter(g => recallIsBuilt(g, lang));
     if (!usable.length) {
       // Distinguish "you never built this language" from "nothing is built at
       // all" — they need different actions from the user.
-      const englishOnly = lang !== 'en' && embedMatch.isBuilt(requestedGame, 'en');
+      const englishOnly = lang !== 'en' && recallIsBuilt(requestedGame, 'en');
       return { game: requestedGame, verified: false, candidates: [], crop, lang, englishOnly, notBuilt: !englishOnly };
     }
 
+    // One perceptual hash of the query, shared by every game's hash channel.
+    const qHash = await setIndex.dhash(cardBuf);
+
     let best = null;
     for (const g of usable) {
-      const recall = await embedMatch.match(cardBuf, g, recallK, lang); // CLIP recall
+      // Union the two channels, hash first so it wins ties on ordering. BoVW
+      // reuses the ORB descriptors already extracted for verification, so its
+      // sweep needs no second look at the image; the hash sweep is a popcount
+      // over one array. Verification is what decides between them — it is
+      // reliable where recall is not, scoring 31-66 inliers on captures recall
+      // had ranked in the hundreds.
+      const qDesc = new Uint8Array(q.desc.data.subarray(0, q.desc.rows * DESC_BYTES));
+      const recall = [];
+      const seenRecall = new Set();
+      for (const list of [
+        hashRecall(loadOrbDb(g, lang), qHash, recallK),
+        bovwMatch.match(qDesc, g, Math.min(BOVW_HEAD_K, recallK), lang, q.desc.rows),
+      ]) {
+        for (const item of list) {
+          const kk = key(item.set, item.number);
+          if (seenRecall.has(kk)) continue;
+          seenRecall.add(kk);
+          recall.push(item);
+        }
+      }
       if (recall.length === 0) continue;
       const r = await verifyGame(g, q, bf, recall, topK, lang);
-      if (!best || r.top > best.top) best = { ...r, game: g };
+      // Only switch away from requestedGame if the other game has high confidence and beats requested
+      if (!best) {
+        best = { ...r, game: g };
+      } else if (r.top >= 16 && r.top > best.top + 5) {
+        best = { ...r, game: g };
+      }
       if (best.top >= STRONG_INLIERS) break; // confident — no need to try the other game
     }
     if (!best) return { game: requestedGame, verified: false, candidates: [], crop, lang };
     // If the winning game's index only covers part of the catalogue and the match
     // is weak, tell the caller so it can say "outside your indexed range" instead
     // of presenting the nearest indexed artwork as the answer.
-    const outOfScope = outOfScopeNotice(embedMatch.scopeOf(best.game, lang), best.top);
+    const outOfScope = outOfScopeNotice((loadOrbDb(best.game, lang) || {}).scope, best.top);
     return {
       game: best.game, verified: best.verified, candidates: best.candidates, crop, lang,
       ...(outOfScope ? { outOfScope } : {}),
@@ -589,6 +518,7 @@ async function match(imageBuffer, requestedGame, topK = 8, setCode = '', opts = 
 // rename fails outright while a handle is still open. Omitting `lang` evicts
 // every language of that game.
 function reload(game, lang) {
+  bovwMatch.reload(game, lang);
   const drop = (k) => {
     const db = orbDbs[k];
     if (db) { try { fs.closeSync(db.descFd); fs.closeSync(db.kpFd); } catch { /* already closed */ } }
@@ -603,6 +533,11 @@ function reload(game, lang) {
 
 module.exports = {
   match, reload, preprocessCard, detectCard,
+  // scripts/eval-global-index.mjs measures the ORB query stage on its own.
+  _queryOrbForTest: queryOrb,
+  // ...and the recall stage on its own, so a recall miss stays distinguishable
+  // from a verify miss. They need completely different fixes.
+  _hashRecallForTest: hashRecall,
   // test/printingexpansion.test.js reaches the private ORB-index loader and the
   // expansion bounds; both are module-private on purpose.
   _loadOrbDbForTest: loadOrbDb,

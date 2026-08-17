@@ -5,6 +5,12 @@
 // preloaded with `node -r`.
 process.env.SCRYFALL_GAP_SCALE = '0';
 
+// Every test server gets a unique HTTP port, but HTTPS_PORT is a fixed number a
+// developer's .env may set — and dotenv will not override a key already present.
+// Blanking it here (before server.js loads .env) keeps a test run from fighting a
+// dev server, or another test server, for the same TLS port.
+process.env.HTTPS_PORT = '';
+
 const axios = require('axios');
 const originalGet = axios.Axios.prototype.get;
 const originalPost = axios.Axios.prototype.post;

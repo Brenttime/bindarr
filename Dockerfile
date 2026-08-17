@@ -19,15 +19,17 @@ RUN npm run build
 # =========================================
 # Stage 2: Set up Production Server
 # =========================================
-# Debian (glibc), NOT alpine: onnxruntime-node (pulled in by
-# @huggingface/transformers for CLIP inference during the global-index build)
-# ships glibc-linked prebuilt binaries and fails to dlopen on alpine/musl
-# (ERR_DLOPEN_FAILED, issue #19).
+# Debian (glibc), NOT alpine. The original reason was onnxruntime-node (pulled in
+# by @huggingface/transformers for CLIP inference), which shipped glibc-linked
+# prebuilts and failed to dlopen on musl — issue #19. That dependency is gone with
+# CLIP, so alpine may now be viable.
+# ponytail: not switched, because sqlite3 and sharp prebuilts have their own
+# glibc assumptions and proving that out is a separate job from removing CLIP.
 FROM node:20-slim AS production
 WORKDIR /app
 
 # Native build tools for SQLite3, gosu to drop root in the entrypoint, plus
-# wget (healthcheck) and ca-certificates (HTTPS to the card APIs + model host).
+# wget (healthcheck) and ca-certificates (HTTPS to the card APIs).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 make g++ gosu wget ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -62,18 +64,17 @@ RUN npm ci --omit=dev
 # Recompile ONLY sqlite3 from source: its node-pre-gyp prebuilt is linked
 # against a newer glibc (GLIBC_2.38) than this Debian base provides, so the
 # prebuilt aborts at startup with ERR_DLOPEN_FAILED. Building here links against
-# the image's own glibc. Scoped to sqlite3 so sharp/onnxruntime-node keep their
-# prebuilts (sharp can't build from source without libvips-dev).
+# the image's own glibc. Scoped to sqlite3 so sharp keeps its prebuilt (sharp
+# can't build from source without libvips-dev).
 RUN npm rebuild sqlite3 --build-from-source
 
 # Copy backend source files
 COPY backend/src/ ./src/
 
-# build-card-embeddings.mjs is spawned by src/globalIndex.js at runtime (Rebuild
-# Global Index Cache), and imports ../src/utils/clipPreprocess.js — the shared
-# preprocessing definition — so both trees must be present. Omitting scripts/
-# breaks that feature in the image. The ORB half needs no script: it is assembled
-# from the per-set indexes by src/orbUnion.js.
+# Nothing here is on a runtime path — the whole index build lives in src/ — but
+# these are the operator's escape hatches inside a running container:
+# eval-global-index.mjs measures what the index actually identifies, and
+# cardSources.js is what it resolves reference images through.
 COPY backend/scripts/ ./scripts/
 
 # Shared JSON tables required at runtime by backend/src/utils/compartmentSort.js

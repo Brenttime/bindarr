@@ -5,9 +5,9 @@ name: Build Server Binaries
 # build only, uploaded as workflow artifacts (test). Each binary is a Node
 # Single Executable App (stdlib, no third-party packager) whose blob is just
 # backend/launch.js; the real server ships beside it under app/ (backend src +
-# node_modules + frontend build). Embedding DBs (backend/data) and .env are
-# gitignored, so they are NOT bundled: the server runs, and card-image matching
-# stays inert until the operator builds embeddings and drops a .env in
+# node_modules + frontend build). Scan indexes (backend/data) and .env are
+# gitignored, so they are NOT bundled: the server runs, and code-free card-image
+# matching stays inert until the operator builds the indexes and drops a .env in
 # app/backend.
 on:
   push:
@@ -138,9 +138,9 @@ jobs:
           $RUN
           Then open http://localhost:3001
           Config: copy app/backend/.env.example to app/backend/.env and edit.
-          Card-image scan matching needs embedding DBs in app/backend/data
-          (built with backend/scripts/build-card-embeddings.mjs); without them
-          the server runs but scan matches return nothing.
+          Code-free card-image scan matching needs the whole-game indexes in
+          app/backend/data (built from Admin -> Global Scan Indexes); without
+          them, set-scoped scanning still works and code-free returns nothing.
           EOF
 
       # Archive the tree contents at the root (no wrapping folder), matching the
