@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { DndContext, DragOverlay, MouseSensor, useSensor, useSensors, useDraggable, pointerWithin } from '@dnd-kit/core';
+import { DndContext, DragOverlay, MouseSensor, useSensor, useSensors, useDraggable, useDroppable, pointerWithin } from '@dnd-kit/core';
 import { Plus, Trash2, X, MoreVertical, Settings, RefreshCw, Lock, LayoutGrid, List, MousePointerClick, ChevronDown, ChevronUp, Edit3 } from 'lucide-react';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
@@ -20,8 +20,8 @@ import { useT } from '../utils/i18n';
 // auto-sorted and locked containers, where there is nothing to drag to.
 // MouseSensor activates on mousedown, while hold-to-select listens on
 // pointerdown, so both sets of listeners can be spread onto the same element.
-function ActiveDraggable({ entryId, style, children, ...divProps }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: entryId });
+function ActiveDraggable({ entryId, card, style, children, ...divProps }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: entryId, data: { card } });
   return (
     <div
       ref={setNodeRef}
@@ -35,9 +35,32 @@ function ActiveDraggable({ entryId, style, children, ...divProps }) {
   );
 }
 
-function DraggableCard({ enabled, entryId, children, ...divProps }) {
+function DraggableCard({ enabled, entryId, card, children, ...divProps }) {
   if (!enabled) return <div {...divProps}>{children}</div>;
-  return <ActiveDraggable entryId={entryId} {...divProps}>{children}</ActiveDraggable>;
+  return <ActiveDraggable entryId={entryId} card={card} {...divProps}>{children}</ActiveDraggable>;
+}
+
+// The Unsorted queue as a drop target, so a filed card can be dragged back OUT
+// of the binder. Without it the queue is one-way: cards go in by drag and only
+// come back by opening the card and clearing its container.
+function UnsortedDropZone({ enabled, children }) {
+  const { setNodeRef, isOver } = useDroppable({ id: 'unsorted-queue' });
+  if (!enabled) return <>{children}</>;
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        // An empty queue is exactly when you most want to drag a card out of the
+        // binder, and an empty div is nothing to aim at — so it keeps a target
+        // worth of height whether or not there is anything in it.
+        minHeight: '90px',
+        borderRadius: 'var(--radius-sm)',
+        ...(isOver ? { outline: '3px solid var(--accent-green)', outlineOffset: '-3px' } : {}),
+      }}
+    >
+      {children}
+    </div>
+  );
 }
 
 function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId, setSelectedLocationId, focusEntryId }) {
@@ -669,9 +692,40 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
   // under Arrange. Add a delay-activated TouchSensor if that proves too slow.
   const dndSensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 8 } }));
 
+  // Drag a filed card back out. The bulk endpoint with a null target is what the
+  // Move-to-Unassigned action already uses, so unfiling has one implementation
+  // and one set of rules whichever way it is triggered.
+  const unfileCard = async (entryId) => {
+    if (selectedLoc?.locked) {
+      showToast(t('loc.lockedArrange'));
+      return;
+    }
+    try {
+      const res = await fetch('/api/collection/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry_ids: [entryId], action: 'move', value: null })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        showToast(body?.error || t('loc.errPlace'));
+        return;
+      }
+      showToast(t('loc.movedToUnsorted'));
+      setPickedEntryId(null);
+      await refreshAll(); onUpdate();
+    } catch (err) { console.error(err); showToast(t('loc.errPlace')); }
+  };
+
   const handleDragEnd = ({ active, over }) => {
     setDraggingCard(null);
-    const pocket = over?.data?.current;
+    if (!over) return;
+    // Dropped on the queue: the card leaves the binder rather than moving inside it.
+    if (over.id === 'unsorted-queue') {
+      unfileCard(active.id);
+      return;
+    }
+    const pocket = over.data?.current;
     if (!pocket) return;
     handlePlaceSlot(pocket.compartmentId, pocket.slot, pocket.occupantEntryId, active.id);
   };
@@ -922,7 +976,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
     <DndContext
       sensors={dndSensors}
       collisionDetection={pointerWithin}
-      onDragStart={({ active }) => setDraggingCard(unsortedCards.find(c => c.entry_id === active.id) || null)}
+      // The dragged card travels as drag data: a card pulled OUT of a pocket is
+      // not in the queue's list, so looking it up there would leave the overlay
+      // empty for exactly the drags that move cards around inside the binder.
+      onDragStart={({ active }) => setDraggingCard(active.data?.current?.card || unsortedCards.find(c => c.entry_id === active.id) || null)}
       onDragCancel={() => setDraggingCard(null)}
       onDragEnd={handleDragEnd}
     >
@@ -1723,6 +1780,8 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
               </div>
             )}
 
+            {/* Drop a filed card here to take it back out of the container. */}
+            <UnsortedDropZone enabled={dndEnabled}>
             {unsortedViewMode === 'grid' ? (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.6rem', marginTop: '0.25rem' }}>
                 {unsortedCards.map(card => {
@@ -1737,6 +1796,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     <DraggableCard
                       enabled={dndEnabled}
                       entryId={card.entry_id}
+                      card={card}
                       key={card.entry_id}
                       id={`card-${card.entry_id}`}
                       className={card.entry_id === focusEntryId ? 'focus-flash' : ''}
@@ -1850,6 +1910,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     <DraggableCard
                       enabled={dndEnabled}
                       entryId={card.entry_id}
+                      card={card}
                       key={card.entry_id}
                       id={`card-${card.entry_id}`}
                       className={card.entry_id === focusEntryId ? 'focus-flash' : ''}
@@ -1912,6 +1973,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
             )}
 
             {unsortedCards.length === 0 && <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.5rem' }}>{t('loc.nothingUnsorted')}</p>}
+            </UnsortedDropZone>
           </>
         )}
       </div>

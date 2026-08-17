@@ -401,6 +401,7 @@
   "loc.sortAZ": "A-Z",
   "loc.sortSetNumber": "Set & Number",
   "loc.nothingUnsorted": "Nothing unsorted.",
+  "loc.movedToUnsorted": "Card moved back to Unsorted.",
   "loc.exitFiling": "Exit filing",
   "loc.skip": "Skip",
   "loc.containerCreated": "Storage container created!",

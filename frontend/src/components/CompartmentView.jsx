@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { useDroppable } from '@dnd-kit/core';
+import { useDroppable, useDraggable } from '@dnd-kit/core';
 import { Lock, Edit3 } from 'lucide-react';
 import { getPrintingBadgeStyle, getPrintingBadgeLabel, getFoilOverlayClass } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
@@ -141,8 +141,44 @@ function ActiveDroppable({ dropId, dropData, style, children, ...divProps }) {
   );
 }
 
-function DroppablePocket({ enabled, dropId, dropData, children, ...divProps }) {
+// A pocket holding a card is BOTH: you can drop onto it and drag the card out of
+// it, which is what makes re-filing possible at all — a card that can only be
+// dragged in has to be tapped back out. One node, two hooks, refs composed by
+// hand because dnd-kit has no combiner.
+//
+// The card rides along as `data` so the drag overlay can draw it without the
+// container having to look the id up: the queue knows its own cards, but a card
+// dragged out of a pocket is not in that list.
+function ActiveDragDropPocket({ dropId, dropData, dragId, dragCard, style, children, ...divProps }) {
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: dropId, data: dropData });
+  const { setNodeRef: setDragRef, attributes, listeners, isDragging } = useDraggable({ id: dragId, data: { card: dragCard } });
+  return (
+    <div
+      ref={(node) => { setDropRef(node); setDragRef(node); }}
+      style={{
+        ...style,
+        cursor: 'grab',
+        ...(isDragging ? { opacity: 0.4 } : {}),
+        ...(isOver && !isDragging ? { outline: '3px solid var(--accent-green)', outlineOffset: '2px' } : {}),
+      }}
+      {...attributes}
+      {...listeners}
+      {...divProps}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DroppablePocket({ enabled, dropId, dropData, dragId, dragCard, children, ...divProps }) {
   if (!enabled) return <div {...divProps}>{children}</div>;
+  if (dragId) {
+    return (
+      <ActiveDragDropPocket dropId={dropId} dropData={dropData} dragId={dragId} dragCard={dragCard} {...divProps}>
+        {children}
+      </ActiveDragDropPocket>
+    );
+  }
   return <ActiveDroppable dropId={dropId} dropData={dropData} {...divProps}>{children}</ActiveDroppable>;
 }
 
@@ -603,6 +639,8 @@ export default function CompartmentView({
                   enabled={dropEnabled}
                   dropId={`pocket-${compartment.id}-${pos}`}
                   dropData={{ compartmentId: compartment.id, slot: pos, occupantEntryId: card.entry_id || null }}
+                  dragId={card.entry_id || null}
+                  dragCard={card}
                   key={card.entry_id || `slot-${i}`}
                   id={card.entry_id ? `card-${card.entry_id}` : undefined}
                   className={`binder-pocket ${categoryStart ? 'set-start' : ''} ${card.entry_id === focusEntryId ? 'focus-flash' : ''}`}
