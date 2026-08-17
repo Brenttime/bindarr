@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { DndContext, DragOverlay, MouseSensor, useSensor, useSensors, useDraggable, pointerWithin } from '@dnd-kit/core';
 import { Plus, Trash2, X, MoreVertical, Settings, RefreshCw, Lock, LayoutGrid, List, MousePointerClick, ChevronDown, ChevronUp, Edit3 } from 'lucide-react';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
@@ -12,6 +13,31 @@ import { SortBuilder, FilterBuilder } from './SortFilterBuilder';
 import CreateContainerModal from './CreateContainerModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useT } from '../utils/i18n';
+
+// An Unsorted-queue card that can be dragged into a binder pocket. Split in two
+// so the hook only mounts when dragging is on — the queue also renders for
+// auto-sorted and locked containers, where there is nothing to drag to.
+// MouseSensor activates on mousedown, while hold-to-select listens on
+// pointerdown, so both sets of listeners can be spread onto the same element.
+function ActiveDraggable({ entryId, style, children, ...divProps }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: entryId });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ ...style, cursor: 'grab', ...(isDragging ? { opacity: 0.4 } : {}) }}
+      {...attributes}
+      {...listeners}
+      {...divProps}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DraggableCard({ enabled, entryId, children, ...divProps }) {
+  if (!enabled) return <div {...divProps}>{children}</div>;
+  return <ActiveDraggable entryId={entryId} {...divProps}>{children}</ActiveDraggable>;
+}
 
 function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId, setSelectedLocationId, focusEntryId }) {
   const { t } = useT();
@@ -601,19 +627,21 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
     setPickedEntryId(prev => (prev === entryId ? null : entryId));
   };
 
-  // Place the picked card at a slot. Binder + occupied pocket = swap; otherwise
-  // send the slot and let the backend place absolutely (binder) or insert (box).
-  const handlePlaceSlot = async (compartmentId, slotNumber, occupantEntryId) => {
+  // Place a card at a slot. Binder + occupied pocket = swap; otherwise send the
+  // slot and let the backend place absolutely (binder) or insert (box). The card
+  // defaults to the tap-picked one; drag-and-drop passes the dragged card
+  // explicitly, because its id is known before setPickedEntryId would land.
+  const handlePlaceSlot = async (compartmentId, slotNumber, occupantEntryId, entryId = pickedEntryId) => {
     if (selectedLoc?.locked) {
       showToast(t('loc.lockedArrange'));
       return;
     }
-    if (!pickedEntryId || occupantEntryId === pickedEntryId) { setPickedEntryId(null); return; }
+    if (!entryId || occupantEntryId === entryId) { setPickedEntryId(null); return; }
     const body = { compartment_id: compartmentId };
     if (isBinderType && occupantEntryId) body.swap_with = occupantEntryId;
     else body.slot = slotNumber;
     try {
-      const res = await fetch(`/api/collection/${pickedEntryId}/place`, {
+      const res = await fetch(`/api/collection/${entryId}/place`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
@@ -626,6 +654,25 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         showToast(data.error === 'COMPARTMENT_FULL' ? 'That page/row is full.' : (data.error || 'Failed to place card.'));
       }
     } catch (err) { console.error(err); showToast(t('loc.errPlace')); }
+  };
+
+  // --- Drag-and-drop filing ---
+  // Drop lands on the same handler tap-to-place uses, so the lock guard, the
+  // swap rule and the backend call are shared. Only custom-order binders: the
+  // /place route rejects anything else, and a box's coverflow has no stable
+  // drop geometry to aim at.
+  const [draggingCard, setDraggingCard] = useState(null);
+  const dndEnabled = isBinderType && isCustom && !selectedLoc?.locked;
+  // ponytail: mouse only. A distance-activated touch drag would swallow the
+  // binder's page-swipe and the queue's scroll; touch still files by tapping
+  // under Arrange. Add a delay-activated TouchSensor if that proves too slow.
+  const dndSensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 8 } }));
+
+  const handleDragEnd = ({ active, over }) => {
+    setDraggingCard(null);
+    const pocket = over?.data?.current;
+    if (!pocket) return;
+    handlePlaceSlot(pocket.compartmentId, pocket.slot, pocket.occupantEntryId, active.id);
   };
 
   const handleDeleteCard = async (entryId) => {
@@ -871,7 +918,23 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
   if (loading) return <div className="spinner" />;
 
   return (
+    <DndContext
+      sensors={dndSensors}
+      collisionDetection={pointerWithin}
+      onDragStart={({ active }) => setDraggingCard(unsortedCards.find(c => c.entry_id === active.id) || null)}
+      onDragCancel={() => setDraggingCard(null)}
+      onDragEnd={handleDragEnd}
+    >
     <div className="storage-workspace-grid">
+      {draggingCard && (
+        <DragOverlay dropAnimation={null}>
+          <img
+            src={draggingCard.image_url}
+            alt={displayName(draggingCard)}
+            style={{ width: '90px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '4px', boxShadow: '0 8px 20px rgba(0,0,0,0.6)', cursor: 'grabbing' }}
+          />
+        </DragOverlay>
+      )}
       {showCreate && (
         <CreateContainerModal
           onClose={() => setShowCreate(false)}
@@ -1259,6 +1322,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   pickedEntryId,
                   onPickCard: handlePickCard,
                   onPlaceSlot: handlePlaceSlot,
+                  dropEnabled: dndEnabled,
                   activeEntryId: binderActiveEntryId,
                   onActiveEntryIdChange: setBinderActiveEntryId,
                   hideFocusedCardInfo: true
@@ -1669,7 +1733,9 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   const printingBadgeLabel = getPrintingBadgeLabel(card.printing);
 
                   return (
-                    <div
+                    <DraggableCard
+                      enabled={dndEnabled}
+                      entryId={card.entry_id}
                       key={card.entry_id}
                       id={`card-${card.entry_id}`}
                       className={card.entry_id === focusEntryId ? 'focus-flash' : ''}
@@ -1765,7 +1831,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           {card.price_trend > 0 && <span style={{ color: 'var(--accent-yellow)', fontWeight: 600, flexShrink: 0 }}>${card.price_trend.toFixed(2)}</span>}
                         </div>
                       </div>
-                    </div>
+                    </DraggableCard>
                   );
                 })}
               </div>
@@ -1780,7 +1846,9 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   const printingBadgeLabel = getPrintingBadgeLabel(card.printing);
 
                   return (
-                    <div
+                    <DraggableCard
+                      enabled={dndEnabled}
+                      entryId={card.entry_id}
                       key={card.entry_id}
                       id={`card-${card.entry_id}`}
                       className={card.entry_id === focusEntryId ? 'focus-flash' : ''}
@@ -1836,7 +1904,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           ${card.price_trend.toFixed(2)}
                         </span>
                       )}
-                    </div>
+                    </DraggableCard>
                   );
                 })}
               </div>
@@ -1946,6 +2014,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         showToast={showToast}
       />
     </div>
+    </DndContext>
   );
 }
 
