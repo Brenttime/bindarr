@@ -36,6 +36,34 @@ const { startHttps, selfSignedTls } = require('./utils/tls');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// The index directories are created here, at startup, as the app's own user —
+// deliberately not by the root entrypoint. A directory root creates inside a
+// volume that has already been handed over to `node` is one this process can
+// never write into, and the first thing to notice was a build dying hours later
+// with `EACCES: mkdir '/app/database/index/.staging-mtg'`.
+//
+// Probed with a real write rather than fs.access(W_OK): access reports the
+// permission bits, which is not the same question as whether this filesystem
+// will accept a file (NFS/SMB squash a root-owned mount's bits into a yes it
+// does not honour). Unwritable is not fatal — the collection, scanning by set
+// code, and everything else still work — so it says so plainly and carries on.
+function ensureWritable() {
+  const fs = require('fs');
+  const setIndex = require('./setIndex');
+  for (const dir of [require('./utils/globalIndexPaths').DATA_DIR, setIndex.SETS_DIR]) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const probe = path.join(dir, `.write-probe-${process.pid}`);
+      fs.writeFileSync(probe, '');
+      fs.unlinkSync(probe);
+    } catch (err) {
+      console.error(`STARTUP: ${dir} is not writable (${err.code}) — scan index builds will fail.`);
+      console.error('STARTUP: fix it with  docker exec -u root <container> chown -R node:node /app/database');
+    }
+  }
+}
+ensureWritable();
+
 // Behind a reverse proxy (nginx/Traefik/Caddy terminating TLS — effectively
 // required, since mobile camera access needs HTTPS), set TRUST_PROXY so req.ip
 // and the rate limiters use the real client IP from X-Forwarded-For instead of

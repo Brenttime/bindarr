@@ -855,5 +855,5 @@ module.exports = {
   // per-set ones (src/orbUnion.js): it needs to know which sets exist, where each
   // index lives, and the geometry they were all built with. metaSummary is how it
   // reports card counts for hundreds of sets without loading any.
-  listAllSets, paths, metaSummary, CAP, REF_WIDTH,
+  listAllSets, paths, metaSummary, CAP, REF_WIDTH, SETS_DIR,
 };

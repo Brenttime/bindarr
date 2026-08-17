@@ -5,9 +5,11 @@
 # indexes (see issue #17).
 set -e
 
-# These are created here, as root, so a fresh volume has them — which means they
-# are born root-owned and have to be handed over below.
-mkdir -p /app/database/index /app/database/sets
+# Only the volume root. The index/ and sets/ subdirectories are created by the
+# server at startup, as the node user, precisely so they cannot be born
+# root-owned inside a volume this script has already handed over — which is what
+# made them permanently unwritable.
+mkdir -p /app/database
 
 # Everything not owned by node, not just the top directory. The guard used to be
 # `stat /app/database != node`, which is true of a volume that has ALREADY been
