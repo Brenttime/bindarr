@@ -6,8 +6,19 @@ release also carries fuller notes on its
 
 ## [1.7.2] - 2026-08-17
 
+**This release is what an install carried over from an older version needs to
+build scan indexes again.** A fresh 1.7.0 install was fine; one whose
+`/app/database` volume predates it was not, and neither the panel nor the logs
+said why. 1.7.1 made the failure legible and 1.7.2 repairs it, so upgrading an
+old install to this version needs nothing from the operator — start it and the
+volume is handed over on boot.
+
 ### Fixed
-- **`EACCES: permission denied, mkdir '/app/database/index/.staging-mtg'` — a scan-index build could not write to its own data directory.** The entrypoint handed the volume to the `node` user only when `/app/database` itself was root-owned, so a root-owned *subdirectory* inside an already-handed-over volume was never fixed: the entrypoint's own `mkdir -p` creates `index/` and `sets/` as root, and on any volume that had already passed the old check they stayed that way. It now hands over whatever is not node-owned, which costs one stat walk and no writes on a healthy volume, and it no longer creates those subdirectories at all — the server creates them at startup as its own user, so they cannot be born root-owned. Startup also probes both directories with a real write and, where neither fix reaches (a bind mount whose `chown` no-ops, a compose file overriding `user:`), says so in one line instead of leaving a build to discover it hours later. Running installs can be fixed without upgrading: `docker exec -u root bindarr chown -R node:node /app/database`.
+- **`EACCES: permission denied, mkdir '/app/database/index/.staging-mtg'` — a scan-index build could not write to its own data directory.** This is the upgrade case specifically: the entrypoint handed the volume to the `node` user only when `/app/database` itself was root-owned, so a root-owned *subdirectory* inside an already-handed-over volume was never fixed: the entrypoint's own `mkdir -p` creates `index/` and `sets/` as root, and on any volume that had already passed the old check they stayed that way. It now hands over whatever is not node-owned, which costs one stat walk and no writes on a healthy volume, and it no longer creates those subdirectories at all — the server creates them at startup as its own user, so they cannot be born root-owned. Startup also probes both directories with a real write and, where neither fix reaches (a bind mount whose `chown` no-ops, a compose file overriding `user:`), says so in one line instead of leaving a build to discover it hours later. Running installs can be fixed without upgrading: `docker exec -u root bindarr chown -R node:node /app/database`.
+
+### Changed
+- **The backend unit suites run under `node --test`** — one runner invocation for all 23 files instead of 23 chained `node test/*.js` calls, so a failure reports as a test result rather than as an exit code, and the whole suite is one summary. The e2e runner is unchanged and still runs after them (6 suites, 36 cases).
+- **`test/crop.test.js` is gone**, and with it the `.bench-cache/` ignore rule. It was a benchmark, not a test: it downloaded card art to measure crop quality, so it needed the network, took the longest of anything in the suite, and could not fail in a way that meant "this build is broken".
 
 ## [1.7.1] - 2026-08-17
 
