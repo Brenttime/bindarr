@@ -29,7 +29,7 @@ Try it without installing anything at **[thenotoriousjeremy.github.io/bindarr](h
 ## Features
 
 - **Camera scanning** — photograph a card and the server identifies it from the image alone. Works for Magic and Pokémon.
-- **Physical location tracking** — binders by page and slot (1–9), boxes by row and divider, with a page-flip binder view.
+- **Physical location tracking** — binders by page and slot (1–9), boxes by row and divider, with a page-flip binder view. Drag cards between pockets to arrange a binder, or file them by tapping on a phone.
 - **Deck checkout** — reserve a deck's cards and get a checklist of exactly which slot each one sits in, then the same list in reverse when you put them back.
 - **Search and bulk add** — search or browse a whole set with multi-select; pin a set and add by collector number one keystroke at a time.
 - **Dashboard** — collection value, 7/30-day trends, rarity and type breakdowns, set completion.
@@ -174,7 +174,7 @@ One card per press, never a background sweep: each lookup spends 2 of the free t
 
 ## API access
 
-For reading your collection from somewhere else — a finance tracker, a dashboard widget, a script — generate a key in **Settings → API access** and send it as a Bearer token:
+For reading your collection from somewhere else — a finance tracker, a dashboard widget, a script — generate a key under **Settings → API Keys** and send it as a Bearer token:
 
 ```bash
 curl -H "Authorization: Bearer <key>" http://localhost:3001/api/stats/networth
@@ -190,6 +190,12 @@ curl -H "Authorization: Bearer <key>" http://localhost:3001/api/stats/networth
 The key never expires and is **read-only**: any request that is not a GET is refused, and admin endpoints are refused outright. Add `?game=pokemon` to scope the figures. `/api/stats` returns the full dashboard payload if you want the breakdowns too, and `/api/collection` returns every card. More than one entry in `currencies` means providers quoted in different currencies and the total sums them as-is.
 
 Revoking is one click in the same panel; anything using the old key stops immediately.
+
+## Arranging a binder
+
+A container set to **Custom** order files by hand rather than by a sort scheme. Drag a card from the Unsorted queue into a pocket to file it, drag a filed card to another pocket to move it (drop it on an occupied pocket and the two swap), and drag one back to the Unsorted queue to take it out of the binder.
+
+Dragging is mouse-only — on a phone a drag would fight the page-swipe, so touch files by tapping instead: turn on **Arrange**, tap the card, tap the pocket. Both routes go through the same placement rules, so a locked or full container refuses either way.
 
 ## Backup and restore
 
