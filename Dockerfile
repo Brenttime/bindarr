@@ -69,8 +69,11 @@ RUN npm rebuild sqlite3 --build-from-source
 # Copy backend source files
 COPY backend/src/ ./src/
 
-# Global-index build scripts spawned by src/globalIndex.js at runtime (Rebuild
-# Global Index Cache). Omitting these breaks that feature in the image.
+# build-card-embeddings.mjs is spawned by src/globalIndex.js at runtime (Rebuild
+# Global Index Cache), and imports ../src/utils/clipPreprocess.js — the shared
+# preprocessing definition — so both trees must be present. Omitting scripts/
+# breaks that feature in the image. The ORB half needs no script: it is assembled
+# from the per-set indexes by src/orbUnion.js.
 COPY backend/scripts/ ./scripts/
 
 # Shared JSON tables required at runtime by backend/src/utils/compartmentSort.js

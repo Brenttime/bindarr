@@ -1,7 +1,8 @@
 const axios = require('axios');
 const db = require('./db');
 const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
-const { parseSetList, setSqlFilter } = require('./utils/setQuery');
+const { parseSetList } = require('./utils/setQuery');
+const cardSearchSql = require('./utils/cardSearchSql');
 const { cacheNormalizedCards } = require('./utils/cardCache');
 
 const API_BASE_URL = 'https://api.pokemontcg.io/v2';
@@ -259,49 +260,20 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
     cleanName = normalized.join(' ');
   }
 
-  // Preserve leading zeroes while keeping a stripped version for fallback matching
+  // Leading zeros are preserved here; utils/cardSearchSql matches the stripped
+  // form as well, so "004" and "4" find each other.
   const cleanNumber = numberQuery ? numberQuery.trim() : '';
-  const strippedNumber = cleanNumber.replace(/^0+/, '');
   // Set field may list several sets ("ltr, ltc") — match any of them.
   const setList = parseSetList(setQuery);
 
-  // 1. Collection-only search
+  // 1. Collection-only search. Every language the user owns — see the note in
+  // utils/cardSearchSql on why collection scope does not filter by language.
   if (scope === 'collection') {
     if (!userId) return [];
-    let collSql = `
-      SELECT cc.*, SUM(c.quantity) AS owned_qty
-      FROM collection c
-      JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ? AND c.list_type = 'collection' AND cc.game = 'pokemon'
-    `;
-    const collParams = [userId];
-
-    // Collection scope searches every language the user owns (a deck search must
-    // still find their Japanese copies), and a localized name typed in matches via
-    // printed_name.
-    if (cleanName) {
-      collSql += ` AND (cc.name LIKE ? OR cc.printed_name LIKE ?)`;
-      collParams.push(`%${cleanName}%`, `%${cleanName}%`);
-    }
-    if (cleanNumber) {
-      if (cleanNumber !== strippedNumber && strippedNumber !== '') {
-        collSql += ` AND (cc.number = ? OR cc.number = ? OR CAST(cc.number AS INTEGER) = CAST(? AS INTEGER))`;
-        collParams.push(cleanNumber, strippedNumber, cleanNumber);
-      } else {
-        collSql += ` AND (cc.number = ? OR CAST(cc.number AS INTEGER) = CAST(? AS INTEGER))`;
-        collParams.push(cleanNumber, cleanNumber);
-      }
-    }
-    const collSetFilter = setSqlFilter(setList, 'cc');
-    if (collSetFilter) {
-      collSql += ` AND ${collSetFilter.clause}`;
-      collParams.push(...collSetFilter.params);
-    }
-
-    collSql += ` GROUP BY cc.id LIMIT ? OFFSET ?`;
-    collParams.push(limit, offset);
-    let collResults = await db.all(collSql, collParams);
-    return collResults.map(parseCardRow);
+    const { sql, params } = cardSearchSql.collectionQuery('pokemon', {
+      userId, name: cleanName, number: cleanNumber, setList, limit, offset,
+    });
+    return (await db.all(sql, params)).map(parseCardRow);
   }
 
   // 2. Try local search first (if not forcing internet)
@@ -311,31 +283,10 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
     // English only: non-English Pokémon rows share this table (they come from
     // TCGdex, since pokemontcg.io has no other language) and must not surface in
     // an English search just because they are cached next to each other.
-    let localSql = `SELECT * FROM card_cache WHERE game = 'pokemon' AND language = 'English'`;
-    const localParams = [];
-
-    if (cleanName) {
-      localSql += ` AND name LIKE ?`;
-      localParams.push(`%${cleanName}%`);
-    }
-    if (cleanNumber) {
-      if (cleanNumber !== strippedNumber && strippedNumber !== '') {
-        localSql += ` AND (number = ? OR number = ? OR CAST(number AS INTEGER) = CAST(? AS INTEGER))`;
-        localParams.push(cleanNumber, strippedNumber, cleanNumber);
-      } else {
-        localSql += ` AND (number = ? OR CAST(number AS INTEGER) = CAST(? AS INTEGER))`;
-        localParams.push(cleanNumber, cleanNumber);
-      }
-    }
-    const localSetFilter = setSqlFilter(setList);
-    if (localSetFilter) {
-      localSql += ` AND ${localSetFilter.clause}`;
-      localParams.push(...localSetFilter.params);
-    }
-
-    localSql += ` LIMIT ? OFFSET ?`;
-    localParams.push(limit, offset);
-    return db.all(localSql, localParams);
+    const { sql, params } = cardSearchSql.localCacheQuery('pokemon', {
+      language: 'English', name: cleanName, number: cleanNumber, setList, limit, offset,
+    });
+    return db.all(sql, params);
   };
 
   let localResults = [];

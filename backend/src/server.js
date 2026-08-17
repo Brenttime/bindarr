@@ -133,7 +133,16 @@ db.initDb()
     // Load sets into compartmentSort memory cache
     const { loadSetsCache } = require('./utils/compartmentSort');
     await loadSetsCache(db);
-    
+
+    // A global index build takes hours, so a restart mid-build used to leave the
+    // panel showing nothing in flight and the staged work invisible. Surface any
+    // interrupted build so it can be resumed rather than restarted from zero.
+    try {
+      require('./globalIndex').restoreInterrupted(require('./utils/languages').LANGUAGES.map(l => l.code));
+    } catch (err) {
+      console.warn('Could not restore interrupted global builds:', err.message);
+    }
+
     // Weekly: refresh sets (picks up newly released ones) and reload the
     // in-memory sets cache so chronological sorting stays current without a
     // restart. Scryfall's guidance is that gameplay/set data changes rarely and

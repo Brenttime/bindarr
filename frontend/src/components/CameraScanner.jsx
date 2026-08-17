@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Camera, RefreshCw, AlertTriangle, X, Zap, ZapOff, Settings, ScanLine } from 'lucide-react';
+import { Camera, RefreshCw, AlertTriangle, X, Zap, ZapOff, Settings, ScanLine, Layers, ListFilter } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice } from '../utils/formatPrice';
@@ -9,7 +9,7 @@ import CardEntryFields from './CardEntryFields';
 import CardInspectorModal from './CardInspectorModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useMultiSelect } from '../utils/useMultiSelect';
-import { LANGUAGES, langName, isEnglish } from '../utils/languages';
+import { LANGUAGES, langName } from '../utils/languages';
 import { defaultGame, gameOptions, showGamePicker } from '../utils/games';
 import { isNative } from '../apiBase';
 import { useT } from '../utils/i18n';
@@ -115,6 +115,10 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const scanSetParam = scanSetCodes.join(',');
   const [setInput, setSetInput] = useState('');
   const [setList, setSetList] = useState([]);        // {id,name,...} for the active game
+  // What a no-set-code scan can currently recognise for this game+language, so the
+  // scanner can say whether leaving the set blank will work AT ALL rather than
+  // letting the user find out by getting no match. Readable by any logged-in user.
+  const [indexStatus, setIndexStatus] = useState(null);
   const [setSearchOpen, setSetSearchOpen] = useState(false);
   // Code fed to the scanner: pokemontcg.io set id as-is; for MTG the bare
   // Scryfall code (sets.id is stored prefixed as "mtg-<code>").
@@ -252,6 +256,20 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [autoAddCountdown, setAutoAddCountdown] = useState(null);
   const [autoAddTargetCard, setAutoAddTargetCard] = useState(null);
+  // The rest of the ORB list, shown beside the countdown. Scanning a whole set
+  // means many near-identical cards, and the one in hand is regularly not ORB's
+  // first pick — so the runners-up stay one tap away instead of requiring an undo.
+  const [autoAddAlternatives, setAutoAddAlternatives] = useState([]);
+  // The picker opens compact and expands on request rather than dumping eight
+  // cards at once.
+  const [showAllMatches, setShowAllMatches] = useState(false);
+  const PICKER_PREVIEW = 4;
+  // The last scan's full candidate list, kept after the picker closes so the
+  // add drawer can go back to it. openQuickAdd clears scanMatches, which is why
+  // reaching the alternatives from the drawer was impossible.
+  const [lastMatches, setLastMatches] = useState([]);
+  // True while the "different printing" lookup is in flight.
+  const [findingPrintings, setFindingPrintings] = useState(false);
   // Tap the countdown popup to pause auto-add and tweak these before adding
   // (slower tiers only — Turbo adds instantly with no overlay).
   const [autoAddEditing, setAutoAddEditing] = useState(false);
@@ -295,6 +313,10 @@ function CameraScanner({ onAddSuccess, showToast }) {
     setSetInput('');
     setSetSearchOpen(false);
     fetch(`/api/sets?game=${scanGame}&lang=${encodeURIComponent(scanLang)}`).then(r => r.ok ? r.json() : []).then(setSetList).catch(() => setSetList([]));
+    // Whether scanning without a set code can work here at all.
+    setIndexStatus(null);
+    fetch(`/api/scan-index-status?game=${scanGame}&lang=${encodeURIComponent(scanLang)}&coverage=1`)
+      .then(r => r.ok ? r.json() : null).then(setIndexStatus).catch(() => setIndexStatus(null));
   }, [scanGame, scanLang]);
 
   // When a set code is set, build/verify that set's index on the server so scans
@@ -366,6 +388,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
       const cardToTrigger = autoAddTargetCard;
       setAutoAddTargetCard(null);
       setAutoAddCountdown(null);
+      setAutoAddAlternatives([]);   // the choice is made; don't leak it to the next card
       autoAddCard(cardToTrigger);
     }
     return () => {
@@ -642,8 +665,49 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // result too — used when the image match is confident and the printing is
   // unambiguous (only one printing, or the set code narrowed it to one). Ambiguous
   // MTG (many printings, no set code) still shows the picker.
+  // Is this resolved card the printing ORB reported? Set + number is the
+  // identity; the name is not checked because the index and the provider can
+  // spell it differently, which is exactly the disagreement that used to make
+  // candidates vanish.
+  const sameCard = (card, cand) => !!card && !!cand
+    && String(card.number) === String(cand.number)
+    && (String(card.set_id).toLowerCase() === String(cand.set).toLowerCase()
+      || String(card.set_name || '').toLowerCase() === String(cand.set).toLowerCase());
+
+  // Turn ORB candidates into full cards, preserving ORB's order so the options
+  // on screen line up one-for-one with the match list. Each lookup is by the
+  // matched printing, never by name as well: the index stores the name from when
+  // the set was built, and one re-spelling would drop the candidate entirely.
+  //
+  // Failures resolve to null rather than throwing — one unresolvable candidate
+  // must not take the other seven down with it.
+  const resolveCandidates = async (cands, game, lang) => Promise.all(
+    cands.map(async (cand) => {
+      // Already hydrated server-side (exact set+number hit in card_cache).
+      if (cand.card) return { ...cand.card, __match: { inliers: cand.inliers, score: cand.score } };
+      const p = new URLSearchParams({ game, lang });
+      if (cand.set && cand.number) {
+        p.append('set', cand.set);
+        p.append('number', cand.number);
+      } else if (cand.name) {
+        p.append('name', cand.name);
+      } else return null;
+      try {
+        const res = await fetch(`/api/search?${p.toString()}`);
+        if (!res.ok) return null;
+        const m = await res.json();
+        // Keep the row that IS this candidate. A set+number query should return
+        // exactly one, but never assume — taking m[0] blindly is how a different
+        // printing reached the picker.
+        const hit = cand.number ? m.find(c => sameCard(c, cand)) : m[0];
+        return hit ? { ...hit, __match: { inliers: cand.inliers, score: cand.score } } : null;
+      } catch { return null; }
+    })
+  );
+
   const applyMatches = async (matches, notFoundMsg, autoSingle = false) => {
     setScanMatches(matches);
+    setShowAllMatches(false);   // each scan's picker opens compact again
     if (matches.length === 0) {
       // Nothing in frame — the resolved-duplicate card has left, so clear the
       // skip guard; re-presenting it later should prompt again, not skip forever.
@@ -795,70 +859,39 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 && (top.set !== second.set || top.number !== second.number)
                 && (verified ? second.inliers >= top.inliers * 0.7 : second.score >= top.score - 0.02);
               if (candidates && candidates.length > 0) {
-                if (confident && !ambiguousPrinting) {
-                  // Instant path: if scan-match pre-hydrated the card from local card_cache,
-                  // apply it directly without waiting for a second /api/search HTTP round-trip!
-                  if (top.card) {
-                    await applyMatches([top.card], '', true);
+                // Resolve the WHOLE ORB list to real cards, once, and use it for
+                // both outcomes. The confident path used to resolve only the top
+                // pick, which meant the auto-add overlay had nothing to offer if
+                // it guessed wrong — and when scanning a whole set, the card in
+                // hand often is not ORB's first choice.
+                const confidentPick = confident && !ambiguousPrinting;
+                // Turbo (countdown 0) adds instantly with no overlay, so there is
+                // nowhere to put alternatives — resolving eight cards per scan
+                // would be pure latency on the fastest tier. Everywhere else the
+                // whole list is resolved, because the countdown shows it.
+                const wanted = (confidentPick && profile.countdown === 0)
+                  ? candidates.slice(0, 1)
+                  : candidates.slice(0, 8);
+                // Only announce a fetch if one is actually needed; anything the
+                // server pre-hydrated resolves without a round-trip.
+                if (wanted.some(c => !c.card)) setScanStatus(t('scan.fetchingCandidates'));
+                const resolved = await resolveCandidates(wanted, matchGame, scanLang);
+                if (scanId !== currentScanId.current) return;
+                const validCandidates = resolved.filter(Boolean);
+                // Remembered for the add drawer, which otherwise loses every
+                // alternative the moment a card is chosen.
+                setLastMatches(validCandidates);
+
+                if (validCandidates.length > 0) {
+                  // Confident: auto-add the top pick, but keep the rest on screen
+                  // beside the countdown so a wrong guess is one tap to correct
+                  // rather than an undo after the fact.
+                  if (confidentPick && sameCard(validCandidates[0], top)) {
+                    setAutoAddAlternatives(validCandidates.slice(1));
+                    await applyMatches([validCandidates[0]], '', true);
                     return;
                   }
-
-                  // Uses the DETECTED game (auto-detect may override the UI mode).
-                  // Query the MATCHED card's exact set + number (top.set/top.number),
-                  // not just its name — otherwise search returns some other printing
-                  // of the same name instead of the card ORB actually identified.
-                  // `lang` keeps the lookup on the printing that was scanned: the
-                  // matched name may itself be localized (稲妻), and the English row
-                  // for the same set+number is a different card.
-                  const exact = new URLSearchParams({ game: matchGame, lang: scanLang });
-                  if (top.name) exact.append('name', top.name);
-                  if (top.set) exact.append('set', top.set);
-                  if (top.number) exact.append('number', top.number);
-                  let searchResponse = await fetch(`/api/search?${exact.toString()}`);
-                  if (scanId !== currentScanId.current) return;
-                  let matches = searchResponse.ok ? await searchResponse.json() : [];
-                  // Fallback: exact set/number isn't cached/known — offer all
-                  // printings by name so the user can still pick.
-                  if (matches.length === 0) {
-                    const byName = new URLSearchParams({ game: matchGame, lang: scanLang, prints: '1' });
-                    if (top.name) byName.append('name', top.name);
-                    searchResponse = await fetch(`/api/search?${byName.toString()}`);
-                    if (scanId !== currentScanId.current) return;
-                    matches = searchResponse.ok ? await searchResponse.json() : [];
-                  }
-                  // Confident image match on an exact set+number is unambiguous, so
-                  // take the fast path (single result auto-adds).
-                  if (matches.length) { await applyMatches(matches, '', true); return; }
-                }
-
-                // If not confident (or multiple printings), check if candidates are pre-hydrated
-                const preHydrated = candidates.slice(0, 8).map(c => c.card).filter(Boolean);
-                if (preHydrated.length === candidates.slice(0, 8).length) {
-                  await applyMatches(preHydrated, 'No matching cards found.');
-                  return;
-                }
-
-                // Fallback: fetch full card info for candidates and show the picker.
-                setScanStatus('Fetching candidate cards...');
-                const fullCandidates = await Promise.all(
-                  candidates.slice(0, 8).map(async cand => {
-                    if (cand.card) return cand.card;
-                    const p = new URLSearchParams({ game: matchGame, lang: scanLang });
-                    if (cand.set) p.append('set', cand.set);
-                    if (cand.number) p.append('number', cand.number);
-                    if (cand.name) p.append('name', cand.name);
-                    const res = await fetch(`/api/search?${p.toString()}`);
-                    if (res.ok) {
-                      const m = await res.json();
-                      return m[0]; // Take the closest printing
-                    }
-                    return null;
-                  })
-                );
-                
-                if (scanId !== currentScanId.current) return;
-                const validCandidates = fullCandidates.filter(c => c);
-                if (validCandidates.length > 0) {
+                  setAutoAddAlternatives([]);
                   await applyMatches(validCandidates, '', false);
                   return;
                 }
@@ -900,6 +933,58 @@ function CameraScanner({ onAddSuccess, showToast }) {
     }
     setLanguage(card.language || langName(scanLang));
     setIsDrawerOpen(true);
+  };
+
+  // "Right card, wrong printing."
+  //
+  // ORB matches ARTWORK, and the same illustration is reprinted across sets — so
+  // a confident, geometrically perfect match can still name the wrong printing:
+  // Fossil #25 Lapras and Base #10 Lapras share an image the scanner cannot tell
+  // apart, and neither can a person at a glance. The scan candidates do not help
+  // here either, because they are ranked by how the picture looks; every printing
+  // of that art looks identical.
+  //
+  // So this asks a different question than the scanner did: forget the image,
+  // give me every printing of this NAME. `prints=1` makes Scryfall return each
+  // printing rather than one per card; the Pokémon providers list printings by
+  // name already.
+  const findOtherPrintings = async () => {
+    if (!selectedCard || findingPrintings) return;
+    setFindingPrintings(true);
+    try {
+      const p = new URLSearchParams({
+        game: selectedCard.game || scanGame,
+        lang: scanLang,
+        name: selectedCard.name,
+        prints: '1',
+        // Ask the PROVIDER, not the cache. Every provider's search returns the
+        // local cache whole if it holds a single matching row, which for a name
+        // search means "the printings you happen to have looked at before" — and
+        // the printing being hunted for is by definition not one of those. On a
+        // freshly cleared cache that answered "Lapras" with a dozen modern sets
+        // and no Base or Fossil at all. Falls back to cache if the provider is
+        // unreachable, so this cannot end up worse than before.
+        scope: 'internet',
+      });
+      const res = await fetch(`/api/search?${p.toString()}`);
+      const raw = res.ok ? await res.json() : [];
+      // Printings the provider has no image for sort last rather than being
+      // dropped: this is a picker you choose from by LOOKING, so an art-less row
+      // is nearly useless at the top — but the card is real and still addable, so
+      // hiding it would make a printing unreachable.
+      const found = [...raw].sort((a, b) => (b.image_url ? 1 : 0) - (a.image_url ? 1 : 0));
+      // One result means the only printing is the one already open — say so
+      // rather than opening a picker with a single card in it.
+      if (found.length <= 1) { showToast(t('scan.noOtherPrintings')); return; }
+      setLastMatches(found);
+      closeDrawer();
+      setScanMatches(found);
+      setShowAllMatches(true);
+    } catch {
+      showToast(t('scan.noOtherPrintings'));
+    } finally {
+      setFindingPrintings(false);
+    }
   };
 
   const closeDrawer = () => {
@@ -1156,12 +1241,35 @@ function CameraScanner({ onAddSuccess, showToast }) {
               >
                 {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
               </select>
-              {!isEnglish(scanLang) && (
-                <p style={{ fontSize: '0.7rem', color: 'var(--accent-yellow)', margin: 0, lineHeight: 1.35 }}>
-                  {langName(scanLang)} scanning needs a set selected below — the whole-game
-                  index only covers English art.
-                </p>
-              )}
+              {/* How scanning works, stated from the actual index state rather than
+                  assumed. This used to hardcode "the whole-game index only covers
+                  English art", which stopped being true once indexes became
+                  per-language — and was untranslated besides. */}
+              {(() => {
+                if (scanSetCodes.length) {
+                  return (
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.35 }}>
+                      {t('scan.modeSetScoped', { count: scanSetCodes.length })}
+                    </p>
+                  );
+                }
+                if (!indexStatus) return null;
+                const cov = indexStatus.coverage;
+                if (indexStatus.codeFreeScanning) {
+                  return (
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.35 }}>
+                      {cov
+                        ? t('scan.modeGlobalPartial', { covered: cov.embedded, total: cov.total })
+                        : t('scan.modeGlobal')}
+                    </p>
+                  );
+                }
+                return (
+                  <p style={{ fontSize: '0.7rem', color: 'var(--accent-yellow)', margin: 0, lineHeight: 1.35 }}>
+                    {t('scan.modeNeedsSet', { language: langName(scanLang) })}
+                  </p>
+                );
+              })()}
             </div>
 
             {/* Set search (both games): pick a set to build a per-set index
@@ -1543,7 +1651,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
               </div>
             ) : (
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Auto-adding to collection in {autoAddCountdown}s...</span>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t('scan.autoAddingIn', { seconds: autoAddCountdown })}</span>
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{t('scan.tapToChange')}</span>
                 <div style={{ display: 'flex', gap: '0.5rem', width: '100%', marginTop: '0.5rem' }}>
                   <button
@@ -1553,6 +1661,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       const card = autoAddTargetCard;
                       setAutoAddTargetCard(null);
                       setAutoAddCountdown(null);
+                      setAutoAddAlternatives([]);
                       autoAddCard(card);
                     }}
                     style={{ flex: 1.5, fontSize: '0.75rem', padding: '0.45rem 0' }}
@@ -1565,6 +1674,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     onClick={() => {
                       setAutoAddTargetCard(null);
                       setAutoAddCountdown(null);
+                      setAutoAddAlternatives([]);
                       showToast(t('scan.autoAddCancelled'));
                     }}
                     style={{ flex: 1, fontSize: '0.75rem', padding: '0.45rem 0' }}
@@ -1572,6 +1682,66 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     {t('common.cancel')}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* The rest of the ORB list, in ORB's order.
+                Auto-add commits to the strongest match, and within a single set
+                — many cards, one frame, near-identical art — that is regularly
+                not the card in hand. Showing the runners-up here turns a wrong
+                guess into one tap instead of an add-then-undo. Hidden while
+                editing condition/foil, where the choice has already been made. */}
+            {!autoAddEditing && autoAddAlternatives.length > 0 && (
+              <div style={{ width: '100%', borderTop: '1px solid var(--border-glass)', paddingTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+                  {t('scan.notThisOne')}
+                </span>
+                <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
+                  {autoAddAlternatives.map(alt => (
+                    <button
+                      key={alt.id}
+                      type="button"
+                      onClick={() => {
+                        // Cancel the countdown and hand this card to the normal
+                        // add flow, so condition/quantity work exactly as usual.
+                        setAutoAddTargetCard(null);
+                        setAutoAddCountdown(null);
+                        setAutoAddAlternatives([]);
+                        openQuickAdd(alt);
+                      }}
+                      title={`${alt.name} · ${alt.set_name} #${alt.number}`}
+                      style={{ flex: '0 0 auto', width: '68px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'center' }}
+                    >
+                      <img
+                        src={alt.image_url}
+                        alt={alt.name}
+                        style={{ width: '100%', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border-glass-hover)' }}
+                      />
+                      <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        #{alt.number}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {/* The strip is a quick pick; this opens the full list in the
+                    normal picker. Offered even on a confident match, because
+                    "confident" is a score, not a promise — and when the whole set
+                    looks alike it is regularly the wrong card. */}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    const all = [autoAddTargetCard, ...autoAddAlternatives];
+                    setAutoAddTargetCard(null);
+                    setAutoAddCountdown(null);
+                    setAutoAddAlternatives([]);
+                    setScanMatches(all);
+                    setShowAllMatches(true);
+                  }}
+                  style={{ alignSelf: 'center', fontSize: '0.7rem', padding: '0.3rem 0.7rem' }}
+                >
+                  {t('scan.seeAllMatches', { n: autoAddAlternatives.length + 1 })}
+                </button>
               </div>
             )}
           </div>
@@ -1747,8 +1917,12 @@ function CameraScanner({ onAddSuccess, showToast }) {
               </div>
             </div>
 
+            {/* Strongest matches first — the same order, and the same cards, as
+                the ORB match list. Only the first few are shown: eight cards at
+                once is a wall to read while holding the card you are trying to
+                identify, and the answer is usually near the top. */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '1rem', maxHeight: '350px', overflowY: 'auto', padding: '0.25rem' }}>
-              {scanMatches.map(card => (
+              {(showAllMatches ? scanMatches : scanMatches.slice(0, PICKER_PREVIEW)).map(card => (
                 <div key={card.id} className="tcg-card" onClick={() => openQuickAdd(card)} style={{ cursor: 'pointer' }}>
                   <div className="tcg-card-inner" style={{ border: '1px solid var(--border-glass-hover)' }}>
                     <img src={card.image_url} alt={card.name} className="tcg-card-image" />
@@ -1761,6 +1935,19 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 </div>
               ))}
             </div>
+
+            {scanMatches.length > PICKER_PREVIEW && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowAllMatches(v => !v)}
+                style={{ alignSelf: 'center', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+              >
+                {showAllMatches
+                  ? t('scan.showFewer')
+                  : t('scan.seeMoreMatches', { n: scanMatches.length - PICKER_PREVIEW })}
+              </button>
+            )}
 
             <div style={{ display: 'flex', gap: '0.75rem', borderTop: '1px solid var(--border-glass)', paddingTop: '1rem' }}>
               <button 
@@ -1902,8 +2089,35 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 </div>
               </div>
 
-              {/* Submit Buttons */}
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', borderTop: '1px solid var(--border-glass)', paddingTop: '1rem', marginTop: '0.5rem' }}>
+              {/* Submit Buttons.
+                  The two on the left are the "this isn't quite right" escapes,
+                  and they answer different questions. "Other matches" goes back
+                  to what the scanner saw — useful when it picked the wrong CARD.
+                  "Different printing" ignores the image entirely and lists every
+                  printing of this name — the only thing that helps when the art
+                  is identical across sets and the scanner had nothing to go on. */}
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid var(--border-glass)', paddingTop: '1rem', marginTop: '0.5rem' }}>
+                {lastMatches.length > 1 && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => { closeDrawer(); setScanMatches(lastMatches); setShowAllMatches(true); }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                  >
+                    <ListFilter size={14} /> {t('scan.backToMatches', { n: lastMatches.length })}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={findOtherPrintings}
+                  disabled={findingPrintings}
+                  title={t('scan.otherPrintingsHint')}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                >
+                  <Layers size={14} /> {findingPrintings ? t('scan.fetchingCandidates') : t('scan.otherPrintings')}
+                </button>
+                <span style={{ flex: 1 }} />
                 <button type="button" className="btn btn-secondary" onClick={closeDrawer} style={{ padding: '0.5rem 1.5rem' }}>{t('common.cancel')}</button>
                 <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 2rem' }}>{t('search.addToCollection')}</button>
               </div>

@@ -14,8 +14,8 @@ const embedMatch = require('./embedMatch');
 const setIndex = require('./setIndex');
 const { parseSetList } = require('./utils/setQuery');
 const languages = require('./utils/languages');
+const gpaths = require('./utils/globalIndexPaths');
 
-const DATA_DIR = process.env.INDEX_DATA_DIR || path.join(__dirname, '..', 'data');
 const RECALL_K = 250;      // CLIP candidates to geometrically verify
 const REF_WIDTH = 500;     // must match build-card-orb.mjs
 const DESC_BYTES = 32;
@@ -23,6 +23,53 @@ const RATIO = 0.75;        // Lowe ratio test
 const RANSAC_PX = 5.0;
 const CARD_ASPECT = 2.5 / 3.5;
 const WARP_W = 500, WARP_H = Math.round(500 / CARD_ASPECT); // rectified card size
+
+// Printing disambiguation.
+//
+// The CLIP index is built from Scryfall's `unique_artwork` — one printing per
+// artwork — so recall can only ever propose the printing Scryfall picked. Scan a
+// reprint and you get the right card with the wrong set/number. The ORB index,
+// being the union of every per-set index, DOES contain all printings, so once
+// recall names a card we can verify each of its printings and let inliers pick the
+// real one (set symbol, frame and holo pattern differ between them).
+//
+// This is the one change here that trades scan latency for accuracy, so it is
+// bounded and off by default: only the top EXPAND_TOP recall candidates are
+// expanded, and no more than EXPAND_MAX extra printings are verified in total.
+// Turn on with GLOBAL_PRINTING_EXPANSION=1 and measure with
+// scripts/eval-global-index.mjs, which reports accuracy AND latency.
+// Math.max(1, parseInt('typo')) is NaN, and `budget <= 0` is false for NaN — so a
+// mistyped env var would remove the bound entirely rather than fall back to it.
+function posInt(raw, fallback) {
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+// A partial index — one built from a filtered set selection rather than the whole
+// catalogue — cannot answer "I don't know". CLIP always returns its nearest
+// neighbour, so a card from an excluded set comes back as the closest artwork the
+// table happens to hold, and ORB then verifies it weakly. Presented plainly that
+// is a confident wrong answer, which is worse for the user than a miss: they file
+// the card under the wrong name and never find out.
+//
+// So when the index is partial AND verification is weak, say so. This is the
+// decision, kept pure and separate for test/outofscope.test.js.
+const OUT_OF_SCOPE_INLIERS = 12;   // matches the client's auto-fill confidence gate
+
+function outOfScopeNotice(scope, topInliers) {
+  // A complete index has nothing to disclaim: a weak match there is a genuine miss.
+  if (!scope || !scope.excluded || scope.excluded <= 0) return null;
+  if (topInliers >= OUT_OF_SCOPE_INLIERS) return null;
+  return {
+    covered: scope.covered || 0,
+    catalogue: scope.catalogue || 0,
+    excluded: scope.excluded,
+    filter: scope.filter || null,
+  };
+}
+
+const EXPAND_PRINTINGS = process.env.GLOBAL_PRINTING_EXPANSION === '1';
+const EXPAND_TOP = posInt(process.env.GLOBAL_PRINTING_EXPANSION_TOP, 20);
+const EXPAND_MAX = posInt(process.env.GLOBAL_PRINTING_EXPANSION_MAX, 120);
 
 // Order 4 quad points as [tl, tr, br, bl].
 //
@@ -278,31 +325,51 @@ async function preprocessCard(imageBuffer) {
   return await sharp(imageBuffer).png().toBuffer();
 }
 
-const orbDbs = {};         // game -> { map: Map(key->{name,offset,count}), descFd, kpFd } | null
+const orbDbs = {};         // "game|lang" -> { map: Map(key->[{name,offset,count}]), descFd, kpFd } | null
 
 function key(set, number) { return `${set}|${number}`; }
 
-// Load a game's ORB index (offsets in RAM; descriptors/keypoints read from disk
-// per candidate). Returns null if not built.
-function loadOrbDb(game) {
-  if (game in orbDbs) return orbDbs[game];
-  const descPath = path.join(DATA_DIR, `${game}-orb-desc.bin`);
-  const kpPath = path.join(DATA_DIR, `${game}-orb-kp.bin`);
-  const metaPath = path.join(DATA_DIR, `${game}-orb-meta.json`);
-  if (!fs.existsSync(descPath) || !fs.existsSync(kpPath) || !fs.existsSync(metaPath)) { orbDbs[game] = null; return null; }
+// Load a game+language ORB index (offsets in RAM; descriptors/keypoints read
+// from disk per candidate, so DB size does not affect per-scan cost). Returns
+// null if not built.
+function loadOrbDb(game, lang = 'en') {
+  const k = gpaths.key(game, lang);
+  if (k in orbDbs) return orbDbs[k];
+  const { desc: descPath, kp: kpPath, meta: metaPath } = gpaths.orb(game, lang);
+  if (!fs.existsSync(descPath) || !fs.existsSync(kpPath) || !fs.existsSync(metaPath)) { orbDbs[k] = null; return null; }
   const meta = JSON.parse(fs.readFileSync(metaPath));
   const map = new Map();
   // A double-faced card has multiple rows under one set|number (one per face).
   // Store them as a list so verify can test each face and keep the best.
   for (const c of meta.cards) {
-    const k = key(c[1], c[2]);
+    const kk = key(c[1], c[2]);
     const face = { name: c[0], offset: c[3], count: c[4] };
-    const arr = map.get(k);
-    if (arr) arr.push(face); else map.set(k, [face]);
+    const arr = map.get(kk);
+    if (arr) arr.push(face); else map.set(kk, [face]);
   }
-  orbDbs[game] = { map, descFd: fs.openSync(descPath, 'r'), kpFd: fs.openSync(kpPath, 'r') };
-  console.log(`scanMatch: loaded ${game} ORB DB (${meta.cards.length} cards)`);
-  return orbDbs[game];
+  // name -> every printing of it, for printing disambiguation. Built only when
+  // that is switched on: it is another Map over every row, and paying for it by
+  // default would be pure overhead for a feature nobody asked to run.
+  let byName = null;
+  if (EXPAND_PRINTINGS) {
+    byName = new Map();
+    const dedupe = new Set();
+    for (const c of meta.cards) {
+      const kk = key(c[1], c[2]);
+      // A DFC contributes one row per face; one entry per printing is enough.
+      if (dedupe.has(`${c[0]}|${kk}`)) continue;
+      dedupe.add(`${c[0]}|${kk}`);
+      const entry = { set: c[1], number: c[2], k: kk };
+      const arr = byName.get(c[0]);
+      if (arr) arr.push(entry); else byName.set(c[0], [entry]);
+    }
+  }
+  orbDbs[k] = { map, byName, descFd: fs.openSync(descPath, 'r'), kpFd: fs.openSync(kpPath, 'r') };
+  console.log(
+    `scanMatch: loaded ${gpaths.tag(game, lang)} ORB DB (${meta.cards.length} cards` +
+    `${byName ? `, ${byName.size} distinct names, printing expansion ON` : ''})`
+  );
+  return orbDbs[k];
 }
 
 // Read one card's stored descriptors (cv.Mat CV_8U) + keypoints (Float32Array xy).
@@ -364,26 +431,68 @@ function inlierCount(bf, qDesc, qKp, cand) {
 const STRONG_INLIERS = 25; // enough to stop trying the other game
 
 // Score one game: CLIP recall + ORB verify against the shared query features.
-function verifyGame(cardBuf, game, q, bf, recall, topK) {
-  const db = loadOrbDb(game);
+// Async because verification is fanned out to the worker pool.
+async function verifyGame(game, q, bf, recall, topK, lang = 'en') {
+  const db = loadOrbDb(game, lang);
   if (!db) return { verified: false, candidates: recall.slice(0, topK), top: 0 };
-  const scored = [];
+
+  // The candidate list to verify: every recall hit, plus (optionally) the other
+  // printings of the strongest few.
+  const targets = [];
   const seen = new Set(); // recall may list both faces of a DFC; verify each card once
-  for (const cand of recall) {
-    const k = key(cand.set, cand.number);
-    if (seen.has(k)) continue;
+  const push = (name, set, number, score) => {
+    const k = key(set, number);
+    if (seen.has(k)) return;
     seen.add(k);
-    const faces = db.map.get(k);
-    let inliers = 0;
-    if (faces) {
-      for (const face of faces) {
+    targets.push({ name, set, number, score, k });
+  };
+  for (const cand of recall) push(cand.name, cand.set, cand.number, cand.score);
+
+  if (EXPAND_PRINTINGS && db.byName) {
+    let budget = EXPAND_MAX;
+    for (const cand of recall.slice(0, EXPAND_TOP)) {
+      if (budget <= 0) break;
+      for (const other of db.byName.get(cand.name) || []) {
+        if (budget <= 0) break;
+        if (seen.has(other.k)) continue;
+        // Inherit the CLIP score: these were never ranked by CLIP, so this only
+        // acts as the tie-break when two printings match equally well on ORB.
+        push(cand.name, other.set, other.number, cand.score);
+        budget--;
+      }
+    }
+  }
+
+  // Resolve every candidate to byte ranges here, on the main thread, which
+  // already holds the offset map. The pool then needs only the two file paths.
+  const slices = targets.map(c => ({
+    name: c.name, set: c.set, number: c.number, score: c.score,
+    faces: (db.map.get(c.k) || []).map(f => ({ offset: f.offset, count: f.count })),
+  }));
+
+  let scored = null;
+  // Fan out like setIndex.matchSet does. Falls back to inline on any pool
+  // problem, so a worker failure degrades to slower rather than to broken.
+  try {
+    const paths = gpaths.orb(game, lang);
+    const qDesc = new Uint8Array(q.desc.data.subarray(0, q.desc.rows * DESC_BYTES));
+    scored = await require('./scanPool').verifyGlobal(paths.desc, paths.kp, qDesc, q.desc.rows, q.kp, slices);
+  } catch (e) {
+    console.warn(`scanMatch: pool verify failed, running inline: ${e.message}`);
+  }
+
+  if (!scored) {
+    scored = [];
+    for (const cand of slices) {
+      let inliers = 0;
+      for (const face of cand.faces) {
         const ref = readOrb(db, face.offset, face.count);
         const inl = inlierCount(bf, q.desc, q.kp, ref);
         ref.desc.delete();
         if (inl > inliers) inliers = inl; // best-matching face wins
       }
+      scored.push({ name: cand.name, set: cand.set, number: cand.number, score: cand.score, inliers });
     }
-    scored.push({ name: cand.name, set: cand.set, number: cand.number, score: cand.score, inliers });
   }
   scored.sort((a, b) => (b.inliers - a.inliers) || (b.score - a.score));
   const top = scored[0];
@@ -403,10 +512,12 @@ function verifyGame(cardBuf, game, q, bf, recall, topK) {
 // scores higher — so scanning in the wrong mode still works. Returns
 // { game, verified, candidates:[{name,set,number,score,inliers}], crop }.
 async function match(imageBuffer, requestedGame, topK = 8, setCode = '', opts = {}) {
-  // The global CLIP + ORB indexes are built from English art only (building one
-  // is hours and ~1GB per game; doing that per language is not a trade worth
-  // making). A non-English scan is therefore set-scoped or nothing — and it says
-  // so via `englishOnly` rather than silently returning English lookalikes.
+  // Indexes are per game AND per language, all the way down: the per-set walk
+  // asks each provider for the requested language, so a Japanese rollup holds
+  // Japanese art. Nothing here falls back to English — an English vector cannot
+  // answer a Japanese scan (different name box, different flavour text), so a
+  // language with no rollup built says `englishOnly` rather than returning
+  // confident lookalikes.
   const lang = languages.toCode(opts.lang);
   // Scan-detail knobs (client "Scan Detail" slider). Fewer CLIP candidates to
   // verify + fewer ORB features = faster, less accurate. Clamped to sane bounds.
@@ -432,34 +543,72 @@ async function match(imageBuffer, requestedGame, topK = 8, setCode = '', opts = 
       if (merged.length) return { game: requestedGame, verified: true, candidates: merged, crop, scoped: true, lang };
     }
 
-    // Nothing built for this language: the global fallback below would only ever
-    // answer in English, so say why instead of handing back a wrong card.
-    if (lang !== 'en') {
-      return { game: requestedGame, verified: false, candidates: [], crop, lang, englishOnly: true };
+    // A global index is per-language: card images differ by language (different
+    // name box, different flavour text), so an English index cannot answer a
+    // Japanese scan. Use this language's index when it has been built, and only
+    // fall back to explaining why when it has not.
+    //
+    // Game auto-detection is English-only: trying both games needs both games'
+    // indexes for that language, and for anything but English that is far more
+    // likely to mean "neither is built" than a genuine ambiguity.
+    const order = lang !== 'en'
+      ? [requestedGame]
+      : (requestedGame === 'pokemon' ? ['pokemon', 'mtg'] : ['mtg', 'pokemon']);
+    const usable = order.filter(g => embedMatch.isBuilt(g, lang));
+    if (!usable.length) {
+      // Distinguish "you never built this language" from "nothing is built at
+      // all" — they need different actions from the user.
+      const englishOnly = lang !== 'en' && embedMatch.isBuilt(requestedGame, 'en');
+      return { game: requestedGame, verified: false, candidates: [], crop, lang, englishOnly, notBuilt: !englishOnly };
     }
 
-    const order = requestedGame === 'pokemon' ? ['pokemon', 'mtg'] : ['mtg', 'pokemon'];
     let best = null;
-    for (const g of order) {
-      const recall = await embedMatch.match(cardBuf, g, recallK); // CLIP recall for this game
+    for (const g of usable) {
+      const recall = await embedMatch.match(cardBuf, g, recallK, lang); // CLIP recall
       if (recall.length === 0) continue;
-      const r = verifyGame(cardBuf, g, q, bf, recall, topK);
+      const r = await verifyGame(g, q, bf, recall, topK, lang);
       if (!best || r.top > best.top) best = { ...r, game: g };
       if (best.top >= STRONG_INLIERS) break; // confident — no need to try the other game
     }
-    if (!best) return { game: requestedGame, verified: false, candidates: [], crop };
-    return { game: best.game, verified: best.verified, candidates: best.candidates, crop };
+    if (!best) return { game: requestedGame, verified: false, candidates: [], crop, lang };
+    // If the winning game's index only covers part of the catalogue and the match
+    // is weak, tell the caller so it can say "outside your indexed range" instead
+    // of presenting the nearest indexed artwork as the answer.
+    const outOfScope = outOfScopeNotice(embedMatch.scopeOf(best.game, lang), best.top);
+    return {
+      game: best.game, verified: best.verified, candidates: best.candidates, crop, lang,
+      ...(outOfScope ? { outOfScope } : {}),
+    };
   } finally {
     q.desc.delete(); bf.delete(); orb.delete();
   }
 }
 
-// Evict a game's cached ORB DB (closing its file descriptors) so the next match
-// reloads from disk. Called after a global rebuild swaps in fresh files.
-function reload(game) {
-  const db = orbDbs[game];
-  if (db) { try { fs.closeSync(db.descFd); fs.closeSync(db.kpFd); } catch { /* already closed */ } }
-  delete orbDbs[game];
+// Evict a cached ORB DB (closing its file descriptors) so the next match reloads
+// from disk. Called before a global rebuild swaps in fresh files — on Windows the
+// rename fails outright while a handle is still open. Omitting `lang` evicts
+// every language of that game.
+function reload(game, lang) {
+  const drop = (k) => {
+    const db = orbDbs[k];
+    if (db) { try { fs.closeSync(db.descFd); fs.closeSync(db.kpFd); } catch { /* already closed */ } }
+    delete orbDbs[k];
+  };
+  if (lang === undefined) {
+    for (const k of Object.keys(orbDbs)) if (k.startsWith(`${game}|`)) drop(k);
+    return;
+  }
+  drop(gpaths.key(game, lang));
 }
 
-module.exports = { match, reload, preprocessCard, detectCard };
+module.exports = {
+  match, reload, preprocessCard, detectCard,
+  // test/printingexpansion.test.js reaches the private ORB-index loader and the
+  // expansion bounds; both are module-private on purpose.
+  _loadOrbDbForTest: loadOrbDb,
+  _expansionConfigForTest: () => ({ enabled: EXPAND_PRINTINGS, top: EXPAND_TOP, max: EXPAND_MAX }),
+  // test/outofscope.test.js: whether a partial index admits it might not cover the
+  // scanned card is a correctness decision, not a cosmetic one.
+  _outOfScopeNoticeForTest: outOfScopeNotice,
+  _outOfScopeInliersForTest: OUT_OF_SCOPE_INLIERS,
+};

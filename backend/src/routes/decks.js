@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const tcgApi = require('../tcgApi');
+const cardApi = require('../utils/cardApi');
 const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { compartmentLabel } = require('../utils/compartmentSort');
 const { validateDeckAddition } = require('../utils/deckRules');
@@ -276,13 +276,18 @@ router.post('/:id/cards', async (req, res) => {
       return res.status(404).json({ error: 'Deck not found or unauthorized' });
     }
 
-    // Ensure card metadata exists in cache
+    // Ensure card metadata exists in cache. Dispatch on the ID, because only the
+    // provider that minted it can resolve it: this asked pokemontcg.io for every
+    // uncached card, and tcgApi.getCardById short-circuits on 'mtg-' and
+    // 'tcgdex-' ids to whatever is cached — so an uncached MTG or non-English
+    // Pokémon card came back null and the deck refused it as "not found on the
+    // Pokémon TCG API", for a card that exists on a provider it never asked.
     let card = await db.get(`SELECT id FROM card_cache WHERE id = ?`, [card_id]);
     if (!card) {
       console.log(`Card ${card_id} not in cache. Fetching...`);
-      const apiCard = await tcgApi.getCardById(card_id, req.user.tcg_api_key);
+      const apiCard = await cardApi.getCardById(card_id, { tcgApiKey: req.user.tcg_api_key });
       if (!apiCard) {
-        return res.status(404).json({ error: 'Card not found on Pokémon TCG API.' });
+        return res.status(404).json({ error: `Card ${card_id} not found on any card provider.` });
       }
     }
 

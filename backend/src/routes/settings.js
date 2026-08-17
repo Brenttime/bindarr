@@ -60,9 +60,32 @@ router.get('/version', authenticateToken, async (req, res) => {
 });
 
 async function getEffectiveSettings() {
-  const row = await db.get(`SELECT public_base_url FROM app_settings WHERE id = 1`);
+  const row = await db.get(`
+    SELECT public_base_url, allow_member_set_builds, pokemon_provider,
+           scan_exclude_tokens, scan_exclude_art_cards, scan_exclude_jumpstart, scan_exclude_promos,
+           scan_exclude_digital
+    FROM app_settings WHERE id = 1
+  `);
   const public_base_url = (row && row.public_base_url) || process.env.PUBLIC_BASE_URL || '';
-  return { public_base_url };
+  const allow_member_set_builds = !!(row && row.allow_member_set_builds);
+  const pokemon_provider = (row && row.pokemon_provider) || 'pokemontcg';
+  const scan_exclude_tokens = !!(row && row.scan_exclude_tokens);
+  const scan_exclude_art_cards = !!(row && row.scan_exclude_art_cards);
+  const scan_exclude_jumpstart = !!(row && row.scan_exclude_jumpstart);
+  const scan_exclude_promos = !!(row && row.scan_exclude_promos);
+  // Defaults ON, so a missing row (or a read before the migration lands) must
+  // read as excluded rather than as included — see the column comment in db.js.
+  const scan_exclude_digital = row ? !!row.scan_exclude_digital : true;
+  return {
+    public_base_url,
+    allow_member_set_builds,
+    pokemon_provider,
+    scan_exclude_tokens,
+    scan_exclude_art_cards,
+    scan_exclude_jumpstart,
+    scan_exclude_promos,
+    scan_exclude_digital,
+  };
 }
 
 // Any logged-in user can read effective settings (needed to render share links)
@@ -77,7 +100,38 @@ router.get('/', authenticateToken, async (req, res) => {
 
 // Only admins can override settings
 router.put('/', authenticateToken, requireAdmin, async (req, res) => {
-  const { public_base_url } = req.body;
+  const {
+    public_base_url,
+    allow_member_set_builds,
+    pokemon_provider,
+    scan_exclude_tokens,
+    scan_exclude_art_cards,
+    scan_exclude_jumpstart,
+    scan_exclude_promos,
+    scan_exclude_digital,
+  } = req.body;
+
+  if (allow_member_set_builds !== undefined) {
+    await db.run(`UPDATE app_settings SET allow_member_set_builds = ? WHERE id = 1`, [allow_member_set_builds ? 1 : 0]);
+  }
+  if (pokemon_provider !== undefined) {
+    await db.run(`UPDATE app_settings SET pokemon_provider = ? WHERE id = 1`, [pokemon_provider === 'tcgdex' ? 'tcgdex' : 'pokemontcg']);
+  }
+  if (scan_exclude_tokens !== undefined) {
+    await db.run(`UPDATE app_settings SET scan_exclude_tokens = ? WHERE id = 1`, [scan_exclude_tokens ? 1 : 0]);
+  }
+  if (scan_exclude_art_cards !== undefined) {
+    await db.run(`UPDATE app_settings SET scan_exclude_art_cards = ? WHERE id = 1`, [scan_exclude_art_cards ? 1 : 0]);
+  }
+  if (scan_exclude_jumpstart !== undefined) {
+    await db.run(`UPDATE app_settings SET scan_exclude_jumpstart = ? WHERE id = 1`, [scan_exclude_jumpstart ? 1 : 0]);
+  }
+  if (scan_exclude_promos !== undefined) {
+    await db.run(`UPDATE app_settings SET scan_exclude_promos = ? WHERE id = 1`, [scan_exclude_promos ? 1 : 0]);
+  }
+  if (scan_exclude_digital !== undefined) {
+    await db.run(`UPDATE app_settings SET scan_exclude_digital = ? WHERE id = 1`, [scan_exclude_digital ? 1 : 0]);
+  }
 
   if (public_base_url !== undefined) {
     const trimmed = public_base_url.trim();
