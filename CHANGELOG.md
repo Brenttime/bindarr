@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
 [GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
 
+## [1.8.1] - 2026-08-19
+
+### Fixed
+- **A row or page rename showed up nowhere.** The name saved to `compartments.label`
+  correctly, but every place that displays one reads the computed `display_label`, and
+  `compartmentLabel()` always built "Row N" / "Page N" from the index without ever
+  checking for a custom label — so the saved name was discarded at display time in the
+  row selector, the row header and the deck-checkout locator alike. Thanks
+  [@JGHCode](https://github.com/JGHCode) ([#37](https://github.com/thenotoriousJeremy/bindarr/pull/37)).
+- **A second copy of a card could not be added to a deck from Browse Collection.**
+  `/api/collection` returns one row per physical entry while `/api/search` groups by
+  `card_id`, and the browse path fed the ungrouped rows straight into the picker: every
+  row for a card was marked "added" as soon as any one copy was, which made a second
+  basic land or Energy unaddable. Browse results are grouped client-side now, summing
+  quantities into one `owned_qty` per card, so both paths hand the picker the same
+  shape. Thanks [@JGHCode](https://github.com/JGHCode) ([#37](https://github.com/thenotoriousJeremy/bindarr/pull/37)).
+- **Card art left a gap under the coloured border.** The image rendered inline, which
+  reserves descender space below the baseline. Thanks
+  [@JGHCode](https://github.com/JGHCode) ([#37](https://github.com/thenotoriousJeremy/bindarr/pull/37)).
+- **Catalog builds failed on Scryfall art.** Its image CDN rejects a request with no
+  User-Agent — a 400, which reads like a bad URL rather than a missing header. Thanks
+  [@JGHCode](https://github.com/JGHCode) ([#37](https://github.com/thenotoriousJeremy/bindarr/pull/37)).
+
 ## [1.8.0] - 2026-08-19
 
 **Scanning is a different pipeline.** The perceptual-hash + bag-of-visual-words
