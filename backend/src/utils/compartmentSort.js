@@ -300,7 +300,7 @@ async function recommendSlot(database, location, cardMetadata, overrideCompartme
 
   const allLocationCards = await dbClient.all(`
     SELECT c.id as entry_id, c.card_id, c.compartment_id, c.position, c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.added_at, c.is_trade, c.favorite, c.list_type,
-           cc.name, cc.supertype, cc.types, cc.subtypes, cc.rarity, cc.set_id, cc.set_name, cc.number, cc.image_url,
+           cc.name, cc.printed_name, cc.supertype, cc.types, cc.subtypes, cc.rarity, cc.set_id, cc.set_name, cc.number, cc.image_url,
            cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.cmc, cc.color_identity
     FROM collection c
     JOIN card_cache cc ON c.card_id = cc.id
@@ -547,7 +547,7 @@ async function recommendSlot(database, location, cardMetadata, overrideCompartme
 async function rebalanceCompartmentByScheme(database, compartmentId, sortOrder, foilSorting) {
   const dbClient = database || db;
   const cards = await dbClient.all(
-    `SELECT c.*, cc.name, cc.set_id as set_code, cc.set_name, cc.number, cc.types, cc.rarity, cc.price_trend
+    `SELECT c.*, cc.name, cc.printed_name, cc.set_id as set_code, cc.set_name, cc.number, cc.types, cc.rarity, cc.price_trend
      FROM collection c
      LEFT JOIN card_cache cc ON c.card_id = cc.id
      WHERE c.compartment_id = ?

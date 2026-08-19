@@ -106,7 +106,7 @@ router.get('/:id', async (req, res) => {
       SELECT
         dc.quantity,
         cc.id,
-        cc.name,
+        cc.name, cc.printed_name,
         cc.supertype,
         cc.subtypes,
         cc.types,
@@ -150,7 +150,7 @@ router.get('/:id/locations', async (req, res) => {
     const query = `
       SELECT 
         c.id as entry_id, c.card_id, c.quantity as owned_qty, c.position, c.location_id, c.compartment_id,
-        cc.name as card_name, cc.set_name, cc.number,
+        cc.name as card_name, cc.printed_name, cc.set_name, cc.number,
         l.name as location_name, l.type as location_type,
         cp.label as compartment_label, cp.idx as compartment_idx
       FROM collection c
@@ -181,7 +181,9 @@ router.get('/:id/locations', async (req, res) => {
 
         foundLocations.push({
           take,
-          card_name: inst.card_name,
+          // A pull list is display-only, so the name is the one printed on the card
+          // — nothing downstream keys off it.
+          card_name: inst.printed_name || inst.card_name,
           set_name: inst.set_name,
           number: inst.number,
           location_name: inst.location_name || 'Unassigned Pile',
@@ -342,7 +344,7 @@ router.put('/:id/checkout', async (req, res) => {
     const validationQuery = `
       SELECT 
         dc.card_id, 
-        cc.name, 
+        cc.name, cc.printed_name, 
         dc.quantity AS required_qty,
         (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ? AND list_type = 'collection') AS owned_qty,
         (SELECT COALESCE(SUM(dc2.quantity), 0) FROM deck_cards dc2 JOIN decks d2 ON dc2.deck_id = d2.id WHERE d2.checked_out = 1 AND d2.user_id = ? AND d2.id != ? AND dc2.card_id = dc.card_id) AS locked_qty
@@ -357,7 +359,7 @@ router.put('/:id/checkout', async (req, res) => {
       const available = card.owned_qty - card.locked_qty;
       if (card.required_qty > available) {
         const deficit = card.required_qty - available;
-        errors.push(`Missing ${deficit}x ${card.name} (Owned: ${card.owned_qty}, In Use: ${card.locked_qty})`);
+        errors.push(`Missing ${deficit}x ${card.printed_name || card.name} (Owned: ${card.owned_qty}, In Use: ${card.locked_qty})`);
       }
     }
 

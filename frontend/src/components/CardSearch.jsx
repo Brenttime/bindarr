@@ -407,7 +407,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       setCards(prev => prev.map(c => (c.id === entry.card.id
         ? { ...c, owned_qty: Math.max(0, (c.owned_qty || 0) - entry.qty) }
         : c)));
-      showToast(t('search.removed', { name: entry.card.name }));
+      showToast(t('search.removed', { name: displayName(entry.card) }));
       onAddSuccess();
     } catch (err) {
       console.error(err);
@@ -471,7 +471,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       });
 
       if (response.ok) {
-        showToast(t('search.addedToCollection', { name: selectedCard.name }));
+        showToast(t('search.addedToCollection', { name: displayName(selectedCard) }));
         
         // Trigger confetti for rare/valuable cards!
         const rarity = (selectedCard.rarity || '').toLowerCase();
@@ -669,7 +669,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                 <div key={entry.entryId} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'rgba(255,255,255,0.02)', padding: '0.35rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                   <CardImage card={entry.card} alt="" style={{ width: '28px', borderRadius: '3px' }} />
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-strong)', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    #{entry.card.number} {entry.card.name}{entry.qty > 1 ? ` ×${entry.qty}` : ''}
+                    #{entry.card.number} {displayName(entry.card)}{entry.qty > 1 ? ` ×${entry.qty}` : ''}
                   </span>
                   <button
                     type="button"

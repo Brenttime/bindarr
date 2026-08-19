@@ -22,6 +22,25 @@ const CHUNK = 50;
 
 const num = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
 
+// Upsert, not INSERT OR REPLACE. REPLACE deletes the row and inserts a new one, so
+// every column this list does NOT name is silently reset to its default — which
+// already cost price_1st_edition (written by tcgcsvApi, never by a provider) on every
+// re-cache, and would cost the English name learned below the same way.
+const SET_CLAUSE = COLUMNS
+  .filter(c => c !== 'id' && c !== 'name')
+  .map(c => `${c} = excluded.${c}`)
+  .join(', ');
+
+// `name` is the one column an incoming row can be WORSE at. A non-English TCGdex
+// card carries its localized name in both `name` and `printed_name` because TCGdex
+// has no English name to give (see tcgdexApi.normalizeCard) — but one may since have
+// been learned from the card's English printing (cardApi.learnEnglishName), and that
+// is what makes a Japanese card findable by typing its English name. Keep it: an
+// incoming name that IS just the printed name is not new information.
+const NAME_CLAUSE = `name = CASE
+    WHEN excluded.name = excluded.printed_name AND card_cache.name <> card_cache.printed_name
+    THEN card_cache.name ELSE excluded.name END`;
+
 // Upsert already-normalized cards. `game` is passed rather than read off the card
 // so a provider can never write rows under the wrong game by forgetting a field.
 //
@@ -53,8 +72,9 @@ async function cacheNormalizedCards(cards, game, opts = {}) {
       );
     }
     await db.run(
-      `INSERT OR REPLACE INTO card_cache (${COLUMNS.join(', ')}, last_updated)
-       VALUES ${chunk.map(() => rowSql).join(', ')}`,
+      `INSERT INTO card_cache (${COLUMNS.join(', ')}, last_updated)
+       VALUES ${chunk.map(() => rowSql).join(', ')}
+       ON CONFLICT(id) DO UPDATE SET ${NAME_CLAUSE}, ${SET_CLAUSE}, last_updated = ${stamp}`,
       params
     );
   }

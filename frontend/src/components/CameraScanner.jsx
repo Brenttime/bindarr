@@ -9,7 +9,7 @@ import CardEntryFields from './CardEntryFields';
 import CardInspectorModal from './CardInspectorModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useMultiSelect } from '../utils/useMultiSelect';
-import { LANGUAGES, langName, langCode } from '../utils/languages';
+import { LANGUAGES, langName, langCode, displayName } from '../utils/languages';
 import { requestDetect, stopDetect, smoothQuad, meanCornerDrift, DETECT_W } from '../utils/cardDetector';
 import { getPerspectiveTransform, warpPerspective } from '../../../shared/imgproc.mjs';
 import { shouldCapture, shouldRearm, autoStatusKey } from '../utils/autoCapture';
@@ -917,11 +917,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
         const qtyLabel = qty > 1 ? `${qty}× ` : '';
         const placementLabel = data.placement?.label || null;
         if (placementLabel) {
-          showToast(t('scan.addedTo', { qty: qtyLabel, name: card.name, place: placementLabel }));
+          showToast(t('scan.addedTo', { qty: qtyLabel, name: displayName(card), place: placementLabel }));
         } else if (data.container_full) {
-          showToast(t('scan.addedFull', { qty: qtyLabel, name: card.name }));
+          showToast(t('scan.addedFull', { qty: qtyLabel, name: displayName(card) }));
         } else {
-          showToast(t('scan.autoAdded', { qty: qtyLabel, name: card.name, set: card.set_name }));
+          showToast(t('scan.autoAdded', { qty: qtyLabel, name: displayName(card), set: card.set_name }));
         }
 
         // Append to recent scans history log. entry_id (the last inserted row)
@@ -941,7 +941,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         
         onAddSuccess(); // Refresh stats
       } else {
-        showToast(t('scan.errAutoAdd', { name: card.name }));
+        showToast(t('scan.errAutoAdd', { name: displayName(card) }));
         signal('error');
       }
     } catch (err) {
@@ -1458,11 +1458,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
         const data = await response.json();
         const placementLabel = data.placement?.label || null;
         if (placementLabel) {
-          showToast(t('scan.addedToPlain', { name: selectedCard.name, place: placementLabel }));
+          showToast(t('scan.addedToPlain', { name: displayName(selectedCard), place: placementLabel }));
         } else if (data.container_full) {
-          showToast(t('scan.addedFullPlain', { name: selectedCard.name }));
+          showToast(t('scan.addedFullPlain', { name: displayName(selectedCard) }));
         } else {
-          showToast(t('search.addedToCollection', { name: selectedCard.name }));
+          showToast(t('search.addedToCollection', { name: displayName(selectedCard) }));
         }
 
         // Append to recent scans history. Carry entry_id + saved fields so the
@@ -1968,7 +1968,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       return (
                         <div key={i} style={{ fontSize: '0.7rem', color: i === 0 ? '#fff' : 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           <span style={{ color: pass ? 'var(--type-grass)' : 'var(--accent-red)', fontWeight: 700 }}>{label}</span>
-                          {' '}{cd.name} <span style={{ color: 'var(--text-muted)' }}>({cd.set} #{cd.number})</span>
+                          {' '}{cd.card ? displayName(cd.card) : cd.name} <span style={{ color: 'var(--text-muted)' }}>({cd.set} #{cd.number})</span>
                         </div>
                       );
                     })}
@@ -2444,7 +2444,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
               {(showAllMatches ? scanMatches : scanMatches.slice(0, PICKER_PREVIEW)).map(card => (
                 <div key={card.id} className="tcg-card" onClick={() => openQuickAdd(card)} style={{ cursor: 'pointer' }}>
                   <div className="tcg-card-inner" style={{ border: '1px solid var(--border-glass-hover)' }}>
-                    <img src={card.image_url} alt={card.name} className="tcg-card-image" />
+                    <img src={card.image_url} alt={displayName(card)} className="tcg-card-image" />
                   </div>
                   {/* Name and number are what the choice is actually made on —
                       the picture is already on screen above them, and at 0.75/0.65rem
@@ -2539,7 +2539,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
               >
                 <img
                   src={item.image_url}
-                  alt={item.name}
+                  alt={displayName(item)}
                   draggable={false}
                   style={{ width: '76px', height: '106px', objectFit: 'cover', borderRadius: '4px', border: selected ? '2px solid var(--accent-red)' : '1px solid var(--border-glass)', boxShadow: selected ? '0 0 12px var(--accent-red-glow)' : '0 2px 6px rgba(0,0,0,0.3)', pointerEvents: 'none' }}
                 />

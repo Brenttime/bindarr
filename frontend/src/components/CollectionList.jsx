@@ -794,7 +794,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                               <button className="btn btn-secondary btn-icon-only" style={{ width: '18px', height: '18px', padding: 0, borderRadius: '3px' }} onClick={() => openEdit(item)} title={t('common.edit')}>
                                 <Edit2 size={9} />
                               </button>
-                              <button className="btn btn-danger btn-icon-only" style={{ width: '18px', height: '18px', padding: 0, borderRadius: '3px' }} onClick={() => handleDelete(item.entry_id, item.name)} title={t('common.delete')}>
+                              <button className="btn btn-danger btn-icon-only" style={{ width: '18px', height: '18px', padding: 0, borderRadius: '3px' }} onClick={() => handleDelete(item.entry_id, getCardDisplayName(item.name, item.language, item.printed_name))} title={t('common.delete')}>
                                 <Trash2 size={9} />
                               </button>
                             </div>

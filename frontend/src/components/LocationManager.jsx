@@ -1366,7 +1366,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                   recommendedSpot: currentRecSpot && currentRecSpot.compartment_id === c.id ? {
                     index: Math.floor(currentRecSpot.position / 1000) - 1,
                     image_url: recCard?.image_url,
-                    name: recCard?.name,
+                    name: recCard ? displayName(recCard) : undefined,
                     set_name: recCard?.set_name,
                     card: recCard
                   } : null,
@@ -1543,7 +1543,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                       recommendedSpot={currentRecSpot && currentRecSpot.compartment_id === activeComp.id ? {
                         index: Math.floor(currentRecSpot.position / 1000) - 1,
                         image_url: recCard?.image_url,
-                        name: recCard?.name,
+                        name: recCard ? displayName(recCard) : undefined,
                         set_name: recCard?.set_name,
                         card: recCard
                       } : null}
@@ -1593,7 +1593,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 <CardImage card={filingQueue[filingIndex].entry} style={{ width: 'min(120px, 26vh)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }} />
                 
                 <div style={{ textAlign: 'center' }}>
-                  <strong style={{ fontSize: '1rem', display: 'block' }}>{filingQueue[filingIndex].entry.name}</strong>
+                  <strong style={{ fontSize: '1rem', display: 'block' }}>{displayName(filingQueue[filingIndex].entry)}</strong>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{filingQueue[filingIndex].entry.set_name} • {filingQueue[filingIndex].entry.printing}</span>
                 </div>
                 
@@ -1625,10 +1625,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                       {rec.after ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', marginTop: '0.4rem' }}>
                           <CardImage card={rec.after} style={{ width: '26px', borderRadius: '3px' }} />
-                          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{t('loc.fileAfter')} <strong style={{ color: 'var(--text-strong)' }}>{rec.after.name}</strong></span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{t('loc.fileAfter')} <strong style={{ color: 'var(--text-strong)' }}>{displayName(rec.after)}</strong></span>
                         </div>
                       ) : rec.before ? (
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>{t('loc.fileBefore')} <strong style={{ color: 'var(--text-strong)' }}>{rec.before.name}</strong></div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>{t('loc.fileBefore')} <strong style={{ color: 'var(--text-strong)' }}>{displayName(rec.before)}</strong></div>
                       ) : (
                         <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>{t('loc.firstInSection')}</div>
                       )}

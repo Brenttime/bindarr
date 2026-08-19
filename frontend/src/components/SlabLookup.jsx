@@ -3,6 +3,7 @@ import { Award, Search, Plus } from 'lucide-react';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 import { formatPrice } from '../utils/formatPrice';
+import { displayName } from '../utils/languages';
 
 // Add a graded slab by the cert number printed on its label.
 //
@@ -173,8 +174,8 @@ export default function SlabLookup({ onAddSuccess, showToast }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.9rem' }}>
               {result.candidates.map((card) => (
                 <div key={card.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  <CardImage card={card} alt={card.name} style={{ width: '100%', borderRadius: 'var(--radius-sm)' }} loading="lazy" />
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-strong)', fontWeight: 600, lineHeight: 1.3 }}>{card.name}</div>
+                  <CardImage card={card} alt={displayName(card)} style={{ width: '100%', borderRadius: 'var(--radius-sm)' }} loading="lazy" />
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-strong)', fontWeight: 600, lineHeight: 1.3 }}>{displayName(card)}</div>
                   <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.3 }}>
                     {card.set_name} &middot; #{card.number}
                   </div>

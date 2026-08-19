@@ -549,6 +549,10 @@ async function updateCollectionPrices(force = false) {
       return normalizeCard(await fetchFullCard(code, providerId(row.id)), code);
     });
     if (fresh.length) await cacheCards(fresh);
+    // The sweep already visits every non-English card owned, which makes it the one
+    // place rows added before English names were learned can catch up. One extra
+    // request each, once: afterwards the row no longer qualifies.
+    await mapLimited(fresh, learnEnglishName);
     for (const card of fresh) await recordPrice(card.id, card.price_trend);
     await markPricesSwept('tcgdex');
     console.log(`TCGdex price update complete: ${fresh.length} priced.`);
@@ -557,10 +561,37 @@ async function updateCollectionPrices(force = false) {
   }
 }
 
+// Teach a localized row the card's English name, so a collection can be searched in
+// English as well as in the language printed on the card.
+//
+// Magic needs none of this: Scryfall gives every printing an English `name` plus the
+// localized `printed_name`. TCGdex has ONE name per language, so normalizeCard above
+// writes the localized one into both columns — and a Japanese card was then findable
+// only by typing Japanese, which is not much use to someone whose keyboard is not.
+//
+// The English sibling is one request away whenever the set exists in English (sv03
+// does, sv2a does not), because ids differ only in their language segment. So ask for
+// it once — when a card is actually being kept, or when the price sweep next visits
+// it — and store it in `name`. Display reads printed_name and is unchanged; search
+// reads both columns (see utils/cardSearchSql and CollectionList's filter).
+//
+// Cheap on a repeat: the English row caches like any other, and once the name is
+// learned this returns on the second line. Never fatal — a Japan-exclusive card keeps
+// the localized name in both columns, which is exactly the old behaviour.
+async function learnEnglishName(card) {
+  const have = card && idLanguage(card.id);
+  if (!have || have === 'en') return card;
+  if (!card.printed_name || card.name !== card.printed_name) return card;
+  const english = await getPrintingInLang(card.id, 'en').catch(() => null);
+  if (!english || !english.name || english.name === card.name) return card;
+  await db.run(`UPDATE card_cache SET name = ? WHERE id = ?`, [english.name, card.id]);
+  return { ...card, name: english.name };
+}
+
 // `client` is exported for tests (stub the axios adapter), like tcgApi.tcgClient.
 module.exports = {
   searchCards, getCardById, getPrintingInLang, hydrateCard, listSets, fetchAndCacheSets, cacheCards, normalizeCard,
-  updateCollectionPrices, providerId, idLanguage, client,
+  updateCollectionPrices, learnEnglishName, providerId, idLanguage, client,
   // setIndex.listAllSets filters digital sets out of a build with these, and
   // globalIndex groups the coverage breakdown by series.
   listSeries, DIGITAL_SERIES,

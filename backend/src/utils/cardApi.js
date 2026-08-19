@@ -23,6 +23,7 @@
 const scryfallApi = require('../scryfallApi');
 const tcgApi = require('../tcgApi');
 const tcgdexApi = require('../tcgdexApi');
+const languages = require('./languages');
 
 const isMtgId = (id) => String(id || '').startsWith('mtg-');
 const isTcgdexId = (id) => String(id || '').startsWith('tcgdex-');
@@ -51,4 +52,30 @@ async function getCardById(id, { game, tcgApiKey = '' } = {}) {
   return await tcgApi.getCardById(id, tcgApiKey);
 }
 
-module.exports = { isMtgId, isTcgdexId, gameOf, hydrate, getCardById };
+// The same card as printed in `language`, or null when there is no such printing.
+//
+// A copy's language is not always the printing that was picked. Quick Add lets the
+// language be changed after a card is chosen, and a camera scan is answered by
+// whichever catalog exists (English, on most installs) whatever language is being
+// scanned. Both leave the collection row pointing at the ENGLISH printing, so a card
+// filed as Japanese still shows its English name everywhere: printed_name belongs to
+// the printing, not to the copy.
+//
+// Null means keep the card you had. That covers a card never printed in the language
+// asked for (Japanese has no Alpha) and a pokemontcg.io id, which is English-only and
+// carries no TCGdex id to swap to — callers must degrade, not fail, because the
+// language the user picked is still what they own.
+async function printingInLanguage(card, language) {
+  if (!card) return null;
+  if (languages.toName(card.language) === languages.toName(language)) return null;
+  // MTG addresses a printing by set + collector number, which read the same in
+  // every language. TCGdex ids carry their own language code and swap directly.
+  if (gameOf(card.id) === 'mtg') {
+    const set = String(card.set_id || '').replace(/^mtg-/, '');
+    return await scryfallApi.getPrintingInLang(set, card.number, language).catch(() => null);
+  }
+  if (!isTcgdexId(card.id)) return null;
+  return await tcgdexApi.getPrintingInLang(card.id, language).catch(() => null);
+}
+
+module.exports = { isMtgId, isTcgdexId, gameOf, hydrate, getCardById, printingInLanguage };

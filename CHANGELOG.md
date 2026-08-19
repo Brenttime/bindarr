@@ -86,6 +86,32 @@ shipping them enabled is a licensing decision and not only a technical one.
   rejected.
 
 ### Fixed
+- **A card added in another language kept its English name.** The copy's language and
+  the printing it points at were two separate things: the localized name lives on the
+  card_cache row (`printed_name`), so picking a card from an English search and then
+  setting Language to Japanese filed the copy against the ENGLISH printing — English
+  name, English art, English price, permanently. Only the camera scan resolved the
+  localized printing. Every add now routes through the same swap (search, Quick Add,
+  bulk add, rapid add, slab add, scan), for all eleven languages in
+  `shared/languages.json`. A card never printed in the language asked for keeps the
+  printing that was picked, which is still what the user owns.
+- **Names showed in English outside the collection grid.** Deck lists, the deck
+  picker and preview, the checkout pull list and its "Missing …" warning, filing
+  recommendations, the slab picker, the scanner's toasts and its debug candidates all
+  read the English `name` column directly. They show the printed name now; `name`
+  stays English where logic depends on it, so the four-copy deck rule still counts a
+  Japanese and an English copy as the same card and CSV exports are unchanged.
+- **A Japanese Pokémon card could only be found by typing Japanese.** TCGdex
+  publishes one name per language, so a localized row carried the localized name in
+  both `name` and `printed_name` and nothing English was left to search. A card being
+  added now learns its English name from its own English printing when one exists (one
+  request, cached), and the TCGdex price sweep backfills rows added before this.
+  Display still reads `printed_name`; search reads both columns.
+- **Re-caching a card silently reset columns no provider writes.** `card_cache` was
+  written with `INSERT OR REPLACE`, which deletes the row and inserts a new one — so
+  every column outside the provider's own list went back to its default, taking
+  `price_1st_edition` (written only by tcgcsvApi) with it on every price sweep. It is
+  an upsert now, which also protects the learned English name above.
 - **Korean Pokémon scans found nothing at all.** The same photo scanned as English
   named the card immediately. A candidate from the ready-made Pokémon catalog is a
   TCGplayer product id, so it is resolved by set and collector number — and that set

@@ -596,9 +596,26 @@ async function addCardToCollection(user, body) {
       }
     }
 
+    // File the copy against the printing it actually IS. The card was picked in
+    // whatever language the search ran in, but `language` is set separately — Quick
+    // Add's dropdown, a scan the English catalog answered — so a Japanese copy
+    // routinely arrived pointing at the English row, and then showed the English
+    // name, art and price in every view. Null (never printed in that language, or a
+    // pokemontcg.io id that cannot be localized) keeps the row that was picked.
+    let cardId = card_id;
+    const localized = await cardApi.printingInLanguage(card, language);
+    if (localized) {
+      card = localized;
+      cardId = localized.id;
+    }
+    // A localized row can be short an English name (TCGdex publishes only one name
+    // per language). Learn it here so the collection stays searchable in English
+    // while displaying the name the card is actually printed with.
+    card = await tcgdexApi.learnEnglishName(card);
+
     const effectiveGame = (req.body.game && req.body.game !== 'pokemon')
       ? req.body.game
-      : (card.game || cardApi.gameOf(card_id));
+      : (card.game || cardApi.gameOf(cardId));
 
     if (location_id) {
       const loc = await db.get(`SELECT id FROM locations WHERE id = ? AND user_id = ?`, [location_id, req.user.id]);
@@ -610,7 +627,7 @@ async function addCardToCollection(user, body) {
     const resolved = await resolveCompartmentAndPosition({
       locationId: location_id,
       userId: req.user.id,
-      cardId: card_id,
+      cardId,
       printing,
       language
     });
@@ -637,7 +654,7 @@ async function addCardToCollection(user, body) {
           grader, grade, cert_number
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
-        card_id, req.user.id, count, condition, printing, language, purchase_price || 0,
+        cardId, req.user.id, count, condition, printing, language, purchase_price || 0,
         targetLocationId, resolved.compartment_id, resolved.position, is_trade ? 1 : 0, list_type, effectiveGame,
         grader, gradeValue, certValue
       ]);
@@ -651,7 +668,7 @@ async function addCardToCollection(user, body) {
             grader, grade, cert_number
           ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
-          card_id, req.user.id, condition, printing, language, purchase_price || 0,
+          cardId, req.user.id, condition, printing, language, purchase_price || 0,
           targetLocationId, resolved.compartment_id, resolved.position + (i * 0.001), is_trade ? 1 : 0, list_type, effectiveGame,
           grader, gradeValue, certValue
         ]);
@@ -666,7 +683,7 @@ async function addCardToCollection(user, body) {
       }
     }
 
-    await recordPrice(card_id, card.price_trend);
+    await recordPrice(cardId, card.price_trend);
 
     return {
       message: 'Card added to collection',

@@ -3,6 +3,7 @@ import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageC
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { translateJapaneseName } from '../utils/langHelper';
+import { displayName } from '../utils/languages';
 import CheckoutWizardModal from './CheckoutWizardModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { buildDeckExport, parseDeckLine } from '../utils/deckText';
@@ -215,7 +216,7 @@ function DeckBuilder({ showToast }) {
       });
 
       if (response.ok) {
-        showToast(t('deck.addedCard', { name: card.name }));
+        showToast(t('deck.addedCard', { name: displayName(card) }));
         // Refresh details locally
         await loadDeckDetails(activeDeck.id);
       } else {
@@ -246,12 +247,12 @@ function DeckBuilder({ showToast }) {
     const card = activeDeck.cards.find(c => c.id === cardId);
     if (card && newQty > card.quantity) {
       if (newQty > (card.owned_qty || 0)) {
-        showToast(t('deck.errOwnedLimit', { count: card.owned_qty, name: card.name }));
+        showToast(t('deck.errOwnedLimit', { count: card.owned_qty, name: displayName(card) }));
         return;
       }
       
       if (!isBasicEnergyOrLand(card, activeDeck.game) && deckCountByName(activeDeck.cards, card.name) >= 4) {
-        showToast(t('deck.errCopyLimit', { count: 4, name: card.name }));
+        showToast(t('deck.errCopyLimit', { count: 4, name: displayName(card) }));
         return;
       }
     }
@@ -326,6 +327,9 @@ function DeckBuilder({ showToast }) {
           const mapped = data.map(item => ({
             id: item.card_id,
             name: item.name,
+            // Carried through so the picker shows the localized name; `name` stays
+            // English because the 4-copy rule counts by it.
+            printed_name: item.printed_name,
             set_name: item.set_name,
             number: item.number || item.collector_number || item.card_number || '',
             image_url: item.image_url,
@@ -1446,7 +1450,7 @@ function DeckBuilder({ showToast }) {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
                                 <CardImage card={card} style={{ width: '24px', height: '33px', objectFit: 'cover', borderRadius: '2px' }} />
                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-strong)' }}>{card.name} ({card.set_name} • #{card.number})</span>
+                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-strong)' }}>{displayName(card)} ({card.set_name} • #{card.number})</span>
                                   <span style={{ fontSize: '0.65rem', color: isAtMaxOwned ? 'var(--accent-red)' : 'var(--text-secondary)' }}>Owned: {ownedQty} | In Deck: {qtyInDeck}</span>
                                 </div>
                               </div>
@@ -1516,7 +1520,7 @@ function DeckBuilder({ showToast }) {
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
                                     <CardImage card={card} style={{ width: '32px', height: '44px', objectFit: 'cover', borderRadius: '2px' }} />
                                     <div>
-                                      <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-strong)' }}>{card.name}</div>
+                                      <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-strong)' }}>{displayName(card)}</div>
                                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{card.set_name} • #{card.number}</div>
                                     </div>
                                   </div>
@@ -2166,7 +2170,7 @@ function DeckBuilder({ showToast }) {
               card={previewCard}
               style={{ width: '100%', borderRadius: '10px', boxShadow: '0 8px 24px rgba(0,0,0,0.6)' }}
             />
-            <h4 style={{ color: 'var(--text-strong)', margin: '0.75rem 0 0.25rem 0', fontSize: '1rem' }}>{previewCard.name}</h4>
+            <h4 style={{ color: 'var(--text-strong)', margin: '0.75rem 0 0.25rem 0', fontSize: '1rem' }}>{displayName(previewCard)}</h4>
             <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.75rem' }}>
               {previewCard.set_name} • #{previewCard.number} ({previewCard.rarity || 'Common'})
             </p>
