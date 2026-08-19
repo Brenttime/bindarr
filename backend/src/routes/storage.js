@@ -1,6 +1,5 @@
 const express = require('express');
 const db = require('../db');
-const { authenticateToken } = require('../middleware/auth');
 const {
   recommendSlot,
   compartmentLabel,
@@ -14,7 +13,33 @@ const { defaultCompartmentPlan, normalizeRuleConfig } = require('../utils/collec
 
 const router = express.Router();
 
-router.use(authenticateToken);
+// The card rows behind a list of collection entry ids, keyed by id.
+//
+// One query for the whole batch. Both batch endpoints below used to run this same
+// SELECT once per entry inside their loop — filing 200 cards meant 200 round trips
+// to fetch data one statement could return — and they carried two near-identical
+// copies of the column list, which had already drifted apart (one aliased entry_id
+// and selected image_url, the other did neither).
+//
+// Callers index this by id so they keep iterating entry_ids in the order the client
+// sent: placement is sequential, each card filling the slot the one before it left.
+async function loadEntries(entryIds, userId) {
+  if (!entryIds.length) return new Map();
+  const holes = entryIds.map(() => '?').join(',');
+  const rows = await db.all(`
+    SELECT c.id, c.id AS entry_id, c.card_id, c.printing, c.language, c.favorite, c.is_trade, c.list_type,
+           cc.name, cc.set_name, cc.number, cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.image_url,
+           cc.game, cc.cmc, cc.color_identity,
+           cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil
+    FROM collection c
+    JOIN card_cache cc ON c.card_id = cc.id
+    WHERE c.user_id = ? AND c.id IN (${holes})
+  `, [userId, ...entryIds]);
+  for (const r of rows) {
+    try { r.types = JSON.parse(r.types || '[]'); } catch { r.types = []; }
+  }
+  return new Map(rows.map(r => [String(r.id), r]));
+}
 
 // 1. Get Storage Locations with Compartment Summaries
 router.get('/locations', async (req, res) => {
@@ -420,15 +445,11 @@ router.post('/locations/:id/recommend-batch', async (req, res) => {
     const mockCards = [];
     const recommendations = [];
 
+    const entries = await loadEntries(entry_ids, req.user.id);
+
     for (const entryId of entry_ids) {
-      const entry = await db.get(`
-        SELECT c.id as entry_id, c.card_id, c.printing, c.language, c.favorite, c.is_trade, c.list_type, cc.name, cc.set_name, cc.number, cc.types, cc.subtypes, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.supertype, cc.rarity, cc.image_url, cc.game, cc.cmc, cc.color_identity
-        FROM collection c
-        JOIN card_cache cc ON c.card_id = cc.id
-        WHERE c.id = ? AND c.user_id = ?
-      `, [entryId, req.user.id]);
+      const entry = entries.get(String(entryId));
       if (!entry) continue;
-      try { entry.types = JSON.parse(entry.types || '[]'); } catch { entry.types = []; }
 
       if (!locationAcceptsCard(location, entry)) {
         recommendations.push({ entry, recommended: null, rejected: true });
@@ -488,15 +509,11 @@ router.post('/locations/:id/apply-all', async (req, res) => {
     let workingCompartments = await loadCompartments(db, id, req.user.id);
     let filed = 0;
 
+    const entries = await loadEntries(entry_ids, req.user.id);
+
     for (const entryId of entry_ids) {
-      const entry = await db.get(`
-        SELECT c.id, c.card_id, c.printing, c.language, c.favorite, c.is_trade, c.list_type, cc.name, cc.set_name, cc.number, cc.types, cc.subtypes, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.supertype, cc.rarity, cc.game, cc.cmc, cc.color_identity
-        FROM collection c
-        JOIN card_cache cc ON c.card_id = cc.id
-        WHERE c.id = ? AND c.user_id = ?
-      `, [entryId, req.user.id]);
+      const entry = entries.get(String(entryId));
       if (!entry) continue;
-      try { entry.types = JSON.parse(entry.types || '[]'); } catch { entry.types = []; }
 
       const recommended = await recommendSlot(db, location, entry, workingCompartments);
       if (!recommended) continue;

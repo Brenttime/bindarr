@@ -1078,17 +1078,17 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
             </div>
 
             <div style={{ background: 'var(--bg-tertiary, rgba(255,255,255,0.04))', borderRadius: 'var(--radius-sm)', padding: '0.4rem 0.55rem', fontSize: '0.72rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Cards currently stored:</span>
+              <span style={{ color: 'var(--text-muted)' }}>{t('loc.cardsCurrentlyStored')}</span>
               <strong style={{ fontSize: '0.9rem', color: 'var(--text-strong)' }}>{selectedLoc.total_cards || 0} / {selectedLoc.total_capacity || 0}</strong>
             </div>
 
             <div style={{ background: 'rgba(255, 170, 0, 0.1)', border: '1px solid #d97706', padding: '0.6rem 0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.72rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
-              <strong>Changing these reorganizes cards:</strong>
+              <strong>{t('loc.reorganizeWarningTitle')}</strong>
               <ul style={{ margin: '0.35rem 0 0', paddingLeft: '1.1rem' }}>
-                <li>New sort rules re-order how cards display; save prompts a re-sort to match your physical {isBinderType ? 'binder' : 'box'}.</li>
+                <li>{t('loc.ruleNoteResort', { containerType: isBinderType ? t('loc.binderLower') : t('loc.boxLower') })}</li>
                 <li>{t('loc.ruleNoteFilter')}</li>
                 <li>{t('loc.ruleNoteCustom')}</li>
-                <li>Shrinking capacity below what a {isBinderType ? 'page' : 'row'} holds leaves the extra cards overflowing until re-filed.</li>
+                <li>{t('loc.ruleNoteShrink', { unitType: isBinderType ? t('loc.pageLower') : t('loc.rowLower') })}</li>
               </ul>
             </div>
 
@@ -1325,10 +1325,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 >
                   {compartments.map((c, idx) => (
                     <option key={c.id} value={idx}>
-                      {c.display_label || `Page ${idx + 1}`} ({idx + 1}/{compartments.length})
+                      {c.display_label || t('loc.pageName', { number: idx + 1 })} ({idx + 1}/{compartments.length})
                     </option>
                   ))}
-                  <option value="__add_new__" disabled={!!selectedLoc.locked}>+ Add Page</option>
+                  <option value="__add_new__" disabled={!!selectedLoc.locked}>+ {t('loc.addPage')}</option>
                 </select>
                 <button
                   type="button"
@@ -1482,7 +1482,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           style={{ fontSize: '0.8rem', padding: '0.2rem 0.4rem' }}
                         >
                           {compartments.map(c => <option key={c.id} value={c.id}>{c.display_label}</option>)}
-                          <option value="__add_new__" disabled={!!selectedLoc.locked}>+ Add Row</option>
+                          <option value="__add_new__" disabled={!!selectedLoc.locked}>+ {t('loc.addRow')}</option>
                         </select>
                         <button className="btn btn-secondary btn-icon-only" disabled={activeCompIdx >= compartments.length - 1} onClick={() => setActiveCompartmentId(compartments[activeCompIdx + 1]?.id)} style={{ width: '24px', height: '24px', padding: 0 }}>
                           &rarr;
@@ -1500,7 +1500,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                           title={t('loc.renameRow')}
                           style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.6rem', padding: '0.2rem 0.5rem' }}
                         >
-                          <Edit3 size={11} /> Rename
+                          <Edit3 size={11} /> {t('common.rename')}
                         </button>
                         <button
                           type="button"
@@ -1585,7 +1585,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
             )}
             
             <div style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Card {filingIndex + 1} of {filingQueue.length}
+              {t('loc.filingCardProgress', { current: filingIndex + 1, total: filingQueue.length })}
             </div>
             
             {filingQueue[filingIndex] && (
@@ -1603,7 +1603,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     return (
                       <div style={{ background: 'rgba(255, 71, 71, 0.15)', border: '1px solid #ff4747', borderRadius: 'var(--radius-sm)', padding: '0.75rem', width: '100%', textAlign: 'center' }}>
                         <strong style={{ fontSize: '0.9rem', color: 'var(--text-strong)' }}>
-                          {filingQueue[filingIndex].rejected ? "Doesn't match this container's filing rule" : 'Container Full!'}
+                          {filingQueue[filingIndex].rejected ? t('loc.rejectedRule') : t('loc.containerFull')}
                         </strong>
                         <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                           {t(filingQueue[filingIndex].rejected ? 'loc.skipRejected' : 'loc.skipNoRoom')}
@@ -1621,7 +1621,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     >
                       <div style={{ fontSize: '0.7rem', color: '#ffc107', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 'bold', marginBottom: '0.25rem' }}>{t('loc.clickToLocate')}</div>
                       <strong style={{ fontSize: '0.9rem', color: 'var(--text-strong)', display: 'block' }}>{rec.label}</strong>
-                      <strong style={{ fontSize: '1.2rem', color: '#ffc107', display: 'block', marginTop: '0.25rem' }}>Slot {Math.floor(rec.position / 1000)}</strong>
+                      <strong style={{ fontSize: '1.2rem', color: '#ffc107', display: 'block', marginTop: '0.25rem' }}>{t('loc.slotNumber', { n: Math.floor(rec.position / 1000) })}</strong>
                       {rec.after ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', marginTop: '0.4rem' }}>
                           <CardImage card={rec.after} style={{ width: '26px', borderRadius: '3px' }} />
@@ -1650,7 +1650,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     }}
                     style={{ flex: 2, padding: '0.6rem', fontSize: '0.9rem', fontWeight: 'bold' }}
                   >
-                    {filingReadOnly ? 'Next' : 'Placed'}
+                    {filingReadOnly ? t('loc.next') : t('loc.placed')}
                   </button>
                 </div>
               </div>
@@ -1659,7 +1659,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
         ) : (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <strong style={{ fontSize: '0.85rem' }}>Unsorted ({unsortedCards.length})</strong>
+              <strong style={{ fontSize: '0.85rem' }}>{t('loc.unsortedCount', { count: unsortedCards.length })}</strong>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <button
                   type="button"
@@ -1697,7 +1697,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
             {unsortedSelectMode && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'rgba(0,0,0,0.25)', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', marginTop: '0.25rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-strong)' }}>{unsortedSelectedIds.size} selected</span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-strong)' }}>{t('bulk.selectedCount', { count: unsortedSelectedIds.size })}</span>
                   <div style={{ display: 'flex', gap: '0.3rem' }}>
                     <button type="button" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }} onClick={() => setUnsortedSelectedIds(new Set(unsortedCards.map(c => c.entry_id)))}>{t('loc.selectAll')}</button>
                     <button type="button" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }} onClick={clearUnsortedSelection}>{t('bulk.clear')}</button>
@@ -1721,7 +1721,7 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                     onClick={() => {
                       if (!unsortedBulkLocation) return;
                       const locObj = locations.find(l => String(l.id) === String(unsortedBulkLocation));
-                      runUnsortedBulk('move', unsortedBulkLocation, `File ${unsortedSelectedIds.size} card(s) into "${locObj?.name || 'container'}"?`);
+                      runUnsortedBulk('move', unsortedBulkLocation, t('loc.confirmBulkFile', { count: unsortedSelectedIds.size, name: locObj?.name || t('loc.containerLower') }));
                       setUnsortedBulkLocation('');
                     }}
                     style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', fontWeight: 'bold' }}
@@ -1747,10 +1747,10 @@ function LocationManager({ statsTrigger, onUpdate, showToast, selectedLocationId
                 onChange={(e) => setUnsortedSearch(e.target.value)} style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem' }}
               />
               <select className="select-control" value={unsortedSort} onChange={(e) => setUnsortedSort(e.target.value)} style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem' }}>
-                <option value="scanned-desc">Scanned (Newest First)</option>
-                <option value="scanned-asc">Scanned (Oldest First)</option>
+                <option value="scanned-desc">{t('collection.sort.scanned-desc')}</option>
+                <option value="scanned-asc">{t('collection.sort.scanned-asc')}</option>
                 <option value="name-asc">{t('loc.sortAZ')}</option>
-                <option value="price-desc">Value (High-Low)</option>
+                <option value="price-desc">{t('collection.sort.price-desc')}</option>
                 <option value="set-number">{t('loc.sortSetNumber')}</option>
               </select>
             </div>

@@ -19,7 +19,7 @@ services:
       # - SSL_KEY_PATH=                 # Its private key
       # - POKEMON_TCG_API_KEY=          # Pokemon TCG API key to raise rate limits
       # - PUBLIC_BASE_URL=              # External URL behind a reverse proxy, e.g. https://cards.example.com. Used for share links AND auto-allowed as a CORS origin (so proxied logins work with just this set)
-      # - DEFAULT_ADMIN_PASSWORD=       # Pin the initial admin password instead of the auto-generated one (see startup logs)
+      # - DEFAULT_ADMIN_PASSWORD=       # Create the admin account with this password instead of creating the owner account on first visit
       # - ALLOW_REGISTRATION=           # "true" = open self-registration. Unset = invite-only
       # - TRUST_PROXY=                  # "1" behind a TLS-terminating reverse proxy so rate limiting sees the real client IP
     volumes:

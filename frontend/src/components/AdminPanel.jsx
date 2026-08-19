@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Shield, UserPlus, Key, Trash2, ToggleLeft, ToggleRight, Search, Users, Globe, HardDriveDownload, Download } from 'lucide-react';
 import { useBackGuard } from '../utils/useBackGuard';
-import ScanIndexPanel from './ScanIndexPanel';
+import CatalogPanel from './CatalogPanel';
 import { useT } from '../utils/i18n';
 
 const formatBytes = (n) => {
@@ -31,7 +31,7 @@ function AdminPanel({ showToast }) {
 
   // Instance Settings States
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
-  const [allowMemberSetBuilds, setAllowMemberSetBuilds] = useState(false);
+  const [pokemonProvider, setPokemonProvider] = useState('pokemontcg');
   const [settingsLoading, setSettingsLoading] = useState(false);
   const mountedRef = useRef(true);
 
@@ -39,7 +39,7 @@ function AdminPanel({ showToast }) {
   const [backups, setBackups] = useState([]);
   const [backupLoading, setBackupLoading] = useState(false);
 
-  // Index management (and its own polling) lives in ScanIndexPanel now.
+  // Scan catalog management (and its own polling) lives in CatalogPanel now.
   useEffect(() => {
     mountedRef.current = true;
     fetchUsers();
@@ -160,7 +160,7 @@ function AdminPanel({ showToast }) {
         const data = await response.json();
         if (!mountedRef.current) return;
         setPublicBaseUrl(data.public_base_url || '');
-        setAllowMemberSetBuilds(!!data.allow_member_set_builds);
+        setPokemonProvider(data.pokemon_provider || 'pokemontcg');
       }
     } catch (err) {
       console.error(err);
@@ -174,13 +174,13 @@ function AdminPanel({ showToast }) {
       const response = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ public_base_url: publicBaseUrl, allow_member_set_builds: allowMemberSetBuilds })
+        body: JSON.stringify({ public_base_url: publicBaseUrl, pokemon_provider: pokemonProvider })
       });
 
       if (response.ok) {
         const data = await response.json();
         setPublicBaseUrl(data.public_base_url || '');
-        setAllowMemberSetBuilds(!!data.allow_member_set_builds);
+        setPokemonProvider(data.pokemon_provider || 'pokemontcg');
         showToast(t('admin.settingsUpdated'));
       } else {
         const data = await response.json();
@@ -427,21 +427,26 @@ function AdminPanel({ showToast }) {
                 disabled={settingsLoading}
               />
             </div>
-            {/* Members can already trigger a set index implicitly — scanning a set
-                builds it on demand. This only decides whether they get an explicit
-                button for it. Whole-game rollups stay admin-only regardless. */}
+            {/* Which Pokémon API this install speaks to. It has always been a column
+                in app_settings and a branch in utils/pokemonProvider, with no way
+                to set it — so every install ran on pokemontcg.io whether or not it
+                suited them. The two are not interchangeable: they number the same
+                sets differently, so switching re-syncs the set table and rebuilds
+                the TCGplayer product map behind it. */}
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={allowMemberSetBuilds}
-                  onChange={(e) => setAllowMemberSetBuilds(e.target.checked)}
-                  disabled={settingsLoading}
-                />
-                <span>{t('admin.allowMemberSetBuilds')}</span>
-              </label>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: '0.35rem 0 0 1.6rem', lineHeight: 1.4 }}>
-                {t('admin.allowMemberSetBuildsHint')}
+              <label htmlFor="admin-pokemon-provider">{t('admin.pokemonProvider')}</label>
+              <select
+                id="admin-pokemon-provider"
+                className="select-control"
+                value={pokemonProvider}
+                onChange={(e) => setPokemonProvider(e.target.value)}
+                disabled={settingsLoading}
+              >
+                <option value="pokemontcg">{t('admin.providerPokemontcg')}</option>
+                <option value="tcgdex">{t('admin.providerTcgdex')}</option>
+              </select>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                {t('admin.pokemonProviderHint')}
               </p>
             </div>
             <button type="submit" className="btn btn-primary" style={{ padding: '0.6rem', fontWeight: 700, alignSelf: 'flex-start' }} disabled={settingsLoading}>
@@ -450,10 +455,11 @@ function AdminPanel({ showToast }) {
           </form>
         </div>
 
-        {/* Scan Indexes — one panel for both scales. Per-set indexes are the
-            unit of work; the whole-game tables that allow scanning without a
-            set code are built from them, so they belong in one place. */}
-        <ScanIndexPanel t={t} showToast={showToast} formatBytes={formatBytes} />
+        {/* Scan catalogs. One build per game+language: download the cards, then index
+            their artwork. Replaced the per-set / whole-game ORB index panel. */}
+        <div className="glass-panel">
+          <CatalogPanel showToast={showToast} />
+        </div>
 
         {/* Database Backup Panel */}
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>

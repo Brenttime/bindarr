@@ -1015,12 +1015,34 @@ button, input, select, textarea {
   height: 72%;
   aspect-ratio: 5 / 7;
   max-width: 88%;
-  border: 2px dashed rgba(255, 255, 255, 0.4);
+  /* Invisible on purpose. The element still defines the crop region and stays
+     draggable — buildFramedCanvas reads its geometry — but the live green
+     outline is what shows where the detector actually is, so a second box
+     drawn around it was only noise. border-color still carries the error
+     flash; the capture cue is the full-frame .scan-flash below. */
+  border: 2px solid transparent;
   border-radius: var(--radius-md);
   position: relative;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5); /* Dim outside scanner */
 }
 
+/* Shutter flash: the whole preview whites out for a beat when a photo is taken.
+   It covers the frame rather than the aim box because "a picture was just taken"
+   is a statement about the camera, and a full-frame wash reads without the user
+   having to notice a thin border change. */
+.scan-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 15; /* over the aim-box overlay (5), under the torch button (20) */
+  pointer-events: none;
+  background: #fff;
+  animation: scan-flash-pop 0.4s ease-out forwards;
+}
+
+@keyframes scan-flash-pop {
+  0% { opacity: 0; }
+  12% { opacity: 0.85; } /* snap up like a shutter, then decay */
+  100% { opacity: 0; }
+}
 
 /* Scanner Running Line Indicator animation */
 .scan-line {
@@ -1345,7 +1367,7 @@ button, input, select, textarea {
   }
 
   .quick-add-preview-img {
-    max-width: 65px !important;
+    max-width: 104px !important;
     box-shadow: 0 4px 8px rgba(0,0,0,0.4) !important;
   }
 
@@ -1357,27 +1379,35 @@ button, input, select, textarea {
     grid-column: span 1 !important; /* side-by-side on mobile! */
   }
   
-  /* Make mobile inputs and layout extremely compact to fit screen height */
+  /* The add-card sheet gets the screen, rather than being squeezed into as
+     little of it as possible. It was tuned to fit inside 80vh by shrinking
+     everything — 65px of card art, 0.7rem labels, 40px controls — and the result
+     was a cramped strip at the bottom of the phone with a lot of empty space
+     above it. dvh, not vh: vh counts the browser chrome as visible, so a sheet
+     sized in vh is cut off by the address bar it cannot see. */
   .quick-add-drawer {
-    padding: 0.75rem !important;
+    padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom)) !important;
+    max-height: 92dvh !important;
   }
   .quick-add-fields-group {
-    gap: 0.4rem !important;
+    gap: 0.55rem !important;
   }
   .quick-add-grid .form-group {
     margin-bottom: 0.1rem !important;
   }
   .quick-add-grid label {
-    font-size: 0.7rem !important;
-    margin-bottom: 1px !important;
+    font-size: 0.8rem !important;
+    margin-bottom: 2px !important;
     text-transform: none !important;
     letter-spacing: normal !important;
   }
+  /* 44px is the minimum comfortable touch target, and these are the controls the
+     whole sheet exists to set. */
   .quick-add-grid .input-control,
   .quick-add-grid .select-control {
-    padding: 0.3rem 0.45rem !important;
-    font-size: 0.75rem !important;
-    height: 40px !important;
+    padding: 0.45rem 0.6rem !important;
+    font-size: 0.9rem !important;
+    height: 44px !important;
   }
 }
 

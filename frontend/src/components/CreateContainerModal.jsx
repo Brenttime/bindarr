@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { X, BookOpen, Box, Package, Award, LayoutGrid, Layers, Archive, HelpCircle, ArrowLeft, ArrowRight } from 'lucide-react';
 import { SortBuilder, FilterBuilder } from './SortFilterBuilder';
-import { isBinderType } from '../utils/cardOptions';
+import { isBinderType, containerTypeKey } from '../utils/cardOptions';
 import { useBackGuard } from '../utils/useBackGuard';
 import { gameOptions, showGamePicker } from '../utils/games';
 import { useT } from '../utils/i18n';
@@ -10,20 +10,18 @@ import { useT } from '../utils/i18n';
 // them on step 2. Mirrors defaultCompartmentPlan in
 // backend/src/routes/collection.js.
 //
-// `type` is the value stored in the database and must stay English; `key` is what
-// the label and blurb are looked up under, so the two never get confused.
+// `type` is the value stored in the database and must stay English; its label and
+// blurb are looked up under containerTypeKey(type).
 const TYPE_META = [
-  { type: 'Binder', key: 'binder', icon: BookOpen, plan: { count: 10, capacity: 9 } },
-  { type: 'Toploader Binder', key: 'toploaderBinder', icon: LayoutGrid, plan: { count: 8, capacity: 4 } },
-  { type: 'Box', key: 'box', icon: Box, plan: { count: 2, capacity: 400 } },
-  { type: 'Toploader Box', key: 'toploaderBox', icon: Package, plan: { count: 1, capacity: 100 } },
-  { type: 'Graded Slab Box', key: 'gradedSlabBox', icon: Award, plan: { count: 1, capacity: 40 } },
-  { type: 'Display Shelf / Stand', key: 'displayShelf', icon: Layers, plan: { count: 1, capacity: 10 } },
-  { type: 'Deck Box', key: 'deckBox', icon: Archive, plan: { count: 1, capacity: 60 } },
-  { type: 'Tin / Case', key: 'tinCase', icon: Archive, plan: { count: 1, capacity: 200 } },
-  // key is 'misc', not 'other': a locale key ending in a plural category ('.one',
-  // '.other', ...) is read as a counted phrase by check-locales.mjs.
-  { type: 'Other', key: 'misc', icon: HelpCircle, plan: { count: 1, capacity: 500 } },
+  { type: 'Binder', icon: BookOpen, plan: { count: 10, capacity: 9 } },
+  { type: 'Toploader Binder', icon: LayoutGrid, plan: { count: 8, capacity: 4 } },
+  { type: 'Box', icon: Box, plan: { count: 2, capacity: 400 } },
+  { type: 'Toploader Box', icon: Package, plan: { count: 1, capacity: 100 } },
+  { type: 'Graded Slab Box', icon: Award, plan: { count: 1, capacity: 40 } },
+  { type: 'Display Shelf / Stand', icon: Layers, plan: { count: 1, capacity: 10 } },
+  { type: 'Deck Box', icon: Archive, plan: { count: 1, capacity: 60 } },
+  { type: 'Tin / Case', icon: Archive, plan: { count: 1, capacity: 200 } },
+  { type: 'Other', icon: HelpCircle, plan: { count: 1, capacity: 500 } },
 ];
 
 // Binders hold pages, everything else holds rows. Returns the key half so the
@@ -54,7 +52,7 @@ export default function CreateContainerModal({ onClose, onCreate, setsList = [],
   };
 
   const kind = compartmentKind(type);
-  const typeLabel = (meta) => t(`container.type.${meta.key}`);
+  const typeLabel = (meta) => t(`container.type.${containerTypeKey(meta.type)}`);
 
   const canNext = step === 0 ? !!type : step === 1 ? name.trim().length > 0 : true;
 
@@ -99,7 +97,7 @@ export default function CreateContainerModal({ onClose, onCreate, setsList = [],
                 key={meta.type}
                 type="button"
                 onClick={() => pickType(meta.type)}
-                title={t(`container.blurb.${meta.key}`)}
+                title={t(`container.blurb.${containerTypeKey(meta.type)}`)}
                 style={{
                   textAlign: 'left', cursor: 'pointer', padding: '0.7rem', borderRadius: 'var(--radius-sm)',
                   background: type === meta.type ? 'rgba(255,71,71,0.12)' : 'rgba(0,0,0,0.2)',
@@ -110,7 +108,7 @@ export default function CreateContainerModal({ onClose, onCreate, setsList = [],
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 800, fontSize: '0.8rem' }}>
                   <meta.icon size={16} /> {typeLabel(meta)}
                 </span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', lineHeight: 1.3 }}>{t(`container.blurb.${meta.key}`)}</span>
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', lineHeight: 1.3 }}>{t(`container.blurb.${containerTypeKey(meta.type)}`)}</span>
               </button>
             ))}
           </div>

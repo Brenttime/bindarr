@@ -845,9 +845,9 @@ function DeckBuilder({ showToast }) {
                     style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', height: 'auto' }}
                   >
                     <option value="all">{t('deck.allStatuses')}</option>
-                    <option value="ready">Battle Ready (60 Cards)</option>
-                    <option value="in_progress">Building (&lt; 60 Cards)</option>
-                    <option value="in_play">Currently In Play 🎮</option>
+                    <option value="ready">{t('deck.statusBattleReady')}</option>
+                    <option value="in_progress">{t('deck.statusBuildingCount')}</option>
+                    <option value="in_play">{t('deck.statusInPlayEmoji')}</option>
                   </select>
                 </div>
 
@@ -862,7 +862,7 @@ function DeckBuilder({ showToast }) {
                   >
                     <option value="created_desc">{t('deck.sortNewest')}</option>
                     <option value="created_asc">{t('deck.sortOldest')}</option>
-                    <option value="name_asc">Name (A-Z)</option>
+                    <option value="name_asc">{t('collection.sort.name-asc')}</option>
                     <option value="cards_desc">{t('deck.sortMostCards')}</option>
                   </select>
                 </div>
@@ -1595,17 +1595,17 @@ function DeckBuilder({ showToast }) {
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.8rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
-                      <span>Target Deck Size:</span>
-                      <strong style={{ color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--type-grass)' : 'var(--text-strong)' }}>{totalDeckCardsCount}/{targetDeckCardsCount} Cards</strong>
+                      <span>{t('deck.targetDeckSize')}</span>
+                      <strong style={{ color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--type-grass)' : 'var(--text-strong)' }}>{totalDeckCardsCount}/{targetDeckCardsCount} {t('deck.cardCapacity')}</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
-                      <span>Unique Cards:</span>
-                      <strong style={{ color: 'var(--text-strong)' }}>{activeDeck.cards.length} {deckGame === 'mtg' ? 'titles' : 'species'}</strong>
+                      <span>{t('deck.uniqueCards')}</span>
+                      <strong style={{ color: 'var(--text-strong)' }}>{activeDeck.cards.length} {deckGame === 'mtg' ? t('deck.titlesCount', { count: activeDeck.cards.length }) : t('deck.speciesCount', { count: activeDeck.cards.length })}</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                       <span>{t(deckGame === 'mtg' ? 'deck.basicLands' : 'deck.basicEnergy')}</span>
                       <strong style={{ color: 'var(--accent-yellow)' }}>
-                        {activeDeck.cards.filter(c => isBasicEnergyOrLand(c, deckGame)).reduce((s, c) => s + c.quantity, 0)} {deckGame === 'mtg' ? 'basic lands' : 'basic energy'}
+                        {activeDeck.cards.filter(c => isBasicEnergyOrLand(c, deckGame)).reduce((s, c) => s + c.quantity, 0)} {deckGame === 'mtg' ? t('deck.basicLandsCount', { count: activeDeck.cards.filter(c => isBasicEnergyOrLand(c, deckGame)).reduce((s, c) => s + c.quantity, 0) }) : t('deck.basicEnergyCount', { count: activeDeck.cards.filter(c => isBasicEnergyOrLand(c, deckGame)).reduce((s, c) => s + c.quantity, 0) })}
                       </strong>
                     </div>
                   </div>
@@ -1748,8 +1748,8 @@ function DeckBuilder({ showToast }) {
                     }}
                   >
                     <Zap size={22} style={{ color: newDeckGame === 'pokemon' ? 'var(--accent-yellow)' : 'var(--text-muted)' }} />
-                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: newDeckGame === 'pokemon' ? 'var(--accent-yellow)' : 'var(--text-secondary)' }}>Pokémon TCG</span>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>60 Cards Standard</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: newDeckGame === 'pokemon' ? 'var(--accent-yellow)' : 'var(--text-secondary)' }}>{t('deck.gamePokemonWithSystem')}</span>
+                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{t('deck.standard60')}</span>
                   </div>
 
                   <div
@@ -1772,7 +1772,7 @@ function DeckBuilder({ showToast }) {
                     }}
                   >
                     <Swords size={22} style={{ color: newDeckGame === 'mtg' ? '#ef4444' : 'var(--text-muted)' }} />
-                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: newDeckGame === 'mtg' ? '#ef4444' : 'var(--text-secondary)' }}>Magic (MTG)</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: newDeckGame === 'mtg' ? '#ef4444' : 'var(--text-secondary)' }}>{t('deck.gameMtgWithSystem')}</span>
                     <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{t('deck.constructedCommander')}</span>
                   </div>
                 </div>
@@ -1888,7 +1888,7 @@ function DeckBuilder({ showToast }) {
 
               {/* Description (Optional) */}
               <div className="form-group">
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.3rem', display: 'block' }}>Description (Optional)</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.3rem', display: 'block' }}>{t('deck.descriptionOptional')}</label>
                 <textarea
                   className="input-control"
                   style={{ minHeight: '65px', resize: 'vertical', fontSize: '0.85rem' }}
@@ -1917,7 +1917,7 @@ function DeckBuilder({ showToast }) {
                   }}
                 >
                   <FileText size={14} />
-                  {showImportDecklistArea ? 'Hide Quick Import Decklist' : '+ Quick Import Decklist (Optional)'}
+                  {showImportDecklistArea ? t('deck.hideQuickImport') : t('deck.showQuickImport')}
                 </button>
 
                 {showImportDecklistArea && (
@@ -1925,7 +1925,7 @@ function DeckBuilder({ showToast }) {
                     <textarea
                       className="input-control"
                       style={{ minHeight: '90px', fontFamily: 'monospace', fontSize: '0.8rem', whiteSpace: 'pre' }}
-                      placeholder={`Paste decklist (e.g. \n4 Charizard ex\n2 Pidgeot ex\n1 Forest Seal Stone)`}
+                      placeholder={t('deck.pasteDecklistPlaceholder')}
                       value={newDeckImportText}
                       onChange={(e) => setNewDeckImportText(e.target.value)}
                     />
@@ -1956,7 +1956,7 @@ function DeckBuilder({ showToast }) {
             <div>
               <h3 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', margin: 0 }}>{t('deck.handSimulator')}</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
-                Test your deck consistency. Shuffled deck. Mulligan count: <strong style={{ color: 'var(--accent-red)' }}>{mulliganCount}</strong>. Hand size: <strong>{hand.length}</strong> cards.
+                {t('deck.mulliganCountText', { mulligans: mulliganCount, handSize: hand.length })}
               </p>
             </div>
 
@@ -1997,11 +1997,11 @@ function DeckBuilder({ showToast }) {
             {/* Prize Cards Area (Pokémon decks) */}
             {prizeCards.length > 0 && (
               <div>
-                <h4 style={{ fontSize: '0.85rem', color: 'var(--accent-yellow)', margin: '0 0 0.5rem 0' }}>Prize Cards (6 Cards)</h4>
+                <h4 style={{ fontSize: '0.85rem', color: 'var(--accent-yellow)', margin: '0 0 0.5rem 0' }}>{t('deck.prizeCardsPokemon')}</h4>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                   {prizeCards.map((pCard, pIdx) => (
                     <div key={pIdx} style={{ width: '70px', height: '98px', borderRadius: '4px', background: 'linear-gradient(135deg, #1e293b, #0f172a)', border: '1px dashed var(--accent-yellow)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', color: 'var(--accent-yellow)', fontWeight: 700 }}>
-                      Prize #{pIdx + 1}
+                      {t('deck.prizeSlot', { n: pIdx + 1 })}
                     </div>
                   ))}
                 </div>
@@ -2019,7 +2019,7 @@ function DeckBuilder({ showToast }) {
                 style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
                 disabled={hand.length === 0}
               >
-                Mulligan (Draw {Math.max(1, 7 - (mulliganCount + 1))})
+                {t('deck.mulliganDraw', { count: Math.max(1, 7 - (mulliganCount + 1)) })}
               </button>
               <button 
                 className="btn btn-primary" 
@@ -2060,10 +2060,10 @@ function DeckBuilder({ showToast }) {
               value={effectiveExportFormat}
               onChange={e => setExportFormat(e.target.value)}
             >
-              <option value="ptcgl">Pokémon TCG Live (grouped)</option>
+              <option value="ptcgl">{t('deck.formatPtcgl')}</option>
               <option value="mtga">{t('deck.formatMtga')}</option>
-              <option value="plain">Plain text (qty + name)</option>
-              <option value="buylist">Buylist – cards you still need</option>
+              <option value="plain">{t('deck.formatPlain')}</option>
+              <option value="buylist">{t('deck.formatBuylist')}</option>
             </select>
             {effectiveExportFormat === 'buylist' && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-0.5rem', marginBottom: '1rem' }}>
@@ -2095,7 +2095,7 @@ function DeckBuilder({ showToast }) {
               <X size={16} />
             </button>
             <h3 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.5rem' }}>{t('deck.importTitle')}</h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Paste decklist lines (e.g. <code>4 Pikachu</code> or <code>2 Lightning Energy</code>):</p>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>{t('deck.pasteDecklistHint')}</p>
             
             <textarea
               className="input-control"
@@ -2114,9 +2114,9 @@ function DeckBuilder({ showToast }) {
             ) : importComparison && (
               <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1, overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  <span>Collection Availability Breakdown:</span>
+                  <span>{t('deck.availabilityBreakdown')}</span>
                   <span style={{ color: 'var(--accent-yellow)', fontWeight: 700 }}>
-                    {importComparison.filter(i => i.status === 'full').length}/{importComparison.length} species fully owned
+                    {t('deck.fullyOwnedSpecies', { owned: importComparison.filter(i => i.status === 'full').length, total: importComparison.length })}
                   </span>
                 </div>
                 <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-sm)', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '180px', overflowY: 'auto' }}>
@@ -2124,7 +2124,7 @@ function DeckBuilder({ showToast }) {
                     <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: 'rgba(255,255,255,0.02)', borderRadius: '4px' }}>
                       <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{item.rawName}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>Req: {item.requestedQty}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{t('deck.reqQuantity', { count: item.requestedQty })}</span>
                         <span style={{
                           padding: '2px 6px',
                           borderRadius: '10px',

@@ -1,10 +1,7 @@
 const express = require('express');
 const db = require('../db');
-const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
-
-router.use(authenticateToken);
 
 // List notes, pinned first then most recently updated.
 router.get('/notes', async (req, res) => {

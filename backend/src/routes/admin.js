@@ -5,8 +5,7 @@ const path = require('path');
 const db = require('../db');
 const tcgApi = require('../tcgApi');
 const scryfallApi = require('../scryfallApi');
-const setIndex = require('../setIndex');
-const globalIndex = require('../globalIndex');
+const catalog = require('../catalog');
 const { parseCardRow } = require('../utils/priceHelpers');
 const languages = require('../utils/languages');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
@@ -292,189 +291,102 @@ router.delete('/users/:id', async (req, res) => {
 const isGame = (g) => g === 'mtg' || g === 'pokemon';
 
 // List persisted builds plus any in-flight/recent build progress.
-router.get('/set-indexes', (req, res) => {
-  res.json({ builds: setIndex.listBuilds(), progress: setIndex.getProgress() });
-});
-
-// Preview a set's printing count so the UI can warn about size before building.
-// `lang` defaults to English, so every existing caller keeps its behaviour.
-router.get('/set-indexes/preview', async (req, res) => {
-  const { game, set, lang } = req.query;
-  if (!isGame(game) || !set) return res.status(400).json({ error: 'game (mtg|pokemon) and set are required' });
-  try {
-    const cardCount = await setIndex.previewSet(game, set, lang);
-    if (!cardCount) return res.status(404).json({ error: `No ${languages.toName(lang)} cards found for ${game} set "${set}"` });
-    res.json({ game, set, lang: languages.toCode(lang), cardCount, estBytes: cardCount * 20 * 1024 });
-  } catch (error) {
-    res.status(502).json({ error: `Set lookup failed: ${error.message}` });
-  }
-});
-
-// Start (or restart) a full-set build. Runs in the background; poll GET for progress.
-router.post('/set-indexes', (req, res) => {
-  const { game, set, lang, excludeChildCodes } = req.body;
-  if (!isGame(game) || !set) return res.status(400).json({ error: 'game (mtg|pokemon) and set are required' });
-  setIndex.startBuild(game, set, lang, { excludeChildCodes: Array.isArray(excludeChildCodes) ? excludeChildCodes : [] });
-  res.status(202).json({ message: `Build started for ${game} ${set} (${languages.toCode(lang)})` });
-});
-
-// Remove a build's files. The language is a query param, not another path
-// segment, so the existing DELETE URLs keep working unchanged.
-router.delete('/set-indexes/:game/:set', (req, res) => {
-  const { game, set } = req.params;
-  if (!isGame(game)) return res.status(400).json({ error: 'invalid game' });
-  setIndex.deleteBuild(game, set, req.query.lang);
-  res.json({ message: `Removed ${game} ${set} index` });
-});
-
-// Browse sets for the set-index builder modal — returns all known sets with
-// symbol/logo images for the chosen game, newest releases first.
-router.get('/sets-browse', async (req, res) => {
-  const { game, lang } = req.query;
-  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
-  try {
-    // Non-English Pokémon sets are a different list (and not in the `sets` table).
-    if (game === 'pokemon' && !languages.isEnglish(lang)) {
-      const sets = await require('../tcgdexApi').listSets(lang);
-      return res.json([...sets].reverse()); // newest first, like the query below
-    }
-    // Some older rows may have NULL game (defaults to 'pokemon').
-    const sets = await db.all(
-      `SELECT id, name, series, printed_total, release_date, symbol_url, logo_url
-       FROM sets WHERE game = ?1 OR (game IS NULL AND ?2 = 'pokemon')
-       ORDER BY release_date DESC`,
-      [game, game]
-    );
-    res.json(sets);
-  } catch (error) {
-    console.error('Error browsing sets:', error);
-    res.status(500).json({ error: 'Failed to retrieve sets' });
-  }
-});
-
-// --- Scan indexes (unified) ---
-
-// THE getter for the scan-index UI: for one game+language, every buildable set
-// with its index state, plus the whole-game rollup status and any in-flight build.
+// --- Catalogs -------------------------------------------------------------
 //
-// One call rather than three (browse sets / list built indexes / check the global
-// tables), because the three were what made two separate panels look like two
-// separate features — the rollups are built FROM these set indexes.
-router.get('/scan-indexes', async (req, res) => {
-  const { game, lang } = req.query;
-  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
-  const code = languages.toCode(lang);
+// A catalog is one (game, language). Building it caches every set's cards and
+// then embeds their artwork; scanning searches the result. This replaced the
+// per-set and whole-game ORB index endpoints, which asked the user to reason
+// about scan indexes, recall depth and set scoping to get a working scanner.
+// There is one thing to build now, and the list below says how complete it is.
+router.get('/catalogs', async (req, res) => {
   try {
-    const data = await globalIndex.listSetIndexes(game, code);
-    res.json({ ...data, progress: globalIndex.getProgress() });
-  } catch (error) {
-    res.status(502).json({ error: `Set list unavailable: ${error.message}` });
-  }
-});
-
-// Build indexes for one game+language.
-//
-//   sets:   array of set codes to index, or omitted/null for the whole catalogue.
-//   rollup: also build the whole-game tables (what code-free scanning needs).
-//   filter: opaque description of how `sets` was chosen, recorded in the index so
-//           a partial index can explain what it does not cover.
-//   resume: continue an interrupted build instead of starting over.
-router.post('/scan-indexes/build', (req, res) => {
-  const { game, lang, sets, rollup, filter, resume } = req.body || {};
-  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
-  if (sets !== undefined && sets !== null && !Array.isArray(sets)) {
-    return res.status(400).json({ error: 'sets must be an array of set codes, or omitted for all' });
-  }
-  const code = languages.toCode(lang);
-  const started = resume
-    ? globalIndex.resumeBuild(game, code)
-    : globalIndex.startBuild(game, code, {
-      rollup: rollup !== false,
-      only: Array.isArray(sets) && sets.length ? sets : null,
-      filter: filter || null,
+    res.json({
+      catalogs: await catalog.list(),
+      progress: catalog.state(),
+      last: catalog.lastResult(),
     });
-  if (!started) return res.status(409).json({ error: `A ${game} (${code}) build is already running` });
-  const scope = Array.isArray(sets) && sets.length ? `${sets.length} set(s)` : 'every set';
-  const what = rollup === false ? 'Set indexing' : 'Index build';
-  res.status(202).json({ message: `${what} ${resume ? 'resumed' : 'started'} for ${game} (${code}) — ${scope}` });
+  } catch (e) {
+    console.error('catalog list failed:', e.message);
+    res.status(500).json({ error: 'Could not list catalogs' });
+  }
 });
 
-// --- Global scan index build management ---
-
-// On-disk status of the whole-game ORB rollup plus any in-flight build.
+// The non-English catalogs that can be built at all, with per-language counts.
 //
-// `langs` is a comma-separated list (default English) so the panel only lists the
-// languages the user actually collects — each one is a separate multi-hour build,
-// and offering all eleven at once would be an invitation to start a week of work.
-router.get('/global-indexes', (req, res) => {
-  const langs = String(req.query.langs || 'en').split(',').map(s => s.trim()).filter(Boolean);
-  const codes = langs.length ? langs.map(languages.toCode) : ['en'];
+// Separate from /catalogs because it costs a provider set list per language and
+// /catalogs is polled every second during a build. The panel asks for this once,
+// when the user opens the language section.
+router.get('/catalogs/languages', async (req, res) => {
+  try {
+    res.json({ languages: await catalog.listLanguages(String(req.query.game || 'pokemon')) });
+  } catch (e) {
+    console.error('listLanguages failed:', e.message);
+    res.status(500).json({ error: 'Could not list languages' });
+  }
+});
+
+router.post('/catalogs/build', (req, res) => {
+  // `sets` scopes the build to the sets the user actually has in front of them,
+  // which is minutes instead of hours. Omit it for the whole game. A scoped build
+  // MERGES into the existing catalog (catalog.js embedPhase), so building one set
+  // never discards the sets built before it.
+  const { game, lang, skipCache, sets } = req.body || {};
+  try {
+    res.json({ progress: catalog.start(game, lang, { skipCache: !!skipCache, sets: Array.isArray(sets) ? sets : [] }) });
+  } catch (e) {
+    // "already running" is a conflict, not a server fault — the UI shows the
+    // running build rather than an error.
+    res.status(409).json({ error: e.message, progress: catalog.state() });
+  }
+});
+
+// The scan engine's downloadable pieces: what is installed, what it would cost,
+// and the licence the models carry. See utils/modelAssets for why the models are
+// a deliberate download rather than part of the image.
+router.get('/models', async (req, res) => {
+  // The product map ships with the ready-made Pokémon catalog's state because it is
+  // that catalog's other half: product ids with nothing to look them up in name no
+  // cards at all.
   res.json({
-    games: globalIndex.listGlobals(codes),
-    progress: globalIndex.getProgress(),
+    ...require('../utils/modelAssets').status(),
+    productMap: await require('../tcgplayerCatalog').summary(),
   });
 });
 
-// Start (or restart) an index build for one game+language. Background; poll GET
-// for progress. Heavy: every set fetched and every card image encoded, hours.
-//
-//   rollup: true  (default) index every set AND build the whole-game tables, so
-//                 scanning without a set code works.
-//   rollup: false index every set and stop.
-//
-// Both are the same walk. `rollup: false` replaced a client-side loop that fired
-// one request per set with no queue — ~460 concurrent set builds for MTG.
-// `resume: true` continues from whatever a previous interrupted attempt left.
-router.post('/global-indexes', (req, res) => {
-  const { game, lang, resume, rollup } = req.body;
-  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
-  const code = languages.toCode(lang);
-  const started = resume
-    ? globalIndex.resumeBuild(game, code)
-    : globalIndex.startBuild(game, code, { rollup: rollup !== false });
-  if (!started) return res.status(409).json({ error: `A ${game} (${code}) build is already running` });
-  const what = rollup === false ? 'Set indexing' : 'Global build';
-  res.status(202).json({ message: `${what} ${resume ? 'resumed' : 'started'} for ${game} (${code})` });
-});
-
-// How many of a game+language's sets are indexed. Hits the provider for the set
-// list, so it is a separate call from the cheap status above rather than folded
-// into it — the panel asks for it per row on demand.
-router.get('/global-indexes/coverage', async (req, res) => {
-  const { game, lang } = req.query;
-  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
+// Build (or refresh) the TCGplayer product map. A download of the ready-made
+// Pokémon catalog starts this on its own — this is the button for refreshing it
+// after a set release, or recovering from a run that failed halfway.
+router.post('/models/product-map', (req, res) => {
+  const productMap = require('../tcgplayerCatalog');
   try {
-    res.json(await globalIndex.coverage(game, languages.toCode(lang)));
-  } catch (error) {
-    res.status(502).json({ error: `Coverage unavailable: ${error.message}` });
-  }
-});
-
-// Check a game+language's card source and encoder before committing to a build.
-// Answers "will this even work" in seconds rather than an hour in — issue #29 was
-// a broken card source discovered the slow way.
-router.get('/global-indexes/preflight', async (req, res) => {
-  const { game, lang } = req.query;
-  if (!isGame(game)) return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
-  const code = languages.toCode(lang);
-  try {
-    res.json({ game, lang: code, ok: true, ...(await globalIndex.preflight(game, code)) });
+    if (req.body && req.body.stop) return res.json({ stopped: productMap.stop() });
+    res.json({ progress: productMap.start() });
   } catch (e) {
-    res.status(502).json({ game, lang: code, ok: false, error: e.message });
+    res.status(409).json({ error: e.message, progress: productMap.state() });
   }
 });
 
-// Stop an in-flight global build. The live index is untouched and the staged
-// files are kept, so the build can be resumed rather than restarted.
-router.delete('/global-indexes/:game', (req, res) => {
-  const { game } = req.params;
-  if (!isGame(game)) return res.status(400).json({ error: 'invalid game' });
-  const code = languages.toCode(req.query.lang);
-  const stopped = globalIndex.stopBuild(game, code);
-  res.json({ message: stopped ? `Stopped ${game} (${code}) build` : `No ${game} (${code}) build running` });
+// `what`: 'models' or 'catalog:mtg' / 'catalog:pokemon'. Downloading is the
+// operator's own act on their own install — which is precisely why it is a button
+// they press rather than something that happens on startup.
+router.post('/models/download', (req, res) => {
+  const modelAssets = require('../utils/modelAssets');
+  try {
+    res.json({ progress: modelAssets.start(String((req.body || {}).what || 'models')) });
+  } catch (e) {
+    res.status(409).json({ error: e.message, progress: modelAssets.state() });
+  }
 });
 
-// --- Database backup --- (see ../backup.js)
+router.post('/catalogs/stop', (req, res) => {
+  res.json({ stopped: catalog.stop(), progress: catalog.state() });
+});
+
+// Progress is polled while a build runs, so it stays cheap: in-memory counters,
+// no database and no filesystem.
+router.get('/catalogs/progress', (req, res) => {
+  res.json({ progress: catalog.state(), last: catalog.lastResult() });
+});
 
 router.get('/backups', (req, res) => {
   res.json({ dir: BACKUP_DIR, backups: listBackups() });

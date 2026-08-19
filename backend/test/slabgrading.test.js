@@ -20,6 +20,10 @@ const os = require('os');
 const path = require('path');
 
 process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-slab-${process.pid}.db`);
+// initDb only seeds the 'admin' user when this is set — the wizard creates the
+// owner account otherwise, and these tests want a user id 1 to exist.
+process.env.DEFAULT_ADMIN_PASSWORD = 'test-admin-password';
+
 const db = require('../src/db');
 const psaApi = require('../src/psaApi');
 

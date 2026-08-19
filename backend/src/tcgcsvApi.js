@@ -133,10 +133,24 @@ function buildGroupMatcher(groupsByCategory) {
       if (cand.length === 1) return { ...cand[0], confidence: 0.8 };
     }
 
-    // 3. Exact, in the other catalogue. Only reached when the language guess was
-    //    wrong, which categoryFor can be for a language TCGplayer files unusually.
-    const otherCat = entries.find(e => wanted.some(w => e.keys.has(w)));
-    if (otherCat) return { ...otherCat, confidence: 0.9 };
+    // 3. Exact, in the other catalogue — but ONLY when the language guess could
+    //    actually have been wrong. categoryFor sends Japanese to the Japanese
+    //    catalogue and everything else to the English one, so for a card that IS
+    //    English or Japanese the guess is definitionally right and there is
+    //    nothing to fall back to.
+    //
+    //    Without this the id keys walk straight past the language guard above:
+    //    English `dp1` (Diamond & Pearl) exact-matches the Japanese group `DP1:
+    //    Space-Time Creation` on its abbreviation, and `bw1` matches `BW1: Black
+    //    Collection`. Both scored 0.9 and would price — and, now, IDENTIFY —
+    //    English cards off Japanese products. The step-2 comment already says an
+    //    exact name match in the wrong language is worse than a good match in the
+    //    right one; an exact ID match in the wrong language is worse still,
+    //    because ids are short and collide by design across catalogues.
+    if (language !== 'English' && language !== 'Japanese') {
+      const otherCat = entries.find(e => wanted.some(w => e.keys.has(w)));
+      if (otherCat) return { ...otherCat, confidence: 0.9 };
+    }
 
     // No suffix pass across catalogues: loose key plus wrong language is how a set
     // gets priced off an unrelated release.

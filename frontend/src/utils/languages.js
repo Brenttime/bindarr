@@ -1,21 +1,12 @@
-// Card languages the UI can search, scan and record. Mirrors the backend list in
-// backend/src/utils/languages.js — same codes, same display names, and the names
-// are what get stored in collection.language. Provider-specific spellings
-// (Scryfall's zht, TCGdex's zh-tw) stay on the backend; the UI only ever speaks
-// the canonical code.
-export const LANGUAGES = [
-  { code: 'en', name: 'English' },
-  { code: 'ja', name: 'Japanese' },
-  { code: 'de', name: 'German' },
-  { code: 'fr', name: 'French' },
-  { code: 'es', name: 'Spanish' },
-  { code: 'it', name: 'Italian' },
-  { code: 'pt', name: 'Portuguese' },
-  { code: 'ko', name: 'Korean' },
-  { code: 'ru', name: 'Russian' },
-  { code: 'zh-tw', name: 'Chinese (Traditional)' },
-  { code: 'zh-cn', name: 'Chinese (Simplified)' },
-];
+// Card languages the UI can search, scan and record. The table is shared with the
+// backend (shared/languages.json) rather than mirrored here — the display names are
+// what get stored in collection.language, so the two lists drifting apart would
+// mean the UI offering a language the server does not recognise. Each row also
+// carries the provider-specific spellings (Scryfall's zht, TCGdex's zh-tw); the UI
+// ignores them and only ever speaks the canonical code.
+import LANGUAGE_TABLE from '../../../shared/languages.json';
+
+export const LANGUAGES = LANGUAGE_TABLE;
 
 export const LANGUAGE_NAMES = LANGUAGES.map(l => l.name);
 

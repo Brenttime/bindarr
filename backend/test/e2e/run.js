@@ -18,7 +18,12 @@ async function runTestFile(file) {
     console.log(`RUNNING TEST SUITE: ${file}`);
     console.log(`=========================================`);
     
-    const child = spawn('node', [path.join(TEST_DIR, file)]);
+    // Every suite drives the API as the 'admin' account. initDb only seeds that
+    // account when a password is pinned — a real fresh install gets its owner
+    // from the setup wizard instead, and a headless test has no browser.
+    const child = spawn('node', [path.join(TEST_DIR, file)], {
+      env: { ...process.env, DEFAULT_ADMIN_PASSWORD: 'test-admin-password' },
+    });
     
     let filePassed = 0;
     let fileFailed = 0;

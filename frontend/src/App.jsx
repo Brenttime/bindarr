@@ -13,6 +13,7 @@ const CollectionList = lazy(() => import('./components/CollectionList'));
 const LocationManager = lazy(() => import('./components/LocationManager'));
 const Settings = lazy(() => import('./components/Settings'));
 const AdminPanel = lazy(() => import('./components/AdminPanel'));
+const SetupWizard = lazy(() => import('./components/SetupWizard'));
 const SharedCollection = lazy(() => import('./components/SharedCollection'));
 const DeckBuilder = lazy(() => import('./components/DeckBuilder'));
 const Notes = lazy(() => import('./components/Notes'));
@@ -60,7 +61,7 @@ const originalFetch = window.fetch;
 window.fetch = function (input, options = {}) {
   // `input` may be a string, a URL, or a Request object — normalize before using string methods.
   const url = typeof input === 'string' ? input : (input && input.url) || '';
-  const isPublicOrAuthRoute = url.includes('/api/shared/') || url.includes('/api/auth/login') || url.includes('/api/auth/register');
+  const isPublicOrAuthRoute = url.includes('/api/shared/') || url.includes('/api/auth/login') || url.includes('/api/auth/register') || url.includes('/api/auth/bootstrap');
 
   const token = localStorage.getItem('bindarr_token');
   const finalOptions = { ...options };
@@ -92,6 +93,10 @@ function App() {
   });
 
   const [activeTab, setActiveTab] = useState('dashboard');
+  // First-run scanning setup. Asked once per session, only for an admin, and only
+  // while it is genuinely incomplete — setupNeeded() reads the same endpoints the
+  // wizard does so there is one definition of 'set up'.
+  const [showSetup, setShowSetup] = useState(false);
   const [selectedLocationId, setSelectedLocationId] = useState(null);
   const [focusEntryId, setFocusEntryId] = useState(null);
   const [selectedCardFilter, setSelectedCardFilter] = useState('');
@@ -135,6 +140,20 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [toast]);
+
+  // Offer first-run setup to an admin until it is finished or skipped. The flag
+  // lives on the server, so closing the wizard halfway resumes it at the next
+  // login on any device; everything it configures is also reachable from Settings
+  // and Admin.
+  useEffect(() => {
+    if (!user || user.role !== 'admin') return;
+    let cancelled = false;
+    import('./components/SetupWizard')
+      .then(m => m.setupNeeded())
+      .then(needed => { if (needed && !cancelled) setShowSetup(true); })
+      .catch(() => { /* never block the app on the wizard's own probe */ });
+    return () => { cancelled = true; };
+  }, [user]);
 
   // Handle automatic logout on 401
   useEffect(() => {
@@ -263,6 +282,11 @@ function App() {
 
   return (
     <div className="app-container">
+      {showSetup && (
+        <Suspense fallback={null}>
+          <SetupWizard user={user} onUpdateUser={handleUpdateUser} showToast={showToast} onClose={() => setShowSetup(false)} />
+        </Suspense>
+      )}
       {/* Premium Header */}
       <header className="app-header">
         <div className="logo-section">

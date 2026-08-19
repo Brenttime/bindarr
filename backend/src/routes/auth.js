@@ -12,9 +12,76 @@ const router = express.Router();
 const REGISTRATION_ENABLED = process.env.ALLOW_REGISTRATION === 'true';
 
 // Public config the login screen reads to decide whether to show the Sign Up
-// option. No auth — must be reachable before login.
-router.get('/config', (req, res) => {
-  res.json({ registrationEnabled: REGISTRATION_ENABLED });
+// option, and whether this install still has no accounts at all. No auth — must
+// be reachable before login.
+router.get('/config', async (req, res) => {
+  let setupRequired = false;
+  try {
+    const row = await db.get(`SELECT COUNT(*) as count FROM users`);
+    setupRequired = row.count === 0;
+  } catch (error) {
+    console.error(error);
+  }
+  res.json({ registrationEnabled: REGISTRATION_ENABLED, setupRequired });
+});
+
+// First run: create the owner account. Open without auth by necessity, and safe
+// only because it refuses the moment any account exists — there is nobody to ask
+// for permission before the first user exists, and nothing to steal.
+//
+// The username is always `admin`, never the caller's choice: DEFAULT_ADMIN_PASSWORD
+// has to hardcode it (an operator cannot log in as a name the server invented), so
+// letting this path pick a different one would mean the owner account is named
+// differently depending on which way the install started — and initDb's orphan-row
+// adoption looks the account up by that name.
+const OWNER_USERNAME = 'admin';
+
+router.post('/bootstrap', authLimiter, async (req, res) => {
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: 'A password is required' });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  try {
+    const row = await db.get(`SELECT COUNT(*) as count FROM users`);
+    if (row.count > 0) {
+      return res.status(409).json({ error: 'This instance is already set up. Log in instead.' });
+    }
+
+    const passwordHash = db.hashPassword(password);
+    const shareToken = crypto.randomBytes(16).toString('hex');
+    const result = await db.run(`
+      INSERT INTO users (username, password_hash, role, share_token, share_enabled)
+      VALUES (?, ?, ?, ?, ?)
+    `, [OWNER_USERNAME, passwordHash, 'admin', shareToken, 0]);
+
+    // Both skipped by initDb, which found no account to hand them to.
+    await db.adoptOrphanRows(result.lastID);
+    await db.seedStarterLocations(result.lastID);
+
+    const token = await generateSession(result.lastID);
+    res.status(201).json({
+      message: 'Setup complete',
+      token,
+      user: {
+        username: OWNER_USERNAME,
+        role: 'admin',
+        share_token: shareToken,
+        share_enabled: 0,
+        share_locations: 0,
+        tcg_api_key: '',
+        psa_api_token: '',
+        graded_price_api_key: '',
+        api_key: ''
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create the owner account' });
+  }
 });
 
 // Register a new user

@@ -87,12 +87,18 @@ function all(sql, params = []) {
   });
 }
 
-async function withTransaction(dbOrFn, asyncFn) {
-  const fn = typeof dbOrFn === 'function' ? dbOrFn : asyncFn;
-  const tx = { run, get, all, withTransaction };
+// Run fn inside BEGIN IMMEDIATE / COMMIT, rolling back if it throws.
+//
+// fn takes no argument on purpose. It used to be handed a `tx` object, but that
+// object was `{ run, get, all, withTransaction }` — the module's own exports under
+// a different name. Callers gained nothing from it, and it read as statement-level
+// isolation this does not provide: there is ONE sqlite3 connection here, so every
+// query in the process is already inside whatever transaction is open. Use `db`
+// directly and the scope is honest.
+async function withTransaction(fn) {
   await run('BEGIN IMMEDIATE TRANSACTION');
   try {
-    const result = await fn(tx);
+    const result = await fn();
     await run('COMMIT');
     return result;
   } catch (error) {
@@ -256,56 +262,6 @@ async function initDb() {
   `);
 
   await run(`
-    CREATE TABLE IF NOT EXISTS tags (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      color TEXT DEFAULT '#3B82F6',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      UNIQUE(user_id, name)
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS collection_tags (
-      collection_id INTEGER NOT NULL,
-      tag_id INTEGER NOT NULL,
-      PRIMARY KEY (collection_id, tag_id),
-      FOREIGN KEY (collection_id) REFERENCES collection(id) ON DELETE CASCADE,
-      FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      action_type TEXT NOT NULL,
-      entity_type TEXT NOT NULL,
-      entity_id INTEGER,
-      before_state TEXT,
-      after_state TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS saved_filter_presets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      filter_config TEXT NOT NULL,
-      sort_config TEXT NOT NULL,
-      is_default INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      UNIQUE(user_id, name)
-    )
-  `);
-
-  await run(`
     CREATE TABLE IF NOT EXISTS price_history (
       card_id TEXT NOT NULL,
       price REAL NOT NULL,
@@ -334,6 +290,51 @@ async function initDb() {
     )
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_tcgplayer_product_pid ON tcgplayer_product(product_id)`);
+
+  // TCGplayer's own product catalogue, keyed the way the READY-MADE Pokémon scan
+  // catalog is keyed: by product id.
+  //
+  // tcgplayer_product above is the other direction — cards this install holds, for
+  // which a product was found — so it can only ever answer for cards already
+  // downloaded and priced. The published scan catalog needs the reverse: given a
+  // product id the model matched, what card is that? Without this table the answer
+  // was nothing at all, and every scan against the ready-made Pokémon catalog
+  // matched and then named no card (see routes/collection.js scan-match).
+  //
+  // Cards only: a product with no collector number is sealed product, and no
+  // photograph of a card will ever be one.
+  await run(`
+    CREATE TABLE IF NOT EXISTS tcgplayer_catalog (
+      product_id INTEGER PRIMARY KEY,
+      category_id INTEGER NOT NULL,
+      group_id INTEGER NOT NULL,
+      group_name TEXT,
+      set_id TEXT,
+      name TEXT,
+      number TEXT,
+      built_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Sets the provider LISTS but has no usable card data for — no cards at all, or
+  // cards with no artwork, which a scan catalog cannot use either way.
+  //
+  // Recorded so "N sets have no cards here yet" stops counting them. Measured on a
+  // real install: all 46 uncached English Pokemon sets were of this kind (promos,
+  // samples, jumbo cards, trainer kits), so the panel told the user to build sets
+  // that can never be built, and the weekly auto-update chased a number that could
+  // never drop. A build fills this in as it walks; a set whose data appears later
+  // clears its own row.
+  await run(`
+    CREATE TABLE IF NOT EXISTS set_data_gaps (
+      game TEXT NOT NULL,
+      language TEXT NOT NULL,
+      set_id TEXT NOT NULL,
+      reason TEXT,
+      seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (game, language, set_id)
+    )
+  `);
 
   // Cached PSA cert lookups. Cached forever, with no staleness check anywhere —
   // deliberate, and the only table in this schema like that: a cert describes a
@@ -410,16 +411,42 @@ async function initDb() {
     await run(`ALTER TABLE app_settings ADD COLUMN tcgcsv_prices_swept_at DATETIME`);
   }
 
-  // Whether non-admin members may trigger an individual set index build from the
-  // UI. Off by default. This is convenience rather than a new capability: scanning
-  // a set already builds its index on demand for any logged-in user (see
-  // routes/collection.js /prepare-set). Whole-game rollups stay admin-only either
-  // way, because those are hours of CPU and gigabytes of disk shared by everyone.
+  // VESTIGIAL. This gated non-admin members building an individual per-set ORB
+  // index, and there are no per-set indexes any more — scanning is CollectorVision
+  // embeddings over a catalog, and catalog builds are admin-only (they walk a whole
+  // provider and hammer its rate limits). Nothing reads the column; the migration
+  // stays so an existing database still matches the schema this code expects, and
+  // dropping it would mean a table rebuild for no gain.
   if (!appSettingsCols.some(c => c.name === 'allow_member_set_builds')) {
     await run(`ALTER TABLE app_settings ADD COLUMN allow_member_set_builds INTEGER NOT NULL DEFAULT 0`);
   }
+  // Which API English Pokémon cards and sets come from.
+  //
+  // TCGdex for a NEW install: 218 English sets against pokemontcg.io's 174, every
+  // other language in the same place, no API key, and measured 57-206 ms per card
+  // lookup against 971-1963 ms (pokemontcg.io also answers 5xx often enough to need
+  // a retry policy — see tcgApi's interceptor).
+  //
+  // pokemontcg.io for an install that ALREADY HAS DATA, and this half is the point
+  // of the WHERE clause. The two providers number the same sets differently — sv1
+  // vs sv01, pgo vs swsh10.5, me1 vs me01 — and every cached card, every scan
+  // catalog and every collection row was built against one of those numberings.
+  // Flipping an existing install underneath its own data is how the set list ends
+  // up describing sets none of its cards belong to. An upgrade keeps what it was
+  // built with; the admin can switch deliberately in Admin → Instance Settings,
+  // which re-syncs the set table and rebuilds the product map behind it.
+  //
+  // "Already has data" is read off the Pokémon set catalogue and card cache, not
+  // off `users`: this migration runs before the startup set sync, so a brand new
+  // database genuinely has neither, while any install that has ever run has both.
+  // Same shape as the setup_complete migration below.
   if (!appSettingsCols.some(c => c.name === 'pokemon_provider')) {
-    await run(`ALTER TABLE app_settings ADD COLUMN pokemon_provider TEXT DEFAULT 'pokemontcg'`);
+    await run(`ALTER TABLE app_settings ADD COLUMN pokemon_provider TEXT DEFAULT 'tcgdex'`);
+    await run(`
+      UPDATE app_settings SET pokemon_provider = 'pokemontcg'
+       WHERE (SELECT COUNT(*) FROM sets WHERE game = 'pokemon') > 0
+          OR (SELECT COUNT(*) FROM card_cache WHERE game = 'pokemon') > 0
+    `);
   }
   if (!appSettingsCols.some(c => c.name === 'scan_exclude_tokens')) {
     await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_tokens INTEGER NOT NULL DEFAULT 0`);
@@ -436,14 +463,25 @@ async function initDb() {
   // The one scan exclusion that defaults ON, and the only one that is not a
   // matter of taste: Pokémon TCG Pocket cards exist solely in the phone game, so
   // no camera will ever be pointed at one. Indexing them costs a linear pass over
-  // 2,321 extra vectors on every code-free scan and — because Pocket art is
+  // 2,321 extra vectors on every unscoped scan and — because Pocket art is
   // largely redrawn from paper cards — invites confident matches naming a set the
-  // user cannot own. MTG has always excluded digital sets (setIndex.listAllSets
+  // user cannot own. MTG has always excluded digital sets (cardSets.listAllSets
   // filters Scryfall's `digital` flag); this is the Pokémon half of that rule
   // finally catching up, which is why existing installs get it applied on
   // migration rather than grandfathered off.
   if (!appSettingsCols.some(c => c.name === 'scan_exclude_digital')) {
     await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_digital INTEGER NOT NULL DEFAULT 1`);
+  }
+
+  // Whether the first-run wizard has been seen through to the end. Server-side,
+  // not localStorage, so the wizard follows the install rather than the browser:
+  // an admin who starts setup on a laptop finishes it on a phone. Every install
+  // starts at 0, upgrades included: the wizard is where catalogs, games and the
+  // provider keys are explained, and an install that predates it has never been
+  // offered that tour. It is one screen with a "Skip setup" button that marks it
+  // done for good, so the cost to someone who wants nothing from it is one click.
+  if (!appSettingsCols.some(c => c.name === 'setup_complete')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN setup_complete INTEGER NOT NULL DEFAULT 0`);
   }
 
   // A non-English printing is its own card, not a display variant of the English
@@ -678,31 +716,46 @@ async function initDb() {
   }
 
   // --- PERFORMANCE INDEXES ---
+  // `user_id` first, because it is the predicate on essentially every read in the
+  // app — every collection query, every stats aggregate — and nothing indexed it.
+  // idx_collection_comp_user_qty below cannot serve it: a composite index is only
+  // usable from its leading column, and that one leads with compartment_id.
+  await run(`CREATE INDEX IF NOT EXISTS idx_collection_user_game ON collection(user_id, game)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_collection_comp_user_qty ON collection(compartment_id, user_id, quantity)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_collection_loc_pos ON collection(location_id, position)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_set_num ON card_cache(set_id, number)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_deck_cards_checkout ON deck_cards(deck_id, checked_out)`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_collection_tags_tag_id ON collection_tags(tag_id)`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_user_date ON audit_logs(user_id, created_at DESC)`);
+  // Indexes on the retired tags/audit_logs tables. A fresh database never creates
+  // those tables at all now; an upgraded one keeps them (dropping a table is not
+  // something a migration should do to data it cannot restore), but nothing reads
+  // them, so the indexes are pure write cost.
+  await run(`DROP INDEX IF EXISTS idx_collection_tags_tag_id`);
+  await run(`DROP INDEX IF EXISTS idx_audit_logs_user_date`);
 
   // --- SEED DATA & MIGRATION TO DEFAULT ADMIN ---
   const userCount = await get(`SELECT COUNT(*) as count FROM users`);
   let adminId = null;
-  if (userCount.count === 0) {
-    const generatedPassword = process.env.DEFAULT_ADMIN_PASSWORD || crypto.randomBytes(9).toString('base64url');
-    const defaultPassHash = hashPassword(generatedPassword);
+  // An empty users table stays empty on purpose. The first visit to the web UI
+  // asks for a password and creates the owner account itself
+  // (POST /api/auth/bootstrap), so no generated password is ever printed to a log
+  // and left in place. DEFAULT_ADMIN_PASSWORD still seeds an account up front for
+  // scripted deploys that need credentials before anyone opens a browser.
+  //
+  // Either way the account is named `admin`: the name is not the owner's to choose,
+  // because it is what the orphan-row adoption below looks up and what the
+  // DEFAULT_ADMIN_PASSWORD path has to hardcode anyway (nobody could guess a name
+  // the server picked). Nothing in the app renames a user, so it stays true.
+  if (userCount.count === 0 && process.env.DEFAULT_ADMIN_PASSWORD) {
+    const defaultPassHash = hashPassword(process.env.DEFAULT_ADMIN_PASSWORD);
     const defaultShareToken = crypto.randomBytes(16).toString('hex');
     const result = await run(`
       INSERT INTO users (username, password_hash, role, share_token, share_enabled)
       VALUES (?, ?, ?, ?, ?)
     `, ['admin', defaultPassHash, 'admin', defaultShareToken, 0]);
     adminId = result.lastID;
-    console.log('=========================================');
-    console.log(`Created default admin user. ID: ${adminId}`);
-    console.log(`  username: admin`);
-    console.log(`  password: ${generatedPassword}`);
-    console.log('Log in and change this password immediately via Settings.');
-    console.log('=========================================');
+    console.log('Created admin user "admin" from DEFAULT_ADMIN_PASSWORD.');
+  } else if (userCount.count === 0) {
+    console.log('No accounts yet. Open the web UI to create the owner account.');
   } else {
     const adminUser = await get(`SELECT id FROM users WHERE username = ?`, ['admin']);
     if (adminUser) {
@@ -711,23 +764,39 @@ async function initDb() {
   }
 
   if (adminId) {
-    await run(`UPDATE collection SET user_id = ? WHERE user_id IS NULL`, [adminId]);
-    await run(`UPDATE locations SET user_id = ? WHERE user_id IS NULL`, [adminId]);
+    await adoptOrphanRows(adminId);
+    await seedStarterLocations(adminId);
   }
+}
 
+// Cards and locations from before multi-user carry `user_id IS NULL`. They belong
+// to whoever owns the install. Runs from initDb when an admin already exists (or
+// DEFAULT_ADMIN_PASSWORD just made one), and from the bootstrap route when the
+// owner account is created through the UI instead — a database with orphan rows
+// and no users reaches the app that way and would otherwise show an empty
+// collection.
+async function adoptOrphanRows(userId) {
+  await run(`UPDATE collection SET user_id = ? WHERE user_id IS NULL`, [userId]);
+  await run(`UPDATE locations SET user_id = ? WHERE user_id IS NULL`, [userId]);
+}
+
+// A binder and a bulk box, so a new account has somewhere to put its first card.
+// Runs from initDb when DEFAULT_ADMIN_PASSWORD seeds the account, and from the
+// bootstrap route when the owner creates it through the UI instead.
+async function seedStarterLocations(userId) {
   const locCount = await get(`SELECT COUNT(*) as count FROM locations`);
-  if (locCount.count === 0 && adminId) {
-    console.log('Populating default locations for admin user...');
-    const binder = await run(`INSERT INTO locations (name, type, user_id) VALUES (?, ?, ?)`, [
-      'Main Binder', 'Binder', adminId
-    ]);
-    await createCompartments(binder.lastID, 10, 9);
+  if (locCount.count > 0) return;
 
-    const box = await run(`INSERT INTO locations (name, type, user_id) VALUES (?, ?, ?)`, [
-      'Bulk Storage Box 1', 'Box', adminId
-    ]);
-    await createCompartments(box.lastID, 2, 100);
-  }
+  console.log('Populating default locations...');
+  const binder = await run(`INSERT INTO locations (name, type, user_id) VALUES (?, ?, ?)`, [
+    'Main Binder', 'Binder', userId
+  ]);
+  await createCompartments(binder.lastID, 10, 9);
+
+  const box = await run(`INSERT INTO locations (name, type, user_id) VALUES (?, ?, ?)`, [
+    'Bulk Storage Box 1', 'Box', userId
+  ]);
+  await createCompartments(box.lastID, 2, 100);
 }
 
 async function createCompartments(locationId, count, capacity) {
@@ -745,6 +814,8 @@ module.exports = {
   withTransaction,
   initDb,
   createCompartments,
+  seedStarterLocations,
+  adoptOrphanRows,
   hashPassword,
   // Exported for tests — the rename runs at module load, so it can't be
   // exercised through a normal require.

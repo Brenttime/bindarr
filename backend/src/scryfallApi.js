@@ -362,9 +362,13 @@ async function fetchWindow(q, lang, offset, limit, order) {
 // Public entry point. Returns { cards, total } — `total` is how many matches
 // exist upstream in all (null when the answer came from cache, which has no
 // such count). Wrapping keeps the many early returns in the body unchanged.
-async function searchCards(...args) {
+// Same options object as tcgApi/tcgdexApi — see the note there.
+async function searchCards({
+  name = '', number = '', set = '', scope = 'database', userId = null,
+  lang = null, allPrints = false, page = 1, limit = 60,
+} = {}) {
   const meta = { total: null };
-  const cards = await runSearch(meta, ...args);
+  const cards = await runSearch(meta, name, number, set, scope, userId, lang, allPrints, page, limit);
   return { cards, total: meta.total };
 }
 
@@ -641,6 +645,41 @@ async function updateCollectionPrices(force = false) {
   }
 }
 
+// The same printing in another language, or null.
+//
+// Scanning identifies a card from ARTWORK, which is identical in every language,
+// so a Japanese card is matched against the English catalog and comes back as the
+// English printing (cvScan.load says so outright, and leaves re-expressing the
+// answer to the caller — this is that). Set code and collector number ARE
+// language-invariant, so they address the printing; /cards/:code/:number/:lang is
+// the one Scryfall endpoint that takes a language, unlike /cards/collection.
+//
+// Returns null rather than throwing when the card was never printed in that
+// language (Japanese has no Alpha), so callers keep the English card they had.
+async function getPrintingInLang(setCode, number, lang) {
+  const code = languages.resolve(lang).scryfall;
+  if (code === 'en' || !setCode || !number) return null;
+  const name = languages.toName(code);
+  const cached = await db.get(
+    `SELECT * FROM card_cache WHERE game = 'mtg' AND set_id = ? AND number = ? AND language = ? LIMIT 1`,
+    [String(setCode).toLowerCase(), String(number), name]
+  );
+  if (cached) return parseCardRow(cached);
+  try {
+    const resp = await scryGet(`/cards/${encodeURIComponent(String(setCode).toLowerCase())}/${encodeURIComponent(number)}/${code}`);
+    if (!resp.data) return null;
+    const norm = normalizeCard(resp.data, name);
+    // Only keep it if Scryfall really answered in that language. A 404 is the
+    // usual "not printed in it" signal, but the endpoint can also fall back, and
+    // caching an English row under a Japanese query would poison the lookup above.
+    if (languages.toCode(norm.language) !== languages.toCode(code)) return null;
+    await cacheCards([norm]);
+    return norm;
+  } catch {
+    return null;   // 404 (no such printing in that language) or a transient error
+  }
+}
+
 async function getCardById(cardId) {
   const rawId = cardId.startsWith('mtg-') ? cardId.slice(4) : cardId;
   const cached = await db.get(`SELECT * FROM card_cache WHERE id = ?`, [cardId]);
@@ -658,4 +697,4 @@ async function getCardById(cardId) {
 
 // `client` and `fetchWindow` are exported for tests (stub the axios adapter),
 // mirroring how tcgApi exposes tcgClient.
-module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, scryGetRetried, client, fetchWindow };
+module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, scryGetRetried, client, fetchWindow };

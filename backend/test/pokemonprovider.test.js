@@ -16,8 +16,8 @@ const os = require('os');
 const path = require('path');
 
 process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-provider-${process.pid}.db`);
+const cardSets = require('../src/cardSets');
 const { decide, TCGDEX, POKEMONTCG } = require('../src/utils/pokemonProvider');
-const setIndex = require('../src/setIndex');
 
 function testLanguageVeto() {
   // pokemontcg.io has no non-English cards at all, so the SETTING CANNOT WIN here.
@@ -70,7 +70,7 @@ function testNoSecondSourceOfTruth() {
   // getScanExclusions used to hand out `pokemonProvider`, and callers then made
   // this decision themselves from it. Removing that field is what makes the bug
   // class structurally impossible rather than merely fixed, so it stays gone.
-  return setIndex.getScanExclusions().then((ex) => {
+  return cardSets.getScanExclusions().then((ex) => {
     assert.ok(ex && typeof ex === 'object', 'getScanExclusions still returns the exclusions');
     assert.strictEqual('pokemonProvider' in ex, false,
       'getScanExclusions must NOT expose the provider — utils/pokemonProvider owns that decision');

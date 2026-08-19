@@ -12,20 +12,13 @@
 //   pokemontcg.io is ENGLISH ONLY. Its 174 sets are the Western releases; JP
 //   exclusives like sv2a (ポケモンカード151) are simply absent. That is why a
 //   non-English Pokémon lookup routes to TCGdex instead (see tcgdexApi.js).
-const LANGUAGES = [
-  { code: 'en', name: 'English', scryfall: 'en', tcgdex: 'en' },
-  { code: 'ja', name: 'Japanese', scryfall: 'ja', tcgdex: 'ja' },
-  { code: 'de', name: 'German', scryfall: 'de', tcgdex: 'de' },
-  { code: 'fr', name: 'French', scryfall: 'fr', tcgdex: 'fr' },
-  { code: 'es', name: 'Spanish', scryfall: 'es', tcgdex: 'es' },
-  { code: 'it', name: 'Italian', scryfall: 'it', tcgdex: 'it' },
-  { code: 'pt', name: 'Portuguese', scryfall: 'pt', tcgdex: 'pt' },
-  { code: 'ko', name: 'Korean', scryfall: 'ko', tcgdex: 'ko' },
-  { code: 'ru', name: 'Russian', scryfall: 'ru', tcgdex: 'ru' },
-  // Scryfall spells the Chinese variants zht/zhs; TCGdex uses zh-tw/zh-cn.
-  { code: 'zh-tw', name: 'Chinese (Traditional)', scryfall: 'zht', tcgdex: 'zh-tw' },
-  { code: 'zh-cn', name: 'Chinese (Simplified)', scryfall: 'zhs', tcgdex: 'zh-cn' },
-];
+// The table itself lives in shared/languages.json, alongside shared/cardOrder.json,
+// because the frontend needs the same code->name pairs and used to keep its own
+// copy of them. Two lists meaning the same thing is one list that will disagree:
+// adding a language meant editing both files, and only one of them is enforced by
+// anything. Scryfall spells the Chinese variants zht/zhs where TCGdex uses
+// zh-tw/zh-cn, which is why each row carries a per-provider code.
+const LANGUAGES = require('../../../shared/languages.json');
 
 const DEFAULT = LANGUAGES[0];
 

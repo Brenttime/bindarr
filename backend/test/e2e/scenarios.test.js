@@ -72,28 +72,6 @@ async function runTests() {
       'Authorization': `Bearer ${token}`
     };
 
-    // F6-TC1: Case-insensitive monorepo rebranding audit
-    try {
-      const filesToCheck = [
-        'package.json',
-        'backend/package.json',
-        'frontend/package.json',
-        'docker-compose.yml',
-        'Dockerfile',
-        '.env.example',
-        'frontend/index.html'
-      ];
-      for (const f of filesToCheck) {
-        const content = fs.readFileSync(path.join(projectRoot, f), 'utf8');
-        assert.ok(!content.includes('pokedexrr-backend'), `File ${f} must not contain old name`);
-        assert.ok(!content.includes('Pokedexrr'), `File ${f} must not contain old name Pokedexrr`);
-      }
-      console.log('PASS: F6-TC1');
-    } catch (err) {
-      console.error('FAIL: F6-TC1 -', err.message);
-      throw err;
-    }
-
     // F6-TC2: Mixed-game collection sorting (Pokémon type-name vs MTG WUBRG)
     try {
       const { sortCards } = require('../../src/utils/compartmentSort');

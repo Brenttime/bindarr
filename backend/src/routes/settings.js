@@ -1,7 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const db = require('../db');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -48,7 +48,7 @@ async function checkForUpdate() {
 
 // Current version always answers offline; the update check is best-effort and
 // reports its own failure rather than pretending the app is up to date.
-router.get('/version', authenticateToken, async (req, res) => {
+router.get('/version', async (req, res) => {
   const base = { version: APP_VERSION, releases_url: RELEASES_PAGE };
   if (req.query.check !== '1') return res.json(base);
   try {
@@ -61,13 +61,12 @@ router.get('/version', authenticateToken, async (req, res) => {
 
 async function getEffectiveSettings() {
   const row = await db.get(`
-    SELECT public_base_url, allow_member_set_builds, pokemon_provider,
+    SELECT public_base_url, pokemon_provider,
            scan_exclude_tokens, scan_exclude_art_cards, scan_exclude_jumpstart, scan_exclude_promos,
-           scan_exclude_digital
+           scan_exclude_digital, setup_complete
     FROM app_settings WHERE id = 1
   `);
   const public_base_url = (row && row.public_base_url) || process.env.PUBLIC_BASE_URL || '';
-  const allow_member_set_builds = !!(row && row.allow_member_set_builds);
   const pokemon_provider = (row && row.pokemon_provider) || 'pokemontcg';
   const scan_exclude_tokens = !!(row && row.scan_exclude_tokens);
   const scan_exclude_art_cards = !!(row && row.scan_exclude_art_cards);
@@ -76,20 +75,21 @@ async function getEffectiveSettings() {
   // Defaults ON, so a missing row (or a read before the migration lands) must
   // read as excluded rather than as included — see the column comment in db.js.
   const scan_exclude_digital = row ? !!row.scan_exclude_digital : true;
+  const setup_complete = !!(row && row.setup_complete);
   return {
     public_base_url,
-    allow_member_set_builds,
     pokemon_provider,
     scan_exclude_tokens,
     scan_exclude_art_cards,
     scan_exclude_jumpstart,
     scan_exclude_promos,
     scan_exclude_digital,
+    setup_complete,
   };
 }
 
 // Any logged-in user can read effective settings (needed to render share links)
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     res.json(await getEffectiveSettings());
   } catch (error) {
@@ -99,23 +99,41 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // Only admins can override settings
-router.put('/', authenticateToken, requireAdmin, async (req, res) => {
+router.put('/', requireAdmin, async (req, res) => {
   const {
     public_base_url,
-    allow_member_set_builds,
     pokemon_provider,
     scan_exclude_tokens,
     scan_exclude_art_cards,
     scan_exclude_jumpstart,
     scan_exclude_promos,
     scan_exclude_digital,
+    setup_complete,
   } = req.body;
 
-  if (allow_member_set_builds !== undefined) {
-    await db.run(`UPDATE app_settings SET allow_member_set_builds = ? WHERE id = 1`, [allow_member_set_builds ? 1 : 0]);
-  }
   if (pokemon_provider !== undefined) {
-    await db.run(`UPDATE app_settings SET pokemon_provider = ? WHERE id = 1`, [pokemon_provider === 'tcgdex' ? 'tcgdex' : 'pokemontcg']);
+    const want = pokemon_provider === 'tcgdex' ? 'tcgdex' : 'pokemontcg';
+    const before = await db.get(`SELECT pokemon_provider FROM app_settings WHERE id = 1`);
+    await db.run(`UPDATE app_settings SET pokemon_provider = ? WHERE id = 1`, [want]);
+    // Switching provider re-numbers everything downstream of it, and leaving the
+    // old numbering in place is worse than the switch itself: the `sets` table
+    // would list one provider's ids while new cards cache under the other's, and
+    // the TCGplayer product map resolves scans through set ids it took FROM that
+    // table. Both are rebuilt here, in the background — the set walk is one
+    // request plus a detail pass, the map is ~30 seconds.
+    if ((before && before.pokemon_provider ? before.pokemon_provider : 'pokemontcg') !== want) {
+      console.log(`Pokémon provider changed to ${want} — re-syncing sets and the TCGplayer product map.`);
+      (async () => {
+        try {
+          const source = want === 'tcgdex' ? require('../tcgdexApi') : require('../tcgApi');
+          await source.fetchAndCacheSets(true);
+          await require('../utils/compartmentSort').loadSetsCache(db);
+          require('../tcgplayerCatalog').start();
+        } catch (e) {
+          console.error(`Provider switch follow-up failed: ${e.message}`);
+        }
+      })();
+    }
   }
   if (scan_exclude_tokens !== undefined) {
     await db.run(`UPDATE app_settings SET scan_exclude_tokens = ? WHERE id = 1`, [scan_exclude_tokens ? 1 : 0]);
@@ -131,6 +149,10 @@ router.put('/', authenticateToken, requireAdmin, async (req, res) => {
   }
   if (scan_exclude_digital !== undefined) {
     await db.run(`UPDATE app_settings SET scan_exclude_digital = ? WHERE id = 1`, [scan_exclude_digital ? 1 : 0]);
+  }
+
+  if (setup_complete !== undefined) {
+    await db.run(`UPDATE app_settings SET setup_complete = ? WHERE id = 1`, [setup_complete ? 1 : 0]);
   }
 
   if (public_base_url !== undefined) {

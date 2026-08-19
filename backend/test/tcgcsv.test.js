@@ -34,6 +34,11 @@ const GROUPS_EN = [
 const GROUPS_JP = [
   { groupId: 24721, name: 'M6a: MEGA Expansion 30th Celebration', abbreviation: 'm6a', categoryId: 85 },
   { groupId: 23599, name: 'SV2a: Pokemon Card 151', abbreviation: 'SV2a', categoryId: 85 },
+  // Abbreviations that collide with ENGLISH set ids. TCGdex calls the English
+  // Diamond & Pearl base set 'dp1' and Black & White base 'bw1'; the Japanese
+  // catalogue happens to abbreviate unrelated releases the same way.
+  { groupId: 2306, name: 'DP1: Space-Time Creation', abbreviation: 'DP1', categoryId: 85 },
+  { groupId: 2477, name: 'BW1: Black Collection', abbreviation: 'BW1', categoryId: 85 },
 ];
 
 const match = tcgcsv.buildGroupMatcher({ 3: GROUPS_EN, 85: GROUPS_JP });
@@ -83,6 +88,33 @@ assert.strictEqual(match('base1', 'Base Set', 'English').confidence, 1,
 // a wrong match overwrites it.
 assert.strictEqual(match('basep', 'Wizards Black Star Promos', 'English'), null,
   'an unmatched set must return null rather than a near-miss');
+
+// --- 3b. Set IDS collide across catalogues too ------------------------------
+// The suffix pass is scoped to the preferred catalogue, but the cross-catalogue
+// EXACT pass was not — and it matches on abbreviation as well as name. English
+// 'dp1' is an exact key of the Japanese group 'DP1: Space-Time Creation', so
+// Diamond & Pearl scored 0.9 against a Japanese release and would have been both
+// priced and, once the scanner joins on product id, IDENTIFIED off it.
+//
+// Measured on the real cache: six sets matched this way (dp1, bw1, xyp, dpp,
+// Sun & Moon, and a Japanese starter set). Refusing them moved 43 cards from
+// confidently wrong to honestly unmatched, which is the trade this file exists
+// to make.
+assert.strictEqual(match('dp1', 'Diamond & Pearl', 'English'), null,
+  "English 'dp1' must NOT match the Japanese group abbreviated DP1");
+assert.strictEqual(match('bw1', 'Black & White', 'English'), null,
+  "English 'bw1' must NOT match the Japanese group abbreviated BW1");
+
+// The reverse direction is equally wrong: a Japanese set must not fall into the
+// English catalogue on an id collision.
+assert.strictEqual(match('bs', 'なんとか', 'Japanese'), null,
+  'a Japanese set must not match the English Base Set abbreviation');
+
+// The escape hatch still works for the case it was written for: a language
+// TCGplayer files under neither catalogue cleanly. German cards guess English,
+// and when that guess is wrong the cross-catalogue pass is still allowed.
+assert.strictEqual(match('sv2a', 'Pokemon Card 151', 'German').group.groupId, 23599,
+  'a non-English/Japanese language may still cross catalogues on an exact key');
 
 // --- 4. Pocket sets are skipped, not failed ------------------------------
 // Cards that exist only in the phone game. TCGplayer has never sold one, so they

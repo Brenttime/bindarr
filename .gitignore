@@ -72,3 +72,6 @@ backend/data/
 # Build artifacts / secrets (never commit)
 app-release.aab
 asckey.b64
+
+# CollectorVision models and onnxruntime-web wasm (fetched, not authored)
+frontend/public/ort/

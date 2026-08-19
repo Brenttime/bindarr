@@ -16,6 +16,7 @@ const { parseSetList } = require('./utils/setQuery');
 const cardSearchSql = require('./utils/cardSearchSql');
 const { cacheNormalizedCards } = require('./utils/cardCache');
 const languages = require('./utils/languages');
+const { pruneStaleSets } = require('./utils/setCatalogue');
 
 const API_BASE_URL = 'https://api.tcgdex.net/v2';
 
@@ -199,8 +200,12 @@ const numberMatches = (localId, wanted) => {
   return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
 };
 
-async function searchCards(...args) {
-  const cards = await runSearch(...args);
+// Same options object as tcgApi/scryfallApi — see the note there.
+async function searchCards({
+  name = '', number = '', set = '', scope = 'database', userId = null,
+  lang = 'en', page = 1, limit = 60,
+} = {}) {
+  const cards = await runSearch(name, number, set, scope, userId, lang || 'en', page, limit);
   // TCGdex sends no total-count header, so the caller shows what it has. The UI
   // already handles a null total (it falls back to the loaded count).
   return { cards, total: null };
@@ -346,6 +351,38 @@ async function getCardById(id) {
   return cached ? parseCardRow(cached) : null;
 }
 
+// The same card in another language, or null.
+//
+// Scanning matches on ARTWORK, so a French card with no French catalog built is
+// matched against the English one and comes back as the English printing. The
+// mapping is the id itself: a TCGdex id is `tcgdex-<lang>-<setId>-<number>` and
+// the same set id is published across languages (sv03 exists in en, fr, de, ...),
+// so swapping the language segment addresses the same card. See the note on
+// `cardId` above — that shared set id is the whole reason ids carry a language.
+//
+// Two cases deliberately return null rather than guessing:
+//
+//   · a pokemontcg.io id ("basep-50"), which has no language segment. Its set
+//     numbering DISAGREES with TCGdex's for the same set (swsh10.5 vs pgo, sv01
+//     vs sv1 — see the note on pokemonApiFor), so there is no honest translation.
+//   · a set that does not exist in the target language. Japanese, Korean and
+//     Chinese Pokémon have their own set structure (S12, SV2a) rather than
+//     localised editions of the English sets, so the swapped id simply 404s.
+//
+// Both keep the English card the caller already has, which beats showing nothing.
+// The real answer for those is a catalog built in that language — then the match
+// returns localised ids directly and this is never consulted.
+async function getPrintingInLang(id, lang) {
+  const want = languages.toCode(lang);
+  const have = idLanguage(id);
+  if (!have || have === want) return null;
+  const localized = await getCardById(cardId(want, providerId(id))).catch(() => null);
+  // getCardById falls back to a cached row when the fetch fails, so confirm the
+  // row we got is really in the language asked for before preferring it.
+  if (!localized || languages.toCode(localized.language) !== want) return null;
+  return localized;
+}
+
 // Every set TCGdex publishes for a language, in the shape /api/sets returns. Not
 // written to the `sets` table on purpose: the same set id exists in several
 // languages with different names and card counts, and that table is keyed by id
@@ -426,6 +463,66 @@ async function listSeries(lang) {
   return bySet;
 }
 
+// Fill the `sets` table from TCGdex, for installs where TCGdex is the configured
+// Pokémon provider.
+//
+// The set catalogue used to come from pokemontcg.io unconditionally while the
+// CARDS followed the provider setting — so an install switched to TCGdex cached
+// cards under TCGdex ids (sv01, swsh10.5, me01) and then browsed a set list
+// numbered by pokemontcg.io (sv1, pgo, me1). That is the exact mismatch
+// utils/pokemonProvider was written to prevent, one layer up.
+//
+// Two passes on purpose. The brief list is one request and is enough to browse
+// and to scope a scan, so it is written first and immediately. Release dates,
+// series and logos only exist on the per-set endpoint, and chronological binder
+// sorting needs the dates — so those are filled in afterwards, four at a time,
+// and a failure there leaves a usable row rather than no row.
+async function fetchAndCacheSets(force = false) {
+  try {
+    const existing = await db.get(`SELECT COUNT(*) n FROM sets WHERE game = 'pokemon'`);
+    // Rows numbered by the OTHER provider must not count as "already populated",
+    // so the caller forces a re-sync when the setting changes.
+    if (!force && existing && existing.n > 0) {
+      console.log(`Pokemon sets already populated (${existing.n} sets). Skipping TCGdex fetch.`);
+      return;
+    }
+    console.log('Fetching sets from TCGdex...');
+    const sets = await listSets('en');
+    if (!sets.length) throw new Error('TCGdex returned no sets');
+    for (const s of sets) {
+      await db.run(
+        `INSERT OR REPLACE INTO sets (id, name, series, printed_total, total, release_date, ptcgo_code, symbol_url, logo_url, game)
+         VALUES (?, ?, '', ?, ?, '', '', '', '', 'pokemon')`,
+        [s.id, s.name, s.printed_total || 0, s.total || 0]
+      );
+    }
+    console.log(`Cached ${sets.length} Pokemon sets from TCGdex. Filling in dates and series...`);
+    await pruneStaleSets(sets.map(s => s.id), 'TCGdex');
+
+    const series = await listSeries('en').catch(() => new Map());
+    let dated = 0;
+    await mapLimited(sets, async (s) => {
+      const { data } = await client.get(`/en/sets/${encodeURIComponent(s.id)}`);
+      await db.run(
+        `UPDATE sets SET release_date = ?, series = ?, symbol_url = ?, logo_url = ? WHERE id = ? AND game = 'pokemon'`,
+        // Slashes, not TCGdex's hyphens: compartmentSort orders by this column as a
+        // STRING (`ORDER BY release_date ASC`), and pokemontcg.io wrote YYYY/MM/DD.
+        // Mixing the two formats sorts '-' before '/' and puts 2026 ahead of 2023 —
+        // which is exactly what a chronological binder must not do on an install
+        // that holds rows from both providers.
+        [String(data.releaseDate || '').replace(/-/g, '/'),
+          (series.get(s.id) || {}).name || (data.serie && data.serie.name) || '',
+          data.symbol || '', data.logo || '', s.id]
+      );
+      dated++;
+      return true;
+    });
+    console.log(`TCGdex sets: ${dated} of ${sets.length} have release dates and series.`);
+  } catch (error) {
+    console.error('Error fetching TCGdex sets:', error.message);
+  }
+}
+
 // Price sweep for owned/decked non-English Pokémon cards. tcgApi's sweep skips
 // these (their ids 404 on pokemontcg.io), so this is their only refresh path.
 // `force` bypasses the once-a-day gate (used by the scheduled daily run, which is
@@ -462,7 +559,7 @@ async function updateCollectionPrices(force = false) {
 
 // `client` is exported for tests (stub the axios adapter), like tcgApi.tcgClient.
 module.exports = {
-  searchCards, getCardById, hydrateCard, listSets, cacheCards, normalizeCard,
+  searchCards, getCardById, getPrintingInLang, hydrateCard, listSets, fetchAndCacheSets, cacheCards, normalizeCard,
   updateCollectionPrices, providerId, idLanguage, client,
   // setIndex.listAllSets filters digital sets out of a build with these, and
   // globalIndex groups the coverage breakdown by series.

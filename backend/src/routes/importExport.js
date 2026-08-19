@@ -149,7 +149,7 @@ router.post('/import', async (req, res) => {
 
     let importedCount = 0;
 
-    await db.withTransaction(async (tx) => {
+    await db.withTransaction(async () => {
       for (const item of rawItems) {
         let cardId = item.card_id || item.id;
         if (!cardId && item.set_code && item.collector_number) {
@@ -161,9 +161,9 @@ router.post('/import', async (req, res) => {
 
         if (!cardId) continue;
 
-        let cached = await tx.get(`SELECT id FROM card_cache WHERE id = ?`, [cardId]);
+        let cached = await db.get(`SELECT id FROM card_cache WHERE id = ?`, [cardId]);
         if (!cached) {
-          await tx.run(
+          await db.run(
             `INSERT OR IGNORE INTO card_cache 
              (id, name, supertype, subtypes, types, rarity, set_id, set_name, number, image_url, price_trend)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -183,7 +183,7 @@ router.post('/import', async (req, res) => {
           );
         }
 
-        await tx.run(
+        await db.run(
           `INSERT INTO collection 
            (card_id, user_id, quantity, condition, printing, language, purchase_price, game, added_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,

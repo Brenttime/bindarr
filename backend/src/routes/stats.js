@@ -1,10 +1,8 @@
 const express = require('express');
 const db = require('../db');
-const { authenticateToken } = require('../middleware/auth');
 const { resolveCardPrice, isVintageSet, parseSqliteUtc } = require('../utils/priceHelpers');
 
 const router = express.Router();
-router.use(authenticateToken);
 
 // 7. Get Collection Statistics & Analytics
 router.get('/stats', async (req, res) => {
@@ -161,41 +159,48 @@ router.get('/stats', async (req, res) => {
       price_trend: resolveCardPrice(row)
     }));
 
-    // Compute progress for top 4 sets in database (estimate set total)
-    const setSizes = {
-      'base1': 102,  // Base Set
-      'base2': 64,   // Jungle
-      'base3': 62,   // Fossil
-      'base4': 130,  // Base Set 2
-      'neo1': 111,   // Neo Genesis
-      'cel25': 25,   // Celebrations
-      'swsh1': 202,  // Sword & Shield Base
-      'swsh11': 196, // Lost Origin
-      'swsh12': 98,  // Silver Tempest
-      'sv1': 198,    // Scarlet & Violet Base
-      'sv2': 193,    // Paldea Evolved
-      'sv3': 197,    // Obsidian Flames
-      'sv3pt5': 165, // 151
-    };
-
+    // Set completion.
+    //
+    // Sizes come from the `sets` table, which every provider sync fills in — not
+    // from a hand-kept map. That map listed thirteen Pokémon ids and fell back to a
+    // flat 150 for everything else, so every Magic set and every Pokémon set
+    // released after 151 was measured against a number nobody chose. printed_total
+    // is the right column (the number printed on the card, which is what a player
+    // counts to); `total` includes secret rares and is the fallback when a provider
+    // gives no printed count.
+    //
+    // One query for the whole thing, rather than one per set inside a loop: this
+    // ran a COUNT(DISTINCT) per set the user owns cards from, which on a broad
+    // collection is dozens of round trips to answer a single panel.
+    const setIds = Object.keys(setCounts);
     const setProgress = [];
-    for (const setId in setCounts) {
-      const userUniqueInSet = await db.get(`
-        SELECT COUNT(DISTINCT card_id) as count
+    if (setIds.length) {
+      const holes = setIds.map(() => '?').join(',');
+      const rows = await db.all(`
+        SELECT cc.set_id,
+               COUNT(DISTINCT c.card_id) AS owned,
+               (SELECT COALESCE(NULLIF(s.printed_total, 0), NULLIF(s.total, 0))
+                  FROM sets s WHERE s.id = cc.set_id) AS size
         FROM collection c
         JOIN card_cache cc ON c.card_id = cc.id
-        WHERE cc.set_id = ? AND c.user_id = ?
-      `, [setId, req.user.id]);
+        WHERE c.user_id = ? AND cc.set_id IN (${holes})
+        GROUP BY cc.set_id
+      `, [req.user.id, ...setIds]);
 
-      const size = setSizes[setId] || 150; // default estimate if set not in database
-      const count = userUniqueInSet.count;
-      setProgress.push({
-        setId,
-        setName: setCounts[setId].name,
-        ownedUnique: count,
-        totalCards: size,
-        percent: Math.min(Math.round((count / size) * 100), 100)
-      });
+      for (const row of rows) {
+        // A set the sync has not reached yet has no size, so it has no completion
+        // to report. Skipped rather than given a placeholder denominator: "3 / 150"
+        // for a set that actually holds 64 cards is a wrong answer presented as a
+        // measurement, which is what the old flat-150 fallback did.
+        if (!row.size) continue;
+        setProgress.push({
+          setId: row.set_id,
+          setName: setCounts[row.set_id].name,
+          ownedUnique: row.owned,
+          totalCards: row.size,
+          percent: Math.min(Math.round((row.owned / row.size) * 100), 100)
+        });
+      }
     }
 
     // Sort set progress by completion percentage descending

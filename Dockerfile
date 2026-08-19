@@ -46,21 +46,28 @@ ENV HTTPS_PORT=3443
 # Upgrades from an image that used pokemon_cards.db keep their data: the app
 # renames the old file (and its WAL sidecars) into place on first start.
 ENV DB_PATH=/app/database/bindarr.db
-# Set indexes live on the persisted volume too, else they rebuild every redeploy
-ENV SETS_DIR=/app/database/sets
-# Global scan indexes (embed/orb bins) also live on the persisted volume, both so
-# a rebuild has a writable target under the non-root `node` user and so the
-# multi-GB output survives redeploys instead of being rebuilt each time.
-ENV INDEX_DATA_DIR=/app/database/index
+# Scan models and catalogs live on the persisted volume, both so a build has a
+# writable target under the non-root `node` user and so an image update does not
+# discard them. The two ONNX models are NOT in the image — they are AGPL-3.0 while
+# Bindarr is MIT, so the operator fetches them into this directory deliberately:
+#   docker exec <container> node scripts/fetch-models.mjs
+ENV CV_MODEL_DIR=/app/database/models
 
-# Create database volume mount target directory (+ the global-index subdir)
-RUN mkdir -p /app/database/index
+# Create database volume mount target directory. Nothing else: a subdirectory
+# created here as root inside a volume the entrypoint has already handed over to
+# `node` is one the server can never write into. The server creates its own at
+# startup, as its own user.
+RUN mkdir -p /app/database
 
 # Copy backend configuration
 COPY backend/package*.json ./backend/
 WORKDIR /app/backend
 # Install production backend dependencies (prebuilt native binaries).
-RUN npm ci --omit=dev
+# ONNXRUNTIME_NODE_INSTALL_CUDA=skip: onnxruntime-node's postinstall otherwise
+# fetches the CUDA/DirectML native packages from api.nuget.org, which fails on any
+# build host without access to it. Inference here is CPU-only (two small models),
+# and the CPU binaries ship inside the npm package itself.
+RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --omit=dev
 # Recompile ONLY sqlite3 from source: its node-pre-gyp prebuilt is linked
 # against a newer glibc (GLIBC_2.38) than this Debian base provides, so the
 # prebuilt aborts at startup with ERR_DLOPEN_FAILED. Building here links against

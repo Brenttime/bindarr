@@ -76,13 +76,12 @@ Start it:
 docker compose up -d
 ```
 
-Open `http://localhost:3001` and sign in as `admin`. The password was printed once to the logs:
+Open `http://localhost:3001`. The first visit asks you to set a password for the
+`admin` account and creates it right there — no password is ever written to the
+logs. (If you set `DEFAULT_ADMIN_PASSWORD` instead, that same `admin` account is
+created at startup and the first visit is a normal login screen.)
 
-```bash
-docker compose logs bindarr | grep -i password
-```
-
-Change it in Settings after logging in. Everything (database, backups, scan indexes, TLS cert) lives in the `bindarr-data` volume.
+You can change the password later in Settings. Everything (database, backups, scan models and catalogs, TLS cert) lives in the `bindarr-data` volume.
 
 Update with `docker compose pull && docker compose up -d`. Your volume is untouched.
 
@@ -120,13 +119,14 @@ All optional.
 | `HTTPS_PORT` | `3443` in the image | HTTPS port. Set to `""` for HTTP only. |
 | `SSL_CERT_PATH` / `SSL_KEY_PATH` | — | Your own certificate instead of the generated self-signed one. |
 | `DB_PATH` | `/app/database/bindarr.db` | SQLite file location. |
-| `DEFAULT_ADMIN_PASSWORD` | — | Pin the first admin password instead of the generated one. Only read when the database is created. |
+| `DEFAULT_ADMIN_PASSWORD` | — | Create the `admin` account with this password at startup instead of letting the first browser visit create the owner account. Only applied while the `users` table is empty — changing it later does nothing to an existing account. |
 | `POKEMON_TCG_API_KEY` | — | Free key from [dev.pokemontcg.io](https://dev.pokemontcg.io/). Raises the Pokémon rate limit from 1,000 to 20,000 requests/day. |
 | `PUBLIC_BASE_URL` | — | External URL behind a proxy, e.g. `https://cards.example.com`. Used for share links and auto-allowed as a CORS origin, so proxied logins work with just this. Also editable in the Admin panel. |
 | `CORS_ORIGIN` | — | Extra allowed origins, comma-separated. Localhost and private-LAN origins are always allowed. |
 | `ALLOW_REGISTRATION` | unset | `true` allows self-registration. Unset means invite-only: admins create accounts. |
 | `TRUST_PROXY` | — | Number of proxy hops (usually `1`) when a reverse proxy terminates TLS, so rate limiting sees the real client IP. |
-| `SCAN_WORKERS` | `min(4, cores-1)` | Worker threads for scan verification. Each holds its own OpenCV instance (~128 MB), so lower it on small hosts; `0` runs inline. |
+| `CV_MODEL_DIR` | `/app/database/models` in the image | Where the scan models and catalogs live. Must be on persistent storage, or an image update discards every catalog you built. |
+| `CV_SCAN_GAP` | `0.10` | How far a match must stand above its runner-ups before it counts as an answer rather than "this card is not in the catalog". Lower accepts more guesses. |
 | `BACKUP_INTERVAL_HOURS` | `24` | Automatic database snapshot interval. `0` disables. |
 | `BACKUP_KEEP_LAST` | `10` | How many snapshots to retain. |
 
@@ -142,7 +142,7 @@ If you'd rather not run Docker, every release ships a self-contained server. Dow
 | Linux | `Bindarr-Server-linux-x64.tar.gz` | `tar xzf`, then `chmod +x bindarr-server && ./bindarr-server` |
 | macOS (Apple Silicon) | `Bindarr-Server-macos-arm64.tar.gz` | `tar xzf`, then `chmod +x bindarr-server && ./bindarr-server` |
 
-The admin password is printed once in the console window. The SQLite file is created next to the binary. To set variables from the table above, create `app/backend/.env` before the first run — HTTPS is off by default here, so add `HTTPS_PORT=3443` if you want to scan from a phone.
+The first visit in a browser asks you to create the owner account. The SQLite file is created next to the binary. To set variables from the table above, create `app/backend/.env` before the first run — HTTPS is off by default here, so add `HTTPS_PORT=3443` if you want to scan from a phone.
 
 ### Mobile apps
 
@@ -152,15 +152,41 @@ The admin password is printed once in the console window. The SQLite file is cre
 
 ## Card scanning
 
-Scanning is image-only — no OCR, no typing. It works in two modes:
+Scanning is image-only — no OCR, no typing. Two things have to be in place, and
+neither ships inside the app:
 
-**With a set code (Magic, recommended).** Enter the set code of the box you're scanning. The first scan of a new set builds that set's index from Scryfall in about a minute; every scan after that matches within just that set. Nothing to prepare in advance.
+**1. The models.** Two small neural networks (~9.6 MB together) find the card in
+the frame and turn its artwork into a fingerprint. They are AGPL-3.0 while Bindarr
+is MIT, so they are fetched deliberately rather than bundled:
 
-**Without a set code.** Matching against every card in a game needs whole-game indexes, which are not shipped — they're several GB. Build them from **Admin → Global Scan Indexes**. Expect hours of downloads and CPU, and roughly 2.5 GB for English Magic or 0.5 GB for English Pokémon, plus the per-set indexes underneath. Start with **Preflight** to check coverage in seconds, then **Rebuild**. Stopping mid-run costs one set, not the run; resume picks up at the set boundary. Indexes are per-language, so build only the languages you collect.
+```bash
+docker exec bindarr node scripts/fetch-models.mjs
+```
 
-Game auto-detection (scanning a Pokémon card while in Magic mode) also needs those whole-game indexes.
+(Running from source or the prebuilt binary: `node scripts/fetch-models.mjs` in
+`backend/`.) Restart afterwards. Until they are there, the server says so at
+startup and scanning returns a clear error instead of guesses.
 
-The pipeline, accuracy numbers, and the eval harness are documented in [PROJECT.md](PROJECT.md#image-identification-pipeline).
+**2. A catalog.** The fingerprint has to be compared against something. Build one
+per game and language from **Admin → Catalogs**: it downloads that game's card
+list and fingerprints every card's artwork — hours for a full English game, and
+about 5 MB of output per 10,000 cards. Progress is live, stopping keeps what it
+has, and resuming reuses it. `--catalogs` on the fetch command above grabs
+prebuilt English Magic and Pokémon catalogs instead, which answer immediately but
+only resolve cards your install has already seen.
+
+Scanning is then the same whether or not you tell it which set you are feeding.
+Naming the set just restricts the comparison to that set's cards, which is faster
+and more accurate, and needs no preparation.
+
+Coverage is only as good as the card data available for a language: the panel shows
+what a catalog holds against what the provider claims exists, e.g. *3,297 of
+16,192* for Japanese Pokémon, where the upstream data simply stops. A card outside
+the catalog is reported as missing rather than guessed at, with the nearest matches
+offered underneath.
+
+The pipeline, its accuracy numbers, and the measurement harness are documented in
+[PROJECT.md](PROJECT.md#image-identification-pipeline).
 
 ---
 
@@ -211,7 +237,7 @@ docker run --rm -v bindarr-data:/data -v "$PWD":/backup alpine cp /data/bindarr.
 
 Restore by dropping the file back into the volume with the container stopped. Individual users can also export and re-import their own collection as CSV or JSON from the app.
 
-**Lost the admin password?** It's printed only on the run that creates the database. Set `DEFAULT_ADMIN_PASSWORD` and recreate the database, or delete the database file to start fresh. There's no self-service reset.
+**Lost the admin password?** There's no self-service reset, and `DEFAULT_ADMIN_PASSWORD` will not change an existing account — it is only used when no accounts exist. Delete the database file to start fresh and create the owner account again.
 
 > **Upgrading from before v1.5.0:** the database file was renamed `pokemon_cards.db` → `bindarr.db`. First start renames it automatically, sidecars included. Old `pokemon_cards.*.bak` backups still restore.
 

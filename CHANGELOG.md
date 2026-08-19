@@ -4,6 +4,171 @@ All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
 [GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
 
+## [Unreleased]
+
+**Scanning is a different pipeline.** The perceptual-hash + bag-of-visual-words
+recall stage and the ORB verify stage are gone, replaced by two small ONNX models:
+`cornelius` finds the card's corners, `milo` embeds the dewarped card as a 128-d
+unit vector, and a brute-force cosine sweep over a prebuilt catalog names it. On
+the same 100-card noisy MTG sample the old stack scored 78.0% exact printing /
+88.0% right card in 1187 ms; this scores 76.0% / 90.0% in 310 ms — and it replaces
+~2.6 GB of per-set indexes and whole-game rollups with two model files and one
+catalog per game and language, at roughly 5 MB per 10k cards. There is no index
+build in the scan path at all, so scanning a set needs no "preparing set" wait.
+
+Both models are AGPL-3.0 ([milo](https://huggingface.co/HanClinto/milo),
+[cornelius](https://huggingface.co/HanClinto/cornelius)) while Bindarr is MIT, so
+shipping them enabled is a licensing decision and not only a technical one.
+
+### Added
+- **TCGdex is the Pokémon provider on a new install, and choosing is now possible.**
+  `app_settings.pokemon_provider` has existed since 1.7.2 with no way to set it, and
+  only half of the app read it — the card lookups followed the setting while the set
+  catalogue always came from pokemontcg.io, so an install switched by hand browsed a
+  set list numbered by a provider none of its cards came from. The setting now drives
+  the set sync too (218 English sets with release dates and series, against
+  pokemontcg.io's 174), and there is a selector in Admin → Instance Settings that
+  re-syncs the set list and rebuilds the TCGplayer product map behind it. Measured
+  per card lookup: 57-206 ms via TCGdex against 971-1963 ms via pokemontcg.io, which
+  also answers 5xx often enough to need a retry policy. TCGdex needs no API key and
+  is the only one of the two that carries non-English cards.
+
+  **Upgrades keep pokemontcg.io.** The two providers number the same sets
+  differently (sv1/sv01, pgo/swsh10.5, me1/me01), and every cached card, scan catalog
+  and collection row was built against one of those numberings — so only a database
+  with no Pokémon sets and no Pokémon cards starts on TCGdex. Switching an existing
+  install is an explicit admin action, and the set rows its cards still reference are
+  kept even when the new provider does not list them.
+- **First run creates its own owner account.** A new install no longer generates an
+  admin password and prints it to a log nobody reads (and few people then change).
+  The users table starts empty, the login screen turns into a set-the-owner-password
+  form, and `POST /api/auth/bootstrap` creates the account with admin rights, refusing
+  the moment any account exists. `DEFAULT_ADMIN_PASSWORD` still seeds it up front for
+  scripted deploys. Either way the account is named `admin` — the name is fixed, not
+  the owner's to pick, so it is the same one whichever way the install started and the
+  one the orphan-row adoption looks up. That adoption now runs from the bootstrap route
+  too, so a database carrying pre-multi-user rows (`user_id IS NULL`) does not show an
+  empty collection to an owner account created through the UI. Existing installs are
+  untouched: they already have accounts.
+- **The setup wizard covers the whole app, not just scanning.** Six steps: language,
+  which games you collect, the scanner's models and catalog, the optional provider
+  keys, your binders and boxes, then a one-page tour of what each tab is for. The
+  language comes first and is translated like the rest of the app, so the steps that
+  explain a decision arrive in the language the admin reads; it is the same setting as
+  Settings → Language.
+  Completion is stored on the server (`app_settings.setup_complete`) rather than in
+  localStorage, so closing it halfway resumes at the next login on any device.
+  Every install is offered it once, upgrades included — the wizard is where
+  catalogs, games and the provider keys are explained, and an install that predates
+  it has never seen that tour. "Skip setup" dismisses it permanently.
+- **Catalogs replace scan indexes** (Admin → Catalogs). A catalog is one game and
+  language, and building it does two things: walk every set the provider lists and
+  pull its cards into `card_cache`, then embed each one's artwork. Those were never
+  one job before, and the first half was the half nobody ran — card caching used to
+  happen only as a side effect of indexing, so Pokémon held 7,118 of 20,460 English
+  cards (35%), with 104 of 174 sets holding just the handful their owner happened to
+  have. Both phases resume, a stop still writes the partial catalog, and a set with
+  no data in the chosen language counts as a gap rather than a failure.
+- **Coverage is shown with a denominator**, because "built, 3,297 cards" reads as
+  complete and is not. English counts against the set catalogue; other languages
+  count against the provider's own set list for that language, so a Japanese
+  Pokémon catalog reads *3,297 of 16,192*.
+- **Corner detection runs in the browser**, on a worker thread, using the same
+  `cornelius` model the server dewarps with — so the outline on screen is by
+  construction the crop that gets matched, and the client uploads one rectified
+  448×448 square instead of a JPEG per preview frame (~2.7 MB per minute of pointing
+  the camera at a card).
+- **`scripts/measure-scan-floor.js`** — measures the scan gate instead of guessing
+  it. For each sampled card it searches the catalog twice, once normally and once
+  with the card's own row masked out (which is exactly what a card missing from the
+  catalog looks like), under two degradation regimes, and prints what every
+  candidate threshold would cost in wrong answers accepted and right answers
+  rejected.
+
+### Fixed
+- **Korean Pokémon scans found nothing at all.** The same photo scanned as English
+  named the card immediately. A candidate from the ready-made Pokémon catalog is a
+  TCGplayer product id, so it is resolved by set and collector number — and that set
+  id is always an English one, while Korean, Japanese and Chinese Pokémon sets are
+  their own releases (SM1M, S12, SV2a) rather than localised editions of the English
+  ones. Asking TCGdex/ko about `base6` therefore returned nothing for every
+  candidate, and a scan that had identified the card correctly reported "no confident
+  match". The lookup now falls back to English when the scanned language has no such
+  set, in the route and in the client's own retry, and the English card it hands back
+  says so: the picker, the auto-add window and the add drawer all print a note that
+  no card data exists in that language and this is the English printing standing in
+  for it. The copy is still filed in the language being scanned, which it already
+  was.
+- **The scanned card now reads as the card.** Its name and collector number were the
+  smallest text on screen in both the match picker and the add drawer, under a
+  picture and a title that say nothing about which printing this is; they are now the
+  largest, with the set name demoted beneath them. On a phone the add drawer was
+  tuned to fit inside 80vh by shrinking everything — 65px of card art, 0.7rem labels,
+  40px controls — which left a cramped strip at the bottom of a mostly empty screen;
+  it now takes 92dvh (`dvh`, so the address bar cannot cut it off), with 104px of art
+  and 44px touch targets. **"Different printing" is gone** from the drawer — it asked
+  the provider for every printing of the name, which is a search, not a scan
+  correction. "Other matches" stays: it is the escape for the scanner picking the
+  wrong card.
+- **Japanese Pokémon scans returned the wrong card.** Three causes, all of which
+  had to go:
+  - **A cosine sweep never returns nothing.** TCGdex serves card records for 28 of
+    the 177 Japanese Pokémon sets it lists, so a Japanese catalog holds ~3.3k of
+    ~16k cards — and every card outside those 28 sets was answered with the nearest
+    of the wrong 3.3k, sometimes at a similarity high enough to auto-add. A scan in
+    a non-English language now also sweeps the English catalog, because the artwork
+    is identical across languages and English has a row for nearly every card the
+    other catalog is missing; the answer is then re-expressed in the scanned
+    language by set and collector number. The right card in the wrong language beats
+    a wrong card in the right one. Verified on Japanese cards matched against the
+    English catalog alone: スズナ → Candice, モンジャラ → Tangela, ダブラン → Duosion.
+  - **A card the catalog has never seen now says so.** The response carries
+    `notInCatalog` when the winner does not stand clear of ranks 2–11 of its own
+    catalog, the client refuses to auto-add on it, and the candidate list is still
+    shown — a bad photo and a missing card look identical from the server, and one
+    of the candidates is right often enough to be worth the glance. The gate is that
+    gap and not an absolute cosine because absolute cosine tracks photo quality:
+    over 60 cards per catalog, a 0.65 cosine floor let 31–41 of 60 strangers through
+    on clean input but 15–19 on degraded input, while a 0.10 gap held at 11–12 in
+    both, rejecting no correct answer in any run.
+  - **Non-English artwork was embedded at thumbnail resolution.** TCGdex's cached
+    image url is `/low.png` (245×337, deliberately small so card grids stay cheap),
+    so every TCGdex row was embedded from an upscaled blur while the camera handed
+    over a sharp 448 crop. Builds now embed `/high.png` (600×825) without changing
+    what the UI loads, and resume compares the url actually *embedded*, so raising
+    the resolution rebuilds the old vectors instead of silently keeping them.
+    Rebuild a Pokémon catalog to pick this up.
+- **A set-scoped scan no longer widens itself.** Set ids do not survive a
+  language — `SV4a` names no row in the English catalog — so a catalog with nothing
+  in scope is dropped from the sweep rather than searched unscoped, which would have
+  reintroduced the very wrong-card answer the scope exists to prevent. The filter is
+  only ignored when *no* catalog has rows in scope, since "no match" for a card
+  that is plainly there is the worse failure.
+
+- **Scanning could not work in Docker at all.** The image never carried the two
+  ONNX models and nothing fetched them, while `CV_MODEL_DIR` defaulted to a path
+  inside the image — so a container had no models, and any catalog an admin did
+  manage to build was discarded by the next image update. The image now sets
+  `CV_MODEL_DIR=/app/database/models` on the persisted volume, `scripts/fetch-models.mjs`
+  provisions the models (and optionally the published fallback catalogs) with their
+  sizes verified, and startup names that command when they are missing instead of
+  leaving the first scan to fail. `SETS_DIR` and `INDEX_DATA_DIR` are gone with the
+  indexes they pointed at.
+- **Removed the "let members build individual set indexes" setting.** There are no
+  per-set indexes to build; catalog builds are admin-only because they walk an
+  entire provider. The toggle, its API field and its strings are gone. The column
+  stays unread — dropping it would mean a SQLite table rebuild for nothing.
+
+### Changed
+- **`opencv-wasm` is gone** from the scan path; the runtime is `onnxruntime-node`
+  on the server and `onnxruntime-web` in a worker on the client. Name the execution
+  provider explicitly in the browser: WebGPU measured 1075 ms per frame for
+  `cornelius` against 80 ms on wasm.
+- **The Scan Detail slider's recall knobs are inert.** Every scan is one 448px
+  embed and one cosine sweep per catalog, so `recallK`/`orb` tune a pipeline that no
+  longer exists; upload resolution and the auto-add confirm window still do what
+  they say. The request keeps sending both fields so an older backend behaves.
+
 ## [1.7.2] - 2026-08-17
 
 **This release is what an install carried over from an older version needs to

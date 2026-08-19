@@ -5,10 +5,12 @@ import { translatedName, setCode, isEnglish } from '../utils/languages';
 import { formatPrice } from '../utils/formatPrice';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
 import { tcgplayerUrl, cardmarketUrl, searchUrl, priceSource, noLinkReason } from '../utils/marketplaceLinks';
+import CardImage from './CardImage';
 import CardImageZoom from './CardImageZoom';
 import CardEntryFields from './CardEntryFields';
 import PriceHistoryChart from './PriceHistoryChart';
 import AddToDeckSelect from './AddToDeckSelect';
+import CardArtEditor from './CardArtEditor';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useT } from '../utils/i18n';
 
@@ -316,9 +318,13 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
             title={t('inspector.zoomHint')}
             style={{ position: 'relative', width: '100%', maxWidth: '300px', cursor: 'pointer' }}
           >
-            <img
-              src={card.image_url}
-              alt={card.name}
+            {/* CardImage, not a bare <img>: this was the last call site still
+                reading card.image_url directly, so contributed art uploaded
+                through the editor below was never shown in the very view that
+                uploads it, and a card with no provider art rendered as a broken
+                image icon here alone. */}
+            <CardImage
+              card={card}
               style={{
                 width: '100%',
                 aspectRatio: 0.718,
@@ -349,6 +355,12 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               <span>{t('inspector.fullScreen')}</span>
             </div>
           </div>
+          <CardArtEditor
+            card={card}
+            hasProviderArt={!!card.image_url}
+            showToast={showToast}
+            onChanged={onUpdate}
+          />
         </div>
 
         {/* Right side: Information / Edit */}

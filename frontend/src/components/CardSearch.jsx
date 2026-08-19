@@ -896,7 +896,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       {/* Empty State */}
       {!loading && searching && !searchError && cards.length === 0 && (
         <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '3rem 1.5rem' }}>
-          <p>No cards matched your search queries. Try again with broader terms (e.g. searching &quot;Charizard&quot; without a card number).</p>
+          <p>{t('search.noQueryMatches')}</p>
         </div>
       )}
 
@@ -943,9 +943,9 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                 </div>
               </div>
               <div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>TCG MARKET PRICE ({printing})</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('search.tcgMarketPrice', { printing })}</div>
                 <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--accent-yellow)' }}>${formatPrice(resolveCardPrice(selectedCard, printing))}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Rarity: <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{selectedCard.rarity}</span></div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{t('search.rarityLabel')} <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{selectedCard.rarity}</span></div>
               </div>
             </div>
 

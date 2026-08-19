@@ -3,14 +3,14 @@ const db = require('../db');
 const tcgApi = require('../tcgApi');
 const tcgdexApi = require('../tcgdexApi');
 const scryfallApi = require('../scryfallApi');
-const scanMatch = require('../scanMatch');
-const setIndex = require('../setIndex');
+const cvScan = require('../cvScan');
+const tcgplayerCatalog = require('../tcgplayerCatalog');
 const languages = require('../utils/languages');
 const pokemonProvider = require('../utils/pokemonProvider');
 const psaApi = require('../psaApi');
 const gradedPrices = require('../gradedPrices');
 const cardApi = require('../utils/cardApi');
-const { authenticateToken, searchLimiter } = require('../middleware/auth');
+const { searchLimiter } = require('../middleware/auth');
 const { resolveCardPrice, parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { parseSetList } = require('../utils/setQuery');
 const { compartmentLabel, isBinderType, rebalanceCompartmentByScheme } = require('../utils/compartmentSort');
@@ -19,8 +19,6 @@ const { validateDeckAddition } = require('../utils/deckRules');
 const { splitPrice } = require('../utils/splitPrice');
 
 const router = express.Router();
-
-router.use(authenticateToken);
 
 // Stamp each result with how many copies the user already owns, so browsing a
 // set shows what is already in the binder instead of inviting duplicate adds.
@@ -56,6 +54,14 @@ async function attachOwnedQty(cards, userId) {
 async function pokemonApiFor(lang) {
   return (await pokemonProvider.usesTcgdex(lang)) ? tcgdexApi : tcgApi;
 }
+
+// Collector numbers as both providers can agree on. TCGdex zero-pads ('013')
+// where pokemontcg.io and TCGplayer do not ('13'), and letters have to survive
+// ('TG12', 'SWSH284') or every promo in a set collides into one key.
+const sameNumber = (a, b) => {
+  const norm = (n) => String(n == null ? '' : n).trim().toLowerCase().replace(/^0+(?=\d)/, '');
+  return !!norm(a) && norm(a) === norm(b);
+};
 router.get('/search', searchLimiter, async (req, res) => {
   const { name, number, set, scope = 'database', game = 'pokemon', lang, prints } = req.query;
   // 1-based page over `limit`-sized pages. 250 is the pokemontcg.io ceiling and
@@ -63,17 +69,13 @@ router.get('/search', searchLimiter, async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(250, Math.max(1, parseInt(req.query.limit, 10) || 60));
   try {
-    let cards, total;
-    if (game === 'mtg') {
-      ({ cards, total } = await scryfallApi.searchCards(name, number, set, scope, req.user.id, lang, prints === '1', page, limit));
-    } else {
-      const provider = await pokemonApiFor(lang);
-      // The two Pokémon providers do not share a signature: pokemontcg.io takes
-      // the user's API key, TCGdex takes the language it is searching in.
-      ({ cards, total } = provider === tcgdexApi
-        ? await provider.searchCards(name, number, set, scope, req.user.id, lang || 'en', page, limit)
-        : await provider.searchCards(name, number, set, req.user.tcg_api_key, scope, req.user.id, page, limit));
-    }
+    // Every provider takes the same options object and ignores what does not
+    // apply to it, so there is one call here rather than a branch per provider.
+    const api = game === 'mtg' ? scryfallApi : await pokemonApiFor(lang);
+    const { cards, total } = await api.searchCards({
+      name, number, set, scope, userId: req.user.id, lang,
+      apiKey: req.user.tcg_api_key, allPrints: prints === '1', page, limit,
+    });
     await attachOwnedQty(cards, req.user.id);
     // Header, not the body: every existing caller expects a bare array here.
     if (total != null) {
@@ -127,14 +129,11 @@ router.get('/collection/cert/:certNumber', searchLimiter, async (req, res) => {
         // discriminator between printings of the same name, and the search treats
         // it as optional so a label without one still returns something.
         const number = cert.card_number || '';
-        if (game === 'mtg') {
-          ({ cards: candidates } = await scryfallApi.searchCards(name, number, '', 'database', req.user.id, null, true, 1, 24));
-        } else {
-          const provider = await pokemonApiFor(null);
-          ({ cards: candidates } = provider === tcgdexApi
-            ? await provider.searchCards(name, number, '', 'database', req.user.id, 'en', 1, 24)
-            : await provider.searchCards(name, number, '', req.user.tcg_api_key, 'database', req.user.id, 1, 24));
-        }
+        const api = game === 'mtg' ? scryfallApi : await pokemonApiFor(null);
+        ({ cards: candidates } = await api.searchCards({
+          name, number, userId: req.user.id, apiKey: req.user.tcg_api_key,
+          allPrints: true, limit: 24,
+        }));
         await attachOwnedQty(candidates, req.user.id);
       }
     }
@@ -149,141 +148,268 @@ router.get('/collection/cert/:certNumber', searchLimiter, async (req, res) => {
 });
 
 // 1b. Identify a scanned card image by visual-feature match.
+// Which sets the scanner can actually answer for, and how completely.
+//
+// Not admin-only: this is what the set filter needs to stop offering sets that
+// match nothing. Read-only counts, no build controls.
+router.get('/scan-sets', async (req, res) => {
+  const { game = 'pokemon', lang } = req.query;
+  if (game !== 'mtg' && game !== 'pokemon') return res.status(400).json({ error: 'Invalid game' });
+  try {
+    // `builtLangs` rides along because the scanner's language picker has no other
+    // way to know: it offered all eleven languages, and for ten of them a Pokémon
+    // scan is answered by the English catalog and filed as an English printing.
+    // Offering a choice without its consequence is what made that a surprise.
+    res.json({
+      ...await require('../catalog').setCounts(game, languages.toName(lang)),
+      builtLangs: cvScan.builtLangs(game),
+    });
+  } catch (e) {
+    console.error('scan-sets failed:', e.message);
+    res.status(500).json({ error: 'Could not read catalog set counts' });
+  }
+});
+
+// A scanned Pokémon card, expressed in the language being scanned.
+//
+// Returns the card unchanged when it is already in that language (a catalog built
+// in it returns localised ids, so this is the normal case) or when no localised
+// row can be reached — see tcgdexApi.getPrintingInLang for which cases those are
+// and why guessing at them would be worse than answering in English.
+//
+// When no localised row can be reached the English card comes back carrying
+// `langFallback`, the language that was asked for and could not be served. The
+// unmarked English card was indistinguishable from a genuine English printing, so
+// the picker showed English art and an English name with nothing to say why —
+// which for Korean, Japanese and Chinese (their sets are their own releases, not
+// localised editions, so there is no id to swap to) is EVERY scan. The client
+// prints a disclaimer on it; the copy is still filed in the scanned language.
+async function localizedPokemon(card, langName) {
+  if (!card || languages.isEnglish(langName)) return card;
+  if (card.language === langName) return card;
+  const localized = await tcgdexApi.getPrintingInLang(card.id, langName).catch(() => null);
+  return localized || { ...card, langFallback: langName };
+}
+
+// The card a TCGplayer product is, found by set + collector number.
+//
+// `setId` comes from the TCGplayer catalogue and is therefore always an ENGLISH
+// set id, which is why this is asked twice on a non-English scan (see the call
+// site): once in the scanned language, then in English.
+async function pokemonBySetNumber(langName, number, setId, tcgApiKey) {
+  const provider = await pokemonApiFor(langName);
+  const { cards } = await provider.searchCards({
+    number, set: setId, lang: languages.toCode(langName), apiKey: tcgApiKey, limit: 5,
+  }).catch(() => ({ cards: [] }));
+  // Leading zeros, not string equality: TCGdex writes '013' where
+  // pokemontcg.io writes '13', so an exact compare silently rejected every
+  // TCGdex answer and reported the card as unresolvable.
+  return (cards || []).find(c => sameNumber(c.number, number)) || null;
+}
+
 router.post('/scan-match', searchLimiter, async (req, res) => {
   try {
-    const { game = 'pokemon', image, set = '', recallK, orb, lang } = req.body || {};
+    const { game = 'pokemon', image, set = '', lang, cropped = false } = req.body || {};
     if (game !== 'mtg' && game !== 'pokemon') return res.status(400).json({ error: 'Invalid game' });
     if (!image || typeof image !== 'string') return res.status(400).json({ error: 'Missing image' });
     const base64 = image.includes(',') ? image.slice(image.indexOf(',') + 1) : image;
     const buf = Buffer.from(base64, 'base64');
     if (buf.length < 100) return res.status(400).json({ error: 'Invalid image data' });
-    const result = await scanMatch.match(buf, game, 8, set, { recallK, orb, lang });
-    if (result.candidates && result.candidates.length > 0) {
-      // Hydration is language-scoped: a Japanese scan matched a Japanese index, so
-      // handing back the English row for the same set+number would name the card
-      // correctly and then add the wrong printing to the collection.
-      const langName = languages.toName(lang);
-      // A hydrated row REPLACES the client's /api/search lookup — CameraScanner
-      // takes a `top.card` fast path and applies it directly. So an unusable row
-      // is strictly worse than no row at all: it suppresses the fetch that would
-      // have produced a good one. A row with no artwork is exactly that, and it
-      // is what a stale cache served here — the right name with no picture and no
-      // number. Hydration is an optimisation; it must decline rather than degrade.
-      const USABLE = `image_url IS NOT NULL AND image_url != ''`;
-      const hydrated = await Promise.all(result.candidates.map(async (cand) => {
-        let row = null;
-        if (cand.set && cand.number) {
-          // EXACT OR NOTHING. ORB identified a specific printing, and this row is
-          // handed to the client as that printing — so a near-miss is not a
-          // partial success, it is a different card wearing the right name.
-          //
-          // There used to be a name-only fallback here for when the exact lookup
-          // missed. It fired constantly (any set whose rows are not cached yet)
-          // and returned whichever printing of that name happened to be cached,
-          // so the picker offered cards from sets ORB never matched while the
-          // debug list above it showed the correct ones.
-          //
-          // Missing is fine: the client falls through to /api/search, which
-          // fetches the exact set+number from the provider.
-          row = await db.get(
-            `SELECT * FROM card_cache WHERE game = ? AND language = ? AND (set_id = ? OR LOWER(set_name) = LOWER(?)) AND number = ? AND ${USABLE} LIMIT 1`,
-            [result.game, langName, cand.set, cand.set, cand.number]
-          );
-        } else if (cand.name) {
-          // Only when there is no identity to be exact about. Then the name is
-          // all anyone has, and one printing of it beats nothing.
-          row = await db.get(
-            `SELECT * FROM card_cache
-             WHERE game = ? AND language = ? AND (LOWER(name) = LOWER(?) OR LOWER(printed_name) = LOWER(?)) AND ${USABLE}
-             LIMIT 1`,
-            [result.game, langName, cand.name, cand.name]
-          );
-        }
-        return row ? { ...cand, card: parseCardRow(row) } : cand;
-      }));
-      result.candidates = hydrated;
+
+    const langName = languages.toName(lang);
+
+    // Set scoping is a FILTER over the catalog, not a different pipeline. The ORB
+    // path needed a per-set index built before it could scope a scan (that was the
+    // client's "preparing set" wait); a cosine sweep just skips rows that do not
+    // belong. A scoped scan is the same scan over fewer candidates — cheaper and
+    // more accurate, with nothing to build.
+    //
+    // Language is not a gate either. A card's artwork is the same in every
+    // language, so the English catalog answers "which card is this" for a Spanish
+    // or Japanese photo; when a catalog exists in the scanned language cvScan uses
+    // it instead. Measured 100% right-card on Spanish/Japanese/French/Italian MTG
+    // off the English catalog.
+    if (!cvScan.isBuilt(game, langName)) {
+      // There is no second matcher to fall back to. Say what is missing and what
+      // fixes it, rather than an empty candidate list that reads to the user as
+      // "your card could not be identified".
+      return res.status(503).json({
+        game, lang: langName, candidates: [], verified: false, notBuilt: true,
+        error: 'No scan catalog is built for this game and language yet. An admin can build one from Admin → Catalogs.',
+      });
     }
-    res.json(result);
+
+    const result = await cvScan.match(buf, game, 8, { sets: parseSetList(set), lang: langName, cropped: !!cropped });
+
+    result.candidates = await Promise.all(result.candidates.map(async (cand, i) => {
+      // MTG goes through getCardById because it can fetch and cache a printing
+      // this install has never seen. A locally built catalog is drawn FROM
+      // card_cache, so a primary-key read is both sufficient and the only thing
+      // that works for Pokemon, whose ids Scryfall knows nothing about.
+      if (cand.cardId) {
+        if (game === 'mtg') {
+          const card = await scryfallApi.getCardById(cand.cardId).catch(() => null);
+          if (!card) return cand;
+          // The catalog that answered is whichever one exists, and for most
+          // installs that is the English one — the artwork is identical across
+          // languages, so an English catalog identifies a Japanese card perfectly
+          // well and then hands back the ENGLISH printing. Re-express it in the
+          // scanned language here (cvScan.load defers to the route for exactly
+          // this), or the picker shows English names and art, and the copy gets
+          // filed as the English printing.
+          //
+          // Same set and collector number, different Scryfall id: the localized
+          // card IS a different printing row, which is the one the collection
+          // should reference.
+          const localized = await scryfallApi
+            .getPrintingInLang(card.set_id, card.number, langName)
+            .catch(() => null);
+          const use = localized || card;
+          return { ...cand, name: use.name, set: use.set_id, number: use.number, card: use };
+        }
+        const row = await db.get(
+          `SELECT * FROM card_cache WHERE id = ? AND image_url IS NOT NULL AND image_url != '' LIMIT 1`,
+          [cand.cardId]
+        );
+        if (!row) return cand;
+        const card = parseCardRow(row);
+        // Same re-expression as MTG above. A catalog built in the scanned language
+        // returns localised ids already, so this is a no-op then; it matters when
+        // the match fell back to the English catalog (no catalog in that language,
+        // or a card the localised one does not cover).
+        const use = await localizedPokemon(card, langName);
+        return { ...cand, name: use.name, set: use.set_id, number: use.number, card: use };
+      }
+      // The published Pokemon catalog is keyed by TCGplayer product id.
+      // tcgplayer_product is the authoritative mapping — card_cache's own column
+      // is a denormalised copy written only when the card also had a price, so
+      // joining on it silently drops every unpriced card.
+      const row = await db.get(
+        `SELECT c.* FROM tcgplayer_product t
+           JOIN card_cache c ON c.id = t.card_id
+          WHERE t.product_id = ? AND c.game = 'pokemon'
+            AND c.image_url IS NOT NULL AND c.image_url != ''
+          LIMIT 1`,
+        [cand.productId]
+      );
+      if (row) {
+        const card = parseCardRow(row);
+        const use = await localizedPokemon(card, langName);
+        return { ...cand, name: use.name, set: use.set_id, number: use.number, card: use };
+      }
+      // Nothing cached under that product id. Ask TCGplayer's own catalogue what
+      // the product IS, and hand back a set and a number — which is all the client
+      // needs to resolve it through /api/search, provider fetch and cache included.
+      //
+      // This is what makes the ready-made Pokémon catalog work on an install with
+      // an empty card_cache. The join above can only ever answer for cards already
+      // downloaded AND priced, so before this every such scan named nothing.
+      const p = await tcgplayerCatalog.lookup(cand.productId);
+      if (!p) return cand;
+      const hint = { ...cand, name: p.name, set: p.set_id || p.group_name, number: p.number };
+      if (!p.set_id) return hint;
+      // The TOP candidate is resolved here whatever the language; the rest are left
+      // to the client on an English scan.
+      //
+      // Not a speed fix — the same provider round trip happens either way, it just
+      // happens before the response instead of after. What it buys is the product
+      // id -> card id row written below, and one less HTTP hop on the auto-add
+      // path, which fires on the top candidate alone.
+      //
+      // Measured, first sight of a card: 971-1963 ms to resolve a Pokémon candidate
+      // (set+number search against pokemontcg.io, which answers 5xx often enough to
+      // carry its own retry policy) against 164 ms for an MTG candidate (one
+      // Scryfall by-id fetch, because the MTG catalog stores card ids and the
+      // Pokémon one stores TCGplayer product ids). Both are ~1 ms once card_cache
+      // holds the row. That gap is why Pokémon feels slow and Magic feels instant,
+      // and it is the provider and the key shape, not this code path.
+      if (i > (languages.isEnglish(langName) ? 0 : 2)) return hint;
+
+      // Non-English, and this is where a correct match used to die. The published
+      // catalog is TCGplayer's ENGLISH products, so what it hands back is an
+      // English set id — and a non-English search goes to TCGdex, which has never
+      // heard of 'base6'. Verified: tcgdex(ja, set=base6, number=96) returns 0
+      // cards, so all eight candidates resolved to null and a scan that had
+      // identified the card correctly reported "no confident match".
+      //
+      // So resolve it here, the same way the cached branch does: find the English
+      // printing, then re-express it in the scanned language. Capped above at the
+      // first three candidates for a non-English scan — each costs a provider round
+      // trip, and the picker only needs the alternatives a person will look at.
+      // Through the configured provider, not hardcoded pokemontcg.io: a TCGdex
+      // install has no pokemontcg.io rows and its set ids are different, so asking
+      // the wrong one returns nothing at all.
+      //
+      // And when THAT finds nothing, ask in English — because for Korean,
+      // Japanese and Chinese it never finds anything. Those regions get their own
+      // releases (SM1M, S12, SV2a) rather than localised editions of the English
+      // sets, so TCGdex's ko/ja/zh catalogues share no set id with the English
+      // 'base6' the TCGplayer product carries: verified 0 results for every
+      // candidate, so a Korean scan that had identified the card correctly
+      // resolved nothing at all and reported "no confident match" — while the same
+      // photo scanned as English named the card immediately.
+      //
+      // The English card IS the right answer to "which card is this"; only its
+      // language is wrong, and localizedPokemon below marks that so the client can
+      // say so rather than passing it off as an English printing.
+      let card = await pokemonBySetNumber(langName, p.number, p.set_id, req.user.tcg_api_key);
+      if (!card && !languages.isEnglish(langName)) {
+        card = await pokemonBySetNumber('English', p.number, p.set_id, req.user.tcg_api_key);
+      }
+      if (!card) return hint;
+      // Remember the mapping the price sweep would eventually have written. The
+      // next scan of this product then takes the indexed join above instead of a
+      // set+number search — both are ~1 ms once cached, so this is tidiness rather
+      // than a speed-up, but it is also the row the marketplace link and the price
+      // sweep want and it costs one insert to have it.
+      await db.run(
+        `INSERT OR REPLACE INTO tcgplayer_product (card_id, product_id, category_id, confidence, matched_at)
+         VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+        [card.id, cand.productId, 3]
+      ).catch(() => {});
+      const use = await localizedPokemon(card, langName);
+      return { ...hint, name: use.name, set: use.set_id, number: use.number, card: use };
+    }));
+
+    // The ready-made Pokémon catalog identified something and NONE of it could be
+    // named. That is a install-state problem, not a bad photo, and it has to say so.
+    //
+    // Its ids are TCGplayer product ids, which reach a card only through
+    // tcgplayer_product -> card_cache. Both tables are filled by work this install
+    // may never have done: card_cache by a set walk, tcgplayer_product as a side
+    // effect of the Pokémon price sweep over already-cached sets. On a fresh install
+    // both are empty, every candidate came back bare, the client dropped all eight
+    // (resolveCandidates needs a set+number or a name) and the user was told "no
+    // confident match" — while the panel had just promised scanning would work.
+    //
+    // MTG has no such gap: its published ids ARE Scryfall ids, so getCardById above
+    // fetches and caches a printing this install has never seen.
+    // `!c.set` matters: with the product map built, a bare candidate still carries
+    // a set and a number for the client to resolve, and that is a working scan.
+    // This fires only when nothing could be said about the product at all.
+    const unresolvedPublished = game === 'pokemon'
+      && result.candidates.length > 0
+      && result.candidates.every(c => !c.card && !c.set && c.productId != null);
+    if (unresolvedPublished) {
+      const map = await tcgplayerCatalog.summary();
+      console.log('scan-match: ready-made Pokemon catalog hit but no product id could be named'
+        + ` — product map holds ${map.rows} rows${map.progress ? ' (building)' : ''}`);
+      return res.json({
+        ...result,
+        unresolvedPublished: true,
+        productMapRows: map.rows,
+        error: map.progress
+          ? 'The TCGplayer product map is still building — the ready-made Pokémon catalog cannot name'
+            + ' its matches until it finishes.'
+          : 'The ready-made Pokémon catalog recognises cards by TCGplayer product id, and this install'
+            + ' has no product map to look them up in. An admin can build it in Admin → Scan catalogs.',
+      });
+    }
+
+    return res.json(result);
   } catch (error) {
     console.error('scan-match failed:', error.message);
     res.status(500).json({ error: 'Scan match failed' });
-  }
-});
-
-// Build/verify a per-set ORB index
-router.post('/prepare-set', searchLimiter, async (req, res) => {
-  try {
-    const { game = 'mtg', set, lang } = req.body || {};
-    const supported = game === 'mtg' || game === 'pokemon';
-    const sets = parseSetList(set);
-    if (!supported || !sets.length) return res.json({ ready: false, supported });
-    const pending = sets.filter(s => !setIndex.isReady(game, s, lang));
-    if (pending.length === 0) return res.json({ ready: true });
-
-    // A set that cannot be built (no such set for this language, or the provider
-    // has no card data for it) has to be reported, not polled forever. Without
-    // this the client sat on "fetching card list" indefinitely while every poll
-    // kicked off another doomed build.
-    const failures = pending
-      .map(s => ({ set: s, error: setIndex.buildFailed(game, s, lang) }))
-      .filter(f => f.error);
-    const buildable = pending.filter(s => !setIndex.buildFailed(game, s, lang));
-    if (buildable.length === 0) {
-      return res.json({ ready: false, building: false, failed: true, failures, error: failures[0].error });
-    }
-
-    // The set index this scan needs is also everything a code-free scan needs, so
-    // folding it into the whole-game rollup afterwards costs no extra download —
-    // it is scheduled in the background rather than made to wait for it.
-    buildable.forEach(s => setIndex.ensureSet(game, s, lang)
-      .then(ok => { if (ok) require('../globalIndex').scheduleRollupRefresh(game, lang); })
-      .catch(() => {}));
-    // Report the first still-building set's progress for the UI bar, plus any
-    // sets in the list that already failed (a multi-set scan can be part ready).
-    res.json({ ready: false, building: true, progress: setIndex.setProgress(game, buildable[0], lang), pending: buildable, failures });
-  } catch (error) {
-    console.error('prepare-set failed:', error.message);
-    res.status(500).json({ error: 'Prepare set failed' });
-  }
-});
-
-// Read-only scan-index coverage, for ANY logged-in user.
-//
-// This exists because a member scanning without a set code previously just got
-// "no match" with no way to learn that the whole-game index was never built. The
-// build actions stay admin-only; understanding why scanning cannot work does not
-// need to be.
-router.get('/scan-index-status', async (req, res) => {
-  try {
-    const { game = 'mtg', lang } = req.query;
-    if (game !== 'mtg' && game !== 'pokemon') return res.status(400).json({ error: 'game (mtg|pokemon) is required' });
-    const globalIndex = require('../globalIndex');
-    const code = languages.toCode(lang);
-    const status = globalIndex.statusOf(game, code);
-    // Coverage hits the provider for the set list, so it is opt-in via ?coverage=1
-    // — the readiness flags below answer the common question without a round trip.
-    //
-    // And it is best-effort. The readiness flags are read from local files and
-    // cannot fail; coverage needs the provider's set list and can. Letting that
-    // take the whole response down means a provider hiccup deletes the scanner's
-    // "can I scan without a set code?" hint — reinstating, during an outage, the
-    // exact silent failure this endpoint exists to prevent. The scanner already
-    // treats a null coverage as "unknown" and falls back to the plain message.
-    let coverage = null;
-    if (req.query.coverage === '1') {
-      try { coverage = await globalIndex.coverage(game, code); }
-      catch (e) { console.warn(`scan-index-status: coverage unavailable for ${game} (${code}): ${e.message}`); }
-    }
-    res.json({
-      game, lang: code,
-      codeFreeScanning: status.orb.present && status.orb.hashed,
-      cards: status.orb.cards || 0,
-      builtAt: status.orb.builtAt || 0,
-      coverage,
-    });
-  } catch (error) {
-    console.error('scan-index-status failed:', error.message);
-    res.status(500).json({ error: 'Failed to read scan index status' });
   }
 });
 
@@ -994,56 +1120,6 @@ router.post('/collection/bulk', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Bulk action failed' });
-  }
-});
-
-// Saved Filter Presets
-router.get('/collection/filters/presets', async (req, res) => {
-  try {
-    const presets = await db.all(
-      `SELECT * FROM saved_filter_presets WHERE user_id = ? ORDER BY name ASC`,
-      [req.user.id]
-    );
-    res.json({ presets });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch filter presets', message: error.message });
-  }
-});
-
-router.post('/collection/filters/presets', async (req, res) => {
-  const { name, filter_config, sort_config, is_default = 0 } = req.body;
-  if (!name || !filter_config) {
-    return res.status(400).json({ error: 'Preset name and filter_config are required' });
-  }
-
-  try {
-    const result = await db.run(
-      `INSERT INTO saved_filter_presets (user_id, name, filter_config, sort_config, is_default)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        req.user.id,
-        name.trim(),
-        typeof filter_config === 'string' ? filter_config : JSON.stringify(filter_config),
-        typeof sort_config === 'string' ? sort_config : JSON.stringify(sort_config || []),
-        is_default ? 1 : 0
-      ]
-    );
-    res.status(201).json({ success: true, id: result.lastID });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to save filter preset', message: error.message });
-  }
-});
-
-router.delete('/collection/filters/presets/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await db.run(`DELETE FROM saved_filter_presets WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Filter preset not found' });
-    }
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete filter preset', message: error.message });
   }
 });
 

@@ -16,6 +16,14 @@ const db = require('./db');
 const tcgApi = require('./tcgApi');
 const scryfallApi = require('./scryfallApi');
 
+// Which module owns the Pokémon `sets` table. Asked per call rather than resolved
+// once: the provider is a setting an admin can change while the server is up, and
+// the weekly refresh has to follow it without a restart.
+const pokemonSetSource = async () =>
+  (await require('./utils/pokemonProvider').usesTcgdex('English'))
+    ? require('./tcgdexApi')
+    : tcgApi;
+
 const authRoutes = require('./routes/auth');
 const sharedRoutes = require('./routes/shared');
 const adminRoutes = require('./routes/admin');
@@ -26,43 +34,53 @@ const importExportRoutes = require('./routes/importExport');
 const setsRoutes = require('./routes/sets');
 const decksRoutes = require('./routes/decks');
 const settingsRoutes = require('./routes/settings');
-const tagsRoutes = require('./routes/tags');
 const notesRoutes = require('./routes/notes');
 const cardArtRoutes = require('./routes/cardArt');
-const { getAuditLogs, revertAuditEvent } = require('./utils/auditLogger');
+const { authenticateToken } = require('./middleware/auth');
 const { startHttps, selfSignedTls } = require('./utils/tls');
 
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// The index directories are created here, at startup, as the app's own user —
+// The model directory is created here, at startup, as the app's own user —
 // deliberately not by the root entrypoint. A directory root creates inside a
 // volume that has already been handed over to `node` is one this process can
 // never write into, and the first thing to notice was a build dying hours later
-// with `EACCES: mkdir '/app/database/index/.staging-mtg'`.
+// with `EACCES` on its own output.
 //
 // Probed with a real write rather than fs.access(W_OK): access reports the
 // permission bits, which is not the same question as whether this filesystem
 // will accept a file (NFS/SMB squash a root-owned mount's bits into a yes it
-// does not honour). Unwritable is not fatal — the collection, scanning by set
-// code, and everything else still work — so it says so plainly and carries on.
-function ensureWritable() {
+// does not honour). Neither problem here is fatal — everything except scanning
+// still works — so both say so plainly and carry on. Scanning's own failure is a
+// 503 from /api/scan-match, which whoever is holding the phone meets long before
+// anyone reads these logs.
+function checkScanModels() {
   const fs = require('fs');
-  const setIndex = require('./setIndex');
-  for (const dir of [require('./utils/globalIndexPaths').DATA_DIR, setIndex.SETS_DIR]) {
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      const probe = path.join(dir, `.write-probe-${process.pid}`);
-      fs.writeFileSync(probe, '');
-      fs.unlinkSync(probe);
-    } catch (err) {
-      console.error(`STARTUP: ${dir} is not writable (${err.code}) — scan index builds will fail.`);
-      console.error('STARTUP: fix it with  docker exec -u root <container> chown -R node:node /app/database');
-    }
+  const dir = process.env.CV_MODEL_DIR || path.join(__dirname, '..', 'data', 'models');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, `.write-probe-${process.pid}`);
+    fs.writeFileSync(probe, '');
+    fs.unlinkSync(probe);
+  } catch (err) {
+    console.error(`STARTUP: ${dir} is not writable (${err.code}) — catalog builds will fail.`);
+    console.error('STARTUP: fix it with  docker exec -u root <container> chown -R node:node /app/database');
+    return;
+  }
+  // The models ship in neither the image nor the repository: they are AGPL-3.0
+  // while Bindarr is MIT, so fetching them is the operator's deliberate step. That
+  // makes "no models" the ordinary state of a fresh install rather than a fault,
+  // and it deserves the command that fixes it instead of silence until someone
+  // points a camera at a card.
+  const missing = ['cornelius.onnx', 'milo.onnx'].filter(f => !fs.existsSync(path.join(dir, f)));
+  if (missing.length) {
+    console.warn(`STARTUP: scan models missing from ${dir} (${missing.join(', ')}) — card scanning is disabled.`);
+    console.warn('STARTUP: fetch them with  node scripts/fetch-models.mjs   (Docker: docker exec <container> node scripts/fetch-models.mjs)');
   }
 }
-ensureWritable();
+checkScanModels();
 
 // Behind a reverse proxy (nginx/Traefik/Caddy terminating TLS — effectively
 // required, since mobile camera access needs HTTPS), set TRUST_PROXY so req.ip
@@ -75,9 +93,10 @@ if (process.env.TRUST_PROXY) {
   app.set('trust proxy', tp === 'true' ? true : (Number.isNaN(Number(tp)) ? tp : Number(tp)));
 }
 
-// Content Security Policy. Card identification is server-side (the client just
-// POSTs a photo to /api/scan-match), so the browser needs nothing beyond the
-// app's own bundle plus the card-image hosts. Kept Report-Only for now: flip
+// Content Security Policy. Identification is server-side (the client POSTs a
+// photo to /api/scan-match); the browser only runs the corner model that draws
+// the aiming outline. Either way it needs nothing beyond the app's own bundle
+// plus the card-image hosts. Kept Report-Only for now: flip
 // `reportOnly` to false to enforce once a production smoke test confirms the
 // scan flow and card images load cleanly under these directives.
 // ponytail: Report-Only ceiling — enforce after a prod verification pass.
@@ -93,14 +112,21 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       // 'wasm-unsafe-eval' is what lets the browser compile WebAssembly. The card
-      // scanner runs OpenCV.js locally to find the card in the frame, and without
-      // this the wasm is refused outright. Harmless today because the policy is
-      // report-only, but it would silently break scanning the moment that flips.
+      // scanner runs the cornelius corner model locally through onnxruntime-web to
+      // find the card in the frame, and without this the wasm is refused outright.
+      // Harmless today because the policy is report-only, but it would silently
+      // break scanning the moment that flips.
       scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
       connectSrc: ["'self'"],
       imgSrc: ["'self'", 'data:', 'blob:', 'https://images.pokemontcg.io', 'https://cards.scryfall.io', 'https://c1.scryfall.com', 'https://img.scryfall.com', 'https://assets.tcgdex.net'],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      fontSrc: ["'self'", 'data:'],
+      // index.html loads Antonio, Outfit and Plus Jakarta Sans from Google Fonts,
+      // which is two separate origins: the stylesheet comes from fonts.googleapis
+      // .com and the .woff2 files it then references come from fonts.gstatic.com.
+      // Neither was listed, so every font on every page was a CSP violation —
+      // survivable only because the policy is report-only. Enforced as it stood,
+      // the whole app would have dropped to the fallback system font.
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: null
     }
@@ -149,12 +175,52 @@ app.use(cors({
     }
   }
 }));
-// Default 100kb body limit is too small for the collection import/export
-// feature: a JSON backup wraps the export payload in a string field, which
-// added escaping overhead pushed a ~90-card collection past the default
-// limit already. 15mb comfortably covers even large (multi-thousand card)
-// collections.
-app.use(express.json({ limit: '15mb' }));
+// Two endpoints legitimately carry megabytes, and only two. An import wraps its
+// payload in a JSON string field, which added escaping overhead pushed a ~90-card
+// collection past the 100kb default already; a scan carries a photo base64'd into
+// JSON, which costs a third again on top of the image.
+//
+// Everything else is ids and short strings, so the global ceiling stays small.
+// Applying 15mb to every route means an UNAUTHENTICATED POST /api/auth/login can
+// hand the process 15 MB, which is a free memory amplifier for anyone who can
+// reach the port. body-parser skips a request whose body is already parsed, so
+// registering these first and the small default after is all the scoping needed.
+const bigJson = express.json({ limit: '15mb' });
+app.use('/api/import', bigJson);
+app.use('/api/scan-match', bigJson);
+app.use(express.json({ limit: '1mb' }));
+
+// Rebuild any catalog that has fallen behind, right after the weekly set refresh
+// discovers new releases.
+//
+// Without this, a released set lands in the set list and the catalog silently keeps
+// answering: a scan of a brand-new card does not fail, it returns the nearest wrong
+// card at a confident-looking score. Nobody presses Update because nothing tells
+// them to.
+//
+// Deliberately conservative. It only touches catalogs that ALREADY exist — it never
+// creates one, because that is an hours-long job nobody asked for — and it skips
+// entirely while a build is running, since catalog.start refuses a second one
+// anyway. The embed phase reuses every unchanged vector, so the real cost is
+// downloading and embedding only the new cards.
+//
+// ponytail: env var rather than an app_settings column + settings UI + eleven
+// translations. Promote it if users want per-install control from the web UI.
+async function autoUpdateCatalogs() {
+  if (process.env.CATALOG_AUTO_UPDATE === '0') return;
+  const catalog = require('./catalog');
+  if (catalog.state()) return;
+  try {
+    for (const c of await catalog.list()) {
+      if (!c.built || !c.newSets) continue;
+      console.log(`catalog: ${c.game}/${c.lang} is ${c.newSets} set(s) behind — updating (CATALOG_AUTO_UPDATE=0 to disable)`);
+      catalog.start(c.game, c.lang);
+      return;   // one at a time; the next tick picks up the next one
+    }
+  } catch (err) {
+    console.error('Catalog auto-update check failed:', err.message);
+  }
+}
 
 // Initialize Database on startup
 db.initDb()
@@ -167,29 +233,33 @@ db.initDb()
     const splitCount = await splitStackedEntries(db);
     if (splitCount > 0) console.log(`Split ${splitCount} stacked collection copies into individual rows.`);
 
-    // Sync sets on startup (both games)
-    await tcgApi.fetchAndCacheSets();
+    // Sync sets on startup (both games). WHICH Pokémon provider fills the `sets`
+    // table follows the same setting the cards do — this used to be pokemontcg.io
+    // unconditionally, so a TCGdex install browsed a set list numbered by a
+    // provider none of its cards came from.
+    await (await pokemonSetSource()).fetchAndCacheSets();
     await scryfallApi.fetchAndCacheSets();
 
     // Load sets into compartmentSort memory cache
     const { loadSetsCache } = require('./utils/compartmentSort');
     await loadSetsCache(db);
 
-    // A global index build takes hours, so a restart mid-build used to leave the
-    // panel showing nothing in flight and the staged work invisible. Surface any
-    // interrupted build so it can be resumed rather than restarted from zero.
+    // Warm the scan models and catalogs. Two ONNX sessions plus an embedding table
+    // take ~400 ms to load; paying that on the first scan instead would make the
+    // slowest scan of a session the one a user is most likely to judge. Not awaited
+    // — listening must not wait on it, and a scan arriving before it finishes just
+    // pays the load itself.
     try {
-      const globalIndex = require('./globalIndex');
-      const langCodes = require('./utils/languages').LANGUAGES.map(l => l.code);
-      globalIndex.restoreInterrupted(langCodes);
-      // Not awaited: this is a rollup re-concatenation on an upgrade from an
-      // install whose rollup predates the hash columns, and does nothing at all
-      // on every other boot, so it must not hold up listening. Until it finishes,
-      // code-free scanning reports "not built" — which is the truth.
-      globalIndex.backfillRecall(langCodes)
-        .catch(err => console.warn('Could not derive missing recall indexes:', err.message));
+      const cvScan = require('./cvScan');
+      const warm = ['mtg', 'pokemon'].filter(g => cvScan.isBuilt(g));
+      for (const g of warm) {
+        cvScan.load(g).catch(err => console.warn(`cvScan ${g} warm-up failed:`, err.message));
+      }
+      // There is no second matcher to fall back to, so say what is missing. The
+      // models alone identify nothing.
+      if (!warm.length) console.warn('cvScan: no catalogs present — scanning is disabled until one is built (Admin → Catalogs)');
     } catch (err) {
-      console.warn('Could not restore interrupted global builds:', err.message);
+      console.warn('cvScan unavailable:', err.message);
     }
 
     // Weekly: refresh sets (picks up newly released ones) and reload the
@@ -198,9 +268,10 @@ db.initDb()
     // weekly is plenty — prices are on their own schedule below.
     setInterval(async () => {
       try {
-        await tcgApi.fetchAndCacheSets(true);
+        await (await pokemonSetSource()).fetchAndCacheSets(true);
         await scryfallApi.fetchAndCacheSets(true);
         await loadSetsCache(db);
+        await autoUpdateCatalogs();
       } catch (err) {
         console.error('Weekly sets refresh failed:', err);
       }
@@ -261,34 +332,82 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// --- API ROUTES ---
+// gzip. Mounted HERE, above the routes, because it has to see a response to
+// compress it: sitting below the /api mounts it only ever reached the static
+// bundle, and every JSON body — a 5000-row collection among them — went out raw.
+//
+// It matters for the bundle too. The onnxruntime wasm the in-browser detector
+// loads is ~13 MB uncompressed, which is a long wait on a phone over wifi and,
+// worse, a stall that looks like a hang.
+app.use(compression());
+
+// --- PUBLIC API ROUTES ---
+// Everything mounted above the gate below is reachable without a session, and
+// each one is deliberate: login/register, a public shared collection, and the
+// card art that shared collection renders.
 app.use('/api/auth', authRoutes);
 app.use('/api/shared', sharedRoutes);
+// Admin carries its own authenticateToken + requireAdmin, so it sits above the
+// gate rather than being authenticated twice.
 app.use('/api/admin', adminRoutes);
 // Ahead of the bare '/api' mounts so nothing shadows it. Its reads are
 // deliberately unauthenticated — a public shared collection renders card art too.
 app.use('/api/card-art', cardArtRoutes);
+
+// --- AUTHENTICATION GATE ---
+// ONE gate for every remaining /api route, rather than a router.use in each file.
+//
+// Per-router auth was both a hole and a cost. The hole: routers that forgot it
+// (tags, importExport, the audit-log handlers) were protected only because the
+// collection router is ALSO mounted at '/api' and its middleware ran first on the
+// way past — so authentication depended on the order of the lines below, and
+// reordering them would have silently exposed GET /api/export. Worse, an
+// unauthenticated request reaching one of those handlers threw on `req.user.id`
+// inside an async handler, which Express 4 does not catch: unhandled rejection,
+// and launch.js turns that into a process exit.
+//
+// The cost: /api/notes passed through the collection, storage and stats routers
+// on its way to notes, so it ran authenticateToken — and its sessions⋈users
+// SELECT — four times per request.
+app.use('/api', authenticateToken);
+
+// --- AUTHENTICATED API ROUTES ---
 app.use('/api', collectionRoutes);
 app.use('/api', storageRoutes);
 app.use('/api', statsRoutes);
 app.use('/api', importExportRoutes);
-app.use('/api', tagsRoutes);
 app.use('/api', notesRoutes);
-app.get('/api/audit-logs', getAuditLogs);
-app.post('/api/audit-logs/:id/revert', revertAuditEvent);
 app.use('/api/sets', setsRoutes);
 app.use('/api/decks', decksRoutes);
 app.use('/api/settings', settingsRoutes);
 
-// Serve production static assets from Frontend.
-//
-// gzip matters here specifically because of the scanner: card detection runs in
-// the browser against OpenCV.js, which is an ~11 MB chunk. Uncompressed that is a
-// long wait on a phone over wifi and, worse, a stall that looks like a hang.
-// Compressed it is ~3.5 MB, and it is immutable-hashed so it is fetched once.
-app.use(compression());
+// The live overlay runs the SAME corner model the scan does, in the browser, so
+// what the user aims with and what the server matches cannot disagree. That
+// means the browser has to be able to fetch the model — unauthenticated, because
+// the outline runs before login is relevant and the file is public weights.
+// Immutable: the filename changes when the model does.
+// Only the corner model. Serving the whole directory would also expose the
+// 56 MB embedding catalog, which the browser never needs and which nobody
+// should be able to pull off an install by guessing a filename.
+app.get('/models/cornelius.onnx', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+  // MODEL_DIR, not a hardcoded backend/data: the container keeps the models on
+  // the persisted volume (CV_MODEL_DIR=/app/database/models). Hardcoded, this
+  // 404'd in every Docker install, the worker fell back to the pure-JS contour
+  // detector, and detection went from ~80ms to 200ms+ with the CPU pegged.
+  res.sendFile(path.join(require('./utils/modelAssets').MODEL_DIR, 'cornelius.onnx'), (err) => {
+    if (err && !res.headersSent) res.status(404).end();
+  });
+});
+
 const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
-app.use(express.static(frontendBuildPath));
+// A year, immutable. Vite content-hashes every asset filename, so a changed file
+// is a changed URL and a stale cache cannot happen. Without this the browser
+// revalidated the entire bundle on every reload — the megabyte-scale wasm
+// included — which on a phone is the difference between an instant open and a
+// wait. index.html is served by the catch-all below and stays uncached, so a
+// deploy is still picked up immediately.
+app.use(express.static(frontendBuildPath, { maxAge: '1y', immutable: true, index: false }));
 
 // Catch-all route to serve Index.html in production
 app.get('*', (req, res, next) => {
@@ -319,7 +438,4 @@ app.listen(PORT, '0.0.0.0', () => {
   // Camera scanning needs a secure context, so a LAN/Docker install serves TLS
   // too when HTTPS_PORT is set. Certificates live beside the database.
   startHttps(app, path.join(path.dirname(db.dbPath), 'ssl'));
-  // Warm the scan worker pool so the first set-scoped scan doesn't pay worker
-  // spawn + opencv-wasm load. No-op when SCAN_WORKERS=0.
-  try { require('./scanPool').getPool(); } catch (e) { console.warn('scanPool warmup skipped:', e.message); }
 });

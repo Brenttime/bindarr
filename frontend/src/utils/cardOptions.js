@@ -35,3 +35,24 @@ export const GRADES = [10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5, 5, 4, 3, 2, 1];
 // types (boxes, deck boxes) are continuous (Rows). Kept here so the several
 // UI spots that branch on it share one definition.
 export const isBinderType = (type) => type === 'Binder' || type === 'Toploader Binder';
+
+// Container type labels are translated, but the type itself is the English string
+// stored in the database, so the two are paired here rather than in each screen
+// that renders one. The label is t(`container.type.${containerTypeKey(type)}`);
+// 'misc' is keyed that way and not 'other' because a key ending in a plural
+// category is read as a counted phrase by check-locales.mjs.
+const CONTAINER_TYPE_KEYS = {
+  'Binder': 'binder',
+  'Toploader Binder': 'toploaderBinder',
+  'Box': 'box',
+  'Toploader Box': 'toploaderBox',
+  'Graded Slab Box': 'gradedSlabBox',
+  'Display Shelf / Stand': 'displayShelf',
+  'Deck Box': 'deckBox',
+  'Tin / Case': 'tinCase',
+  'Other': 'misc',
+};
+
+// A type from an older install (or a hand-edited row) has no key; callers fall
+// back to showing the stored English rather than mislabelling it "Other".
+export const containerTypeKey = (type) => CONTAINER_TYPE_KEYS[type] || null;

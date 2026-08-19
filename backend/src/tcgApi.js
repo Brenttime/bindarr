@@ -180,6 +180,9 @@ async function fetchAndCacheSets(force = false) {
       );
     }
     console.log(`Cached ${sets.length} Pokemon sets.`);
+    // Same prune as the TCGdex path: switching back must not leave TCGdex ids
+    // beside pokemontcg.io ones in every set picker.
+    await require('./utils/setCatalogue').pruneStaleSets(sets.map(s => s.id), 'pokemontcg.io');
   } catch (error) {
     const detail = error.response
       ? `HTTP ${error.response.status}${error.response.data ? ': ' + JSON.stringify(error.response.data).slice(0, 200) : ''}`
@@ -232,9 +235,19 @@ function getStringSimilarity(str1, str2) {
 // Public entry point. Returns { cards, total } — `total` is how many matches
 // exist upstream in all (null when the answer came from cache, which has no
 // such count). Wrapping keeps the many early returns in the body unchanged.
-async function searchCards(...args) {
+// One options object, identical across tcgApi / tcgdexApi / scryfallApi, so the
+// route can call whichever provider it resolved without knowing which one it got.
+// Each provider reads the options that apply to it and ignores the rest: only
+// pokemontcg.io takes an apiKey, only TCGdex needs the language it is searching in,
+// only Scryfall has allPrints. As three positional signatures these had already
+// drifted into different argument ORDERS for the same values, which the caller was
+// papering over with a ternary picking one call shape or the other.
+async function searchCards({
+  name = '', number = '', set = '', scope = 'database', userId = null,
+  apiKey = '', page = 1, limit = 60,
+} = {}) {
   const meta = { total: null };
-  const cards = await runSearch(meta, ...args);
+  const cards = await runSearch(meta, name, number, set, apiKey, scope, userId, page, limit);
   return { cards, total: meta.total };
 }
 
@@ -373,18 +386,29 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
 
     // 1b. Set browse: no usable name, just "show me this set". Without this a
     // set-only search fell through every branch and came back empty.
+    let browsedWithNumber = false;
     if (cards.length === 0 && words.length === 0 && setList.length) {
       const setClause = setList.map(s => `set.name:"${s}" OR set.id:"${s}"`).join(' OR ');
       const queryStr = `(${setClause})` + (cleanNumber ? ` AND number:"${cleanNumber}"` : '');
       console.log(`Querying Pokémon TCG API (Set browse): q='${queryStr}'`);
       cards = await fetchCardsFromAPI(queryStr, 'number');
+      browsedWithNumber = !!cleanNumber;
     }
 
     // 2. Number+set fallback: only when name was garbled but we have a set.
     // Pure number-only search returns every set's card with that number (~50 junk
     // results), so skip it — a number without a set almost never finds the right card.
+    //
+    // Skipped outright when the set browse above already asked set+number: the two
+    // queries differ only in clause order, so re-asking is a second round trip to a
+    // provider that answers 5xx often enough to have its own retry policy. It only
+    // ever fired when the first query found nothing, which on the scan path — every
+    // candidate arrives as set+number with no name — is exactly the candidates that
+    // cannot resolve at all (promos, jumbo cards, groups with no provider set). So
+    // this does not speed up a successful scan; it stops the failing ones costing
+    // twice as much as the ones that work.
     const isNumNoise = !cleanNumber || cleanNumber === '0' || cleanNumber === '00' || cleanNumber === '000';
-    if (cards.length === 0 && cleanNumber && !isNumNoise && setList.length) {
+    if (cards.length === 0 && !browsedWithNumber && cleanNumber && !isNumNoise && setList.length) {
       const setClause = setList.map(s => `set.name:"${s}" OR set.id:"${s}"`).join(' OR ');
       const queryStr = `number:"${cleanNumber}" AND (${setClause})`;
       console.log(`No name results. Querying TCG API (Number+set): q='${queryStr}'`);

@@ -4,11 +4,8 @@ const cardApi = require('../utils/cardApi');
 const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { compartmentLabel } = require('../utils/compartmentSort');
 const { validateDeckAddition } = require('../utils/deckRules');
-const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
-
-router.use(authenticateToken);
 
 // Get User Decks
 router.get('/', async (req, res) => {

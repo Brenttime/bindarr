@@ -1,6 +1,6 @@
-// Run: node src/utils/setQuery.test.js  (no framework, asserts only)
+// Run: node test/setquery.test.js  (no framework, asserts only)
 const assert = require('assert');
-const { parseSetList, setSqlFilter } = require('./setQuery');
+const { parseSetList, setSqlFilter } = require('../src/utils/setQuery');
 
 // parseSetList: split, trim, drop blanks.
 assert.deepStrictEqual(parseSetList('ltr, ltc'), ['ltr', 'ltc']);

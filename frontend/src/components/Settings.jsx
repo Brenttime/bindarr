@@ -71,7 +71,6 @@ function Settings({ user, onUpdateUser, showToast }) {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
   const [defaultGameValue, setDefaultGameValue] = useState(() => defaultGame());
   const [shownGames, setShownGames] = useState(() => enabledGames());
-  const [autoConfirm, setAutoConfirm] = useState(() => localStorage.getItem('scanner_auto_confirm') === '1');
 
   const [versionInfo, setVersionInfo] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -985,45 +984,6 @@ function Settings({ user, onUpdateUser, showToast }) {
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
               {t(shownGames.length === 1 ? 'prefs.defaultGameHintSingle' : 'prefs.defaultGameHint')}
             </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
-            <div>
-              <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem' }}>{t('prefs.autoConfirm')}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t('prefs.autoConfirmHint')}</div>
-            </div>
-            <label className="switch-control" style={{ position: 'relative', display: 'inline-block', width: '46px', height: '24px', flexShrink: 0 }}>
-              <input
-                type="checkbox"
-                checked={autoConfirm}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setAutoConfirm(checked);
-                  localStorage.setItem('scanner_auto_confirm', checked ? '1' : '0');
-                  showToast(t(checked ? 'prefs.autoConfirmOn' : 'prefs.autoConfirmOff'));
-                }}
-                style={{ opacity: 0, width: 0, height: 0 }}
-              />
-              <span className={`switch-slider ${autoConfirm ? 'active' : ''}`} style={{
-                position: 'absolute',
-                cursor: 'pointer',
-                top: 0, left: 0, right: 0, bottom: 0,
-                backgroundColor: autoConfirm ? 'var(--type-grass)' : '#334155',
-                transition: '0.3s',
-                borderRadius: '24px'
-              }}>
-                <span style={{
-                  position: 'absolute',
-                  height: '18px', width: '18px',
-                  left: autoConfirm ? '24px' : '4px',
-                  bottom: '3px',
-                  backgroundColor: '#fff',
-                  transition: '0.3s',
-                  borderRadius: '50%',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
-                }}></span>
-              </span>
-            </label>
           </div>
         </div>
 

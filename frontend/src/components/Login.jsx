@@ -4,6 +4,10 @@ import { isNative, getServerUrl, setServerUrl } from '../apiBase';
 import { useT } from '../utils/i18n';
 import Logo from './Logo';
 
+// Must match OWNER_USERNAME in backend/src/routes/auth.js — the bootstrap route
+// ignores whatever username is posted and always creates `admin`.
+const OWNER_USERNAME = 'admin';
+
 function Login({ onLoginSuccess }) {
   const { t } = useT();
   const [isRegister, setIsRegister] = useState(false);
@@ -18,6 +22,9 @@ function Login({ onLoginSuccess }) {
   // Whether open self-registration is allowed (invite-only by default). Drives
   // whether the Sign Up option is shown at all.
   const [registrationEnabled, setRegistrationEnabled] = useState(false);
+  // A server with no accounts at all: the form creates the owner account instead
+  // of signing in, so nobody has to dig a generated password out of the logs.
+  const [setupRequired, setSetupRequired] = useState(false);
 
   useEffect(() => {
     if (isNative && !server) return; // wait until user sets their server URL
@@ -29,7 +36,15 @@ function Login({ onLoginSuccess }) {
     const load = () => {
       fetch('/api/auth/config')
         .then(res => res.ok ? res.json() : Promise.reject(new Error('config unreachable')))
-        .then(data => { if (!cancelled) setRegistrationEnabled(!!data.registrationEnabled); })
+        .then(data => {
+          if (cancelled) return;
+          setRegistrationEnabled(!!data.registrationEnabled);
+          setSetupRequired(!!data.setupRequired);
+          // The owner account's name is the server's to decide, not the
+          // visitor's — see the bootstrap route. Shown read-only rather than
+          // hidden, because it is the name they will log in with next time.
+          if (data.setupRequired) setUsername(OWNER_USERNAME);
+        })
         .catch(() => { if (!cancelled && tries++ < 5) setTimeout(load, 1500); });
     };
     // Debounce so a freshly-typed server address is checked once it settles,
@@ -40,9 +55,18 @@ function Login({ onLoginSuccess }) {
     return () => { cancelled = true; clearTimeout(debounce); document.removeEventListener('visibilitychange', onVis); };
   }, [server]);
 
+  // Creating an account (first-run owner, or self-registration) asks for the
+  // password twice and validates it; signing in does neither.
+  const creating = isRegister || setupRequired;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    // Browser password managers parse the form when the submit lands, and they
+    // need to find an <input type="password"> to offer to save anything. Someone
+    // who left "show password" on would otherwise submit a plain text field and
+    // never get the save prompt — so the reveal always closes on submit.
+    setShowPassword(false);
 
     if (isNative && !server) {
       setError(t('login.errServerFirst'));
@@ -51,7 +75,7 @@ function Login({ onLoginSuccess }) {
 
     setLoading(true);
 
-    if (isRegister) {
+    if (creating) {
       if (username.length < 3) {
         setError(t('login.errUsernameShort', { count: 3 }));
         setLoading(false);
@@ -69,7 +93,9 @@ function Login({ onLoginSuccess }) {
       }
     }
 
-    const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
+    const endpoint = setupRequired ? '/api/auth/bootstrap'
+      : isRegister ? '/api/auth/register'
+        : '/api/auth/login';
 
     try {
       const response = await fetch(endpoint, {
@@ -118,9 +144,24 @@ function Login({ onLoginSuccess }) {
             Bind<span style={{ color: 'var(--accent-red)' }}>arr</span>
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-            {t(isRegister ? 'login.taglineRegister' : 'login.taglineLogin')}
+            {t(setupRequired ? 'login.setupTagline' : isRegister ? 'login.taglineRegister' : 'login.taglineLogin')}
           </p>
         </div>
+
+        {setupRequired && (
+          <div style={{
+            padding: '0.75rem 1rem',
+            marginBottom: '1.5rem',
+            borderLeft: '3px solid var(--accent-red)',
+            background: 'rgba(255,255,255,0.03)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: '0.8rem',
+            color: 'var(--text-secondary)',
+            lineHeight: 1.5
+          }}>
+            {t('login.setupNote')}
+          </div>
+        )}
 
         {error && (
           <div className="glass-panel" style={{
@@ -174,7 +215,10 @@ function Login({ onLoginSuccess }) {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
-                disabled={loading}
+                // readOnly, never disabled: a disabled field is dropped from the
+                // form, so a password manager inspecting it mid-submit sees no
+                // username to save. Read-only still blocks typing.
+                readOnly={setupRequired || loading}
               />
               <User size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
             </div>
@@ -187,14 +231,14 @@ function Login({ onLoginSuccess }) {
                 id="login-password"
                 type={showPassword ? 'text' : 'password'}
                 name="password"
-                autoComplete={isRegister ? 'new-password' : 'current-password'}
+                autoComplete={creating ? 'new-password' : 'current-password'}
                 className="input-control"
                 style={{ width: '100%', paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
                 placeholder={t('login.passwordPlaceholder')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                disabled={loading}
+                readOnly={loading}
               />
               <Lock size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
               <button
@@ -220,7 +264,7 @@ function Login({ onLoginSuccess }) {
             </div>
           </div>
 
-          {isRegister && (
+          {creating && (
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label htmlFor="login-confirm-password" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('login.confirmPassword')}</label>
               <div style={{ position: 'relative' }}>
@@ -235,7 +279,7 @@ function Login({ onLoginSuccess }) {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
-                  disabled={loading}
+                  readOnly={loading}
                 />
                 <Lock size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
               </div>
@@ -261,14 +305,14 @@ function Login({ onLoginSuccess }) {
               <div className="spinner" style={{ width: '16px', height: '16px', margin: 0, borderWidth: '2px' }}></div>
             ) : (
               <>
-                <span>{t(isRegister ? 'login.register' : 'login.login')}</span>
+                <span>{t(setupRequired ? 'login.setupSubmit' : isRegister ? 'login.register' : 'login.login')}</span>
                 <ArrowRight size={16} />
               </>
             )}
           </button>
         </form>
 
-        {registrationEnabled && (
+        {registrationEnabled && !setupRequired && (
           <div style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
             {t(isRegister ? 'login.haveAccount' : 'login.noAccount')}{' '}
             <button

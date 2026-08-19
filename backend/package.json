@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node --test test/sort.test.js test/split.test.js test/stackquantity.test.js test/deckrules.test.js test/auth.test.js test/tcgretry.test.js test/cardsources.test.js test/orbunion.test.js test/absentsets.test.js test/outofscope.test.js test/indexstate.test.js test/setcatalogue.test.js test/pokemonprovider.test.js test/cardsearchsql.test.js test/printingexpansion.test.js test/globalverify.test.js test/languages.test.js test/marketplacelinks.test.js test/slabgrading.test.js test/marketvalue.test.js test/tcgcsv.test.js test/setindexlang.test.js test/tls.test.js && node test/e2e/run.js",
+    "test": "node test/run.js && node test/e2e/run.js",
     "test:e2e": "node test/e2e/run.js"
   },
   "dependencies": {
@@ -17,7 +17,7 @@
     "express": "^4.19.2",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
-    "opencv-wasm": "^4.3.0-10",
+    "onnxruntime-node": "^1.27.0",
     "selfsigned": "^5.5.0",
     "sharp": "^0.33.5",
     "sqlite3": "^6.0.1"

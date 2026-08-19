@@ -13,8 +13,8 @@
 //
 // These are faithful to OpenCV's behaviour where it matters for the detector,
 // and deliberately not general: single-channel 8-bit only, rectangular kernels
-// only, no borders beyond replicate/zero. shared/cardDetect.test.mjs pins the
-// output against the OpenCV implementation on real captures.
+// only, no borders beyond replicate/zero. backend/test/clientcrop.test.js runs the
+// detector these back through the same crop the browser produces.
 
 // Scratch buffers, reused across calls.
 //
@@ -326,78 +326,6 @@ export function connectedRegions(bin, w, h, minArea) {
     }
   }
   return out;
-}
-
-// Contours of a binary image, as closed point loops — the equivalent of
-// cv.findContours with RETR_LIST.
-//
-// RETR_LIST specifically, not RETR_EXTERNAL: the card is not always the
-// outermost thing in the frame. Photographed on a playmat or a binder page, the
-// whole surface is one blob and the card's own outline is a HOLE inside it.
-// Both are needed, so this traces the boundary of every foreground region AND
-// every hole.
-//
-// Moore boundary tracing from each unvisited boundary pixel, which yields the
-// same loops as OpenCV's border following for the purposes here (area, hull,
-// polygon approximation) even though it does not reproduce its exact traversal
-// order or hierarchy.
-export function findContours(bin, w, h) {
-  const seen = new Uint8Array(w * h);
-  const contours = [];
-  const get = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : bin[y * w + x]);
-  // Clockwise neighbourhood, starting west.
-  const NX = [-1, -1, 0, 1, 1, 1, 0, -1];
-  const NY = [0, -1, -1, -1, 0, 1, 1, 1];
-
-  const trace = (sx, sy, inside) => {
-    // `inside` selects which value counts as foreground, so the same routine
-    // traces holes by inverting the test.
-    const fg = (x, y) => (inside ? get(x, y) : !get(x, y)) ? 1 : 0;
-    const pts = [];
-    let cx = sx, cy = sy, dir = 0;
-    for (let guard = 0; guard < 4 * (w + h) * 4; guard++) {
-      pts.push({ x: cx, y: cy });
-      seen[cy * w + cx] = 1;
-      let found = false;
-      // Resume the scan just past where we came from, which is what keeps the
-      // walk hugging the boundary instead of cutting across.
-      for (let k = 0; k < 8; k++) {
-        const d = (dir + 6 + k) % 8;
-        const nx = cx + NX[d], ny = cy + NY[d];
-        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-        if (fg(nx, ny)) { cx = nx; cy = ny; dir = d; found = true; break; }
-      }
-      if (!found) break;                       // isolated pixel
-      if (cx === sx && cy === sy) break;        // closed the loop
-    }
-    return pts;
-  };
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      if (seen[i]) continue;
-      const v = bin[i];
-      // A boundary pixel is foreground with a background neighbour (or vice
-      // versa for holes).
-      const isEdge = v
-        ? (!get(x - 1, y) || !get(x + 1, y) || !get(x, y - 1) || !get(x, y + 1))
-        : (get(x - 1, y) && get(x + 1, y));
-      if (!isEdge) continue;
-      const pts = trace(x, y, !!v);
-      if (pts.length >= 8) contours.push(pts);
-    }
-  }
-  return contours;
-}
-
-// Signed-area magnitude of a closed polygon (shoelace), matching cv.contourArea.
-export function contourArea(pts) {
-  let a = 0;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    a += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
-  }
-  return Math.abs(a) / 2;
 }
 
 // Perimeter of a closed polygon, matching cv.arcLength(closed=true).
