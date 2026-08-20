@@ -156,6 +156,15 @@ app.use(cors({
 // collections.
 app.use(express.json({ limit: '15mb' }));
 
+// gzip matters for the API payload as much as for static assets: a
+// multi-thousand-card collection's /api/collection response is tens of MB of
+// JSON, and must be registered BEFORE the API routes below or it never sees
+// them. For the scanner specifically, card detection runs in the browser
+// against OpenCV.js, which is an ~11 MB chunk. Uncompressed that is a long
+// wait on a phone over wifi and, worse, a stall that looks like a hang.
+// Compressed it is ~3.5 MB, and it is immutable-hashed so it is fetched once.
+app.use(compression());
+
 // Initialize Database on startup
 db.initDb()
   .then(async () => {
@@ -243,6 +252,7 @@ db.initDb()
 
     // Periodic auto-backup (BACKUP_INTERVAL_HOURS, default 24; 0 disables)
     require('./backup').startAutoBackup();
+
   })
   .catch(err => {
     console.error('Failed to initialize database:', err);
@@ -280,13 +290,7 @@ app.use('/api/sets', setsRoutes);
 app.use('/api/decks', decksRoutes);
 app.use('/api/settings', settingsRoutes);
 
-// Serve production static assets from Frontend.
-//
-// gzip matters here specifically because of the scanner: card detection runs in
-// the browser against OpenCV.js, which is an ~11 MB chunk. Uncompressed that is a
-// long wait on a phone over wifi and, worse, a stall that looks like a hang.
-// Compressed it is ~3.5 MB, and it is immutable-hashed so it is fetched once.
-app.use(compression());
+// (compression() is registered early, before the API routes — see above.)
 const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
 app.use(express.static(frontendBuildPath));
 
