@@ -24,6 +24,13 @@ function timeAgo(iso) {
 
 function StatusBadge({ deck }) {
   const { t } = useT();
+  if (!deck.enabled) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: 'var(--text-muted)', fontSize: '0.78rem', fontWeight: 600 }}>
+        <Clock size={13} /> {t('mfx.statusNotSyncing')}
+      </span>
+    );
+  }
   if (deck.last_error) {
     return (
       <span title={deck.last_error} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: 'var(--accent-red)', fontSize: '0.78rem', fontWeight: 600 }}>
@@ -45,7 +52,7 @@ function StatusBadge({ deck }) {
   );
 }
 
-function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDeck, busy }) {
+function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDeck, onToggleDeck, busy }) {
   const { t } = useT();
   const lastDecklist = timeAgo(author.last_decklist_sync_at);
   const lastContentCheck = timeAgo(author.last_content_check_at);
@@ -76,7 +83,12 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
             </a>
           </div>
           <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
-            @{author.moxfield_user} · {t('mfx.deckCount', { count: author.total_decks })}
+            @{author.moxfield_user} · {t('mfx.deckCount', { count: author.tracked_decks })}
+            {author.tracked_decks > author.total_decks && (
+              <span title={t('mfx.pausedHint')} style={{ color: 'var(--text-muted)' }}>
+                {' '}· <span style={{ color: 'var(--type-grass, #4ade80)', fontWeight: 600 }}>{t('mfx.syncingCount', { count: author.total_decks })}</span>
+              </span>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -127,7 +139,17 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
       {author.decks.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
           {author.decks.map(deck => (
-            <div key={deck.public_id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.45rem 0.6rem', background: 'var(--surface-1)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
+            <div key={deck.public_id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.45rem 0.6rem', background: 'var(--surface-1)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', opacity: deck.enabled ? 1 : 0.62 }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', flexShrink: 0, userSelect: 'none' }} title={deck.enabled ? t('mfx.pauseDeckHint') : t('mfx.resumeDeckHint')}>
+                <input
+                  type="checkbox"
+                  checked={deck.enabled}
+                  disabled={busy !== null}
+                  onChange={() => onToggleDeck(deck)}
+                  style={{ accentColor: 'var(--accent-blue, #3b82f6)', width: '0.95rem', height: '0.95rem', cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{t('mfx.syncThisDeck')}</span>
+              </label>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--text-strong)', fontWeight: 600, fontSize: '0.88rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -153,10 +175,10 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
               </a>
               <button
                 className="btn btn-secondary"
-                disabled={busy !== null}
+                disabled={busy !== null || !deck.enabled}
                 onClick={() => onSyncDeck(deck)}
                 style={{ padding: '0.3rem 0.55rem', fontSize: '0.75rem', flexShrink: 0 }}
-                title={t('mfx.resyncHint')}
+                title={deck.enabled ? t('mfx.resyncHint') : t('mfx.resumeDeckHint')}
               >
                 <RefreshCw size={12} /> {t('mfx.resync')}
               </button>
@@ -284,6 +306,25 @@ export default function MoxfieldPanel({ showToast, user }) {
     }
   };
 
+  const toggleDeck = async (deck) => {
+    setBusy('deck');
+    try {
+      const r = await fetch(`/api/moxfield/decks/${deck.public_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !deck.enabled })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || t('mfx.errGeneric'));
+      showToast?.(deck.enabled ? t('mfx.deckPaused', { name: deck.name }) : t('mfx.deckResumed', { name: deck.name }));
+      await load();
+    } catch (err) {
+      showToast?.(err.message || t('mfx.errGeneric'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const saveIntervals = async () => {
     setSavingIntervals(true);
     try {
@@ -389,6 +430,7 @@ export default function MoxfieldPanel({ showToast, user }) {
           onSyncDecklist={syncDecklist}
           onSyncContents={syncContents}
           onSyncDeck={syncDeck}
+          onToggleDeck={toggleDeck}
         />
       ))}
     </>

@@ -118,8 +118,10 @@ async function ensureLocalDeck(author, summary) {
 }
 
 // Keep the tracking row for a deck in step with the remote summary, and link
-// the local deck to it.
-async function upsertTrackingRow(author, summary) {
+// the local deck to it. Only creates the local mirror when the deck is
+// enabled — an unchecked deck is tracked (so re-enabling is instant) but
+// never imported.
+async function upsertTrackingRow(author, summary, { enabled = true } = {}) {
   await db.run(
     `INSERT INTO moxfield_decks
        (author_id, public_id, name, format, mainboard_count, sideboard_count, maybeboard_count, commander_count, last_updated_at, bindarr_deck_id)
@@ -146,7 +148,7 @@ async function upsertTrackingRow(author, summary) {
   );
   const row = await db.get(`SELECT * FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
     [author.id, summary.publicId]);
-  if (!row.bindarr_deck_id) {
+  if (!row.bindarr_deck_id && enabled) {
     const deckId = await ensureLocalDeck(author, summary);
     await db.run(`UPDATE moxfield_decks SET bindarr_deck_id = ? WHERE id = ?`, [deckId, row.id]);
     row.bindarr_deck_id = deckId;
@@ -196,12 +198,13 @@ async function syncDecklist(authorId, { user } = {}) {
 
   for (const summary of summaries) {
     if (!summary.publicId) continue;
-    const wasTracked = await db.get(`SELECT id FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
+    const wasTracked = await db.get(`SELECT id, enabled FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
       [author.id, summary.publicId]);
-    await upsertTrackingRow(author, summary);
+    const enabled = wasTracked ? wasTracked.enabled !== 0 : true;
+    await upsertTrackingRow(author, summary, { enabled });
     if (wasTracked) {
       kept += 1;
-    } else {
+    } else if (enabled) {
       created += 1;
       // Brand-new mirror: pull its contents right away rather than waiting for
       // the fast job to notice the unsynced stamp.
@@ -248,10 +251,11 @@ async function syncDecklist(authorId, { user } = {}) {
 async function runContentSync(authorId, { user } = {}) {
   const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ?`, [authorId]);
   if (!author) throw new Error('Moxfield author not found');
-  // No tracked decks yet (author just added, decklist sync pending): nothing to
-  // check. The decklist job creates the tracking rows.
-  const haveDecks = await db.get(`SELECT COUNT(*) AS c FROM moxfield_decks WHERE author_id = ?`, [author.id]);
-  if (!haveDecks || haveDecks.c === 0) return { ok: true, checked: 0, updated: 0 };
+  // No ENABLED tracked decks yet (author just added, decklist sync pending, or
+  // every deck unchecked): nothing to check. Unchecked decks cost no Moxfield
+  // requests.
+  const haveDecks = await db.get(`SELECT COUNT(*) AS c FROM moxfield_decks WHERE author_id = ? AND enabled = 1`, [author.id]);
+  if (!haveDecks || haveDecks.c === 0) return { ok: true, checked: 0, updated: 0, skipped: 0 };
 
   const summaries = await moxfieldApi.getAuthorDeckSummaries(author.moxfield_user);
   const byPublicId = new Map(summaries.map(s => [s.publicId, s]));
@@ -259,10 +263,31 @@ async function runContentSync(authorId, { user } = {}) {
 
   let updated = 0;
   let removed = 0;
+  let skipped = 0;
   for (const row of tracked) {
     const summary = byPublicId.get(row.public_id);
     if (!summary) {
       if (await retireDeck(author, row.public_id)) removed += 1;
+      continue;
+    }
+    // Unchecked deck: keep its listing row fresh (name, counts, remote stamp)
+    // but never pull contents or create a mirror.
+    if (row.enabled === 0) {
+      skipped += 1;
+      await db.run(
+        `UPDATE moxfield_decks SET last_updated_at = ?, name = ?, format = ?,
+                mainboard_count = ?, sideboard_count = ?, maybeboard_count = ?
+         WHERE id = ?`,
+        [
+          summary.lastUpdatedAtUtc || null,
+          summary.name || row.name,
+          summary.format || row.format,
+          summary.mainboardCount != null ? parseInt(summary.mainboardCount, 10) : null,
+          summary.sideboardCount != null ? parseInt(summary.sideboardCount, 10) : null,
+          summary.maybeboardCount != null ? parseInt(summary.maybeboardCount, 10) : null,
+          row.id
+        ]
+      );
       continue;
     }
     // Stamp moved since we last mirrored this deck (or never mirrored it).
@@ -301,7 +326,7 @@ async function runContentSync(authorId, { user } = {}) {
   // an actual pull.)
   await db.run(`UPDATE moxfield_authors SET last_content_check_at = CURRENT_TIMESTAMP WHERE id = ?`, [author.id]);
 
-  return { ok: true, checked: tracked.length, updated, removed };
+  return { ok: true, checked: tracked.length, updated, removed, skipped };
 }
 
 // Pull one deck's full contents from Moxfield and mirror onto the local deck.
@@ -381,6 +406,49 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   };
 }
 
+// Flip one deck's import switch. Disabling removes the local mirror (and its
+// card quantities) but keeps the tracking row — the deck stays listed in the
+// UI and re-enabling re-imports it on the next content check, with no state to
+// reconstruct. Enabling works even for a deck that has never been imported.
+async function setDeckEnabled(userId, publicId, enabled) {
+  const row = await db.get(
+    `SELECT md.*, a.moxfield_user AS author_user
+     FROM moxfield_decks md
+     JOIN moxfield_authors a ON a.id = md.author_id
+     WHERE md.public_id = ? AND a.user_id = ?`,
+    [publicId, userId]
+  );
+  if (!row) throw new Error('Moxfield deck not found for this user');
+
+  if (enabled) {
+    await db.run(`UPDATE moxfield_decks SET enabled = 1, last_error = NULL WHERE id = ?`, [row.id]);
+    // Imported already: just re-armed. Not imported yet (or re-imported after
+    // a disable): pull it now so the user sees the result immediately instead
+    // of on the next clock.
+    if (row.bindarr_deck_id) {
+      return { ok: true, enabled: true, imported: true };
+    }
+    const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ?`, [row.author_id]);
+    try {
+      await pullDeckContent(author, publicId, row);
+    } catch (err) {
+      await db.run(`UPDATE moxfield_decks SET last_error = ? WHERE id = ?`, [err.message, row.id]);
+    }
+    const fresh = await db.get(`SELECT bindarr_deck_id FROM moxfield_decks WHERE id = ?`, [row.id]);
+    return { ok: true, enabled: true, imported: !!fresh.bindarr_deck_id };
+  }
+
+  if (row.bindarr_deck_id) {
+    await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
+    await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
+    await db.run(`UPDATE moxfield_decks SET enabled = 0, bindarr_deck_id = NULL, last_synced_updated_at = NULL, last_error = NULL WHERE id = ?`, [row.id]);
+  } else {
+    await db.run(`UPDATE moxfield_decks SET enabled = 0, last_error = NULL WHERE id = ?`, [row.id]);
+  }
+  console.log(`Moxfield sync: deck "${row.name}" import disabled (mirror removed)`);
+  return { ok: true, enabled: false };
+}
+
 // Re-pull one specific deck's contents for a user, regardless of its stamp.
 // Finds the tracking row under that user's authors (a public id belongs to one
 // author on Moxfield, so this is unique once found).
@@ -448,27 +516,34 @@ async function getStatus(userId) {
     [userId]
   );
   for (const a of authors) {
+    // The aggregate describes what is actually being synced; unchecked decks
+    // are shown in the deck list but don't count against the "up to date" bar.
     const agg = await db.get(
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN last_synced_updated_at IS NOT NULL AND last_synced_updated_at = last_updated_at THEN 1 ELSE 0 END) AS current,
               SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS with_errors,
               MAX(last_content_sync_at) AS last_content_sync
-       FROM moxfield_decks WHERE author_id = ?`,
+       FROM moxfield_decks WHERE author_id = ? AND enabled = 1`,
       [a.id]
     );
     a.total_decks = agg ? agg.total : 0;
     a.current_decks = agg && agg.current ? agg.current : 0;
     a.error_decks = agg && agg.with_errors ? agg.with_errors : 0;
     a.last_content_sync = agg ? agg.last_content_sync : null;
+    a.tracked_decks = (await db.get(
+      `SELECT COUNT(*) AS c FROM moxfield_decks WHERE author_id = ?`, [a.id]
+    ) || { c: 0 }).c;
 
     const decks = await db.all(
       `SELECT md.public_id, md.name, md.format, md.mainboard_count, md.sideboard_count,
-              md.last_updated_at, md.last_synced_updated_at, md.last_content_sync_at, md.last_error
+              md.last_updated_at, md.last_synced_updated_at, md.last_content_sync_at, md.last_error,
+              md.enabled
        FROM moxfield_decks md WHERE md.author_id = ? ORDER BY md.last_updated_at DESC`,
       [a.id]
     );
     a.decks = decks.map(d => ({
       ...d,
+      enabled: d.enabled !== 0,
       current: !!(d.last_synced_updated_at && d.last_synced_updated_at === d.last_updated_at)
     }));
   }
@@ -481,6 +556,7 @@ module.exports = {
   getStatus,
   syncDecklist,
   runContentSync,
+  setDeckEnabled,
   pullDeckContent,
   pullDeckContentByPublicId,
   // Re-exported from utils/mfxPayload so callers can import everything from one place.

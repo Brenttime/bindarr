@@ -701,11 +701,21 @@ async function initDb() {
       bindarr_deck_id INTEGER,
       last_content_sync_at DATETIME,
       last_error TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(author_id, public_id)
     )
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_mfx_deck_author ON moxfield_decks(author_id)`);
+
+  // Per-deck on/off switch: unchecked decks stay tracked (their Moxfield
+  // listing is kept) but are never imported — no local mirror, no content
+  // pulls. Added after the fact; existing rows default to ON so nothing stops
+  // syncing without an explicit opt-out.
+  const mfxDeckCols = await all(`PRAGMA table_info(moxfield_decks)`);
+  if (!mfxDeckCols.some(c => c.name === 'enabled')) {
+    await run(`ALTER TABLE moxfield_decks ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`);
+  }
 
   // Which Moxfield deck a local deck mirrors, when it is one. NULL for every
   // hand-made deck; the sync only ever edits decks that carry this link, so a

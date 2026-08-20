@@ -108,4 +108,18 @@ router.post('/decks/:publicId/sync', async (req, res) => {
   }
 });
 
+// Flip one deck's import switch: {enabled: boolean}. Disabling removes the
+// local mirror and stops content pulls; re-enabling pulls it again.
+router.put('/decks/:publicId', async (req, res) => {
+  const enabled = req.body.enabled === true;
+  try {
+    const report = await moxfieldSync.setDeckEnabled(req.user.id, req.params.publicId, enabled);
+    res.json(report);
+  } catch (error) {
+    if (/not found/i.test(error.message)) return res.status(404).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update Moxfield deck', detail: error.message });
+  }
+});
+
 module.exports = router;
