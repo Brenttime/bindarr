@@ -169,7 +169,6 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
           {author.decks.map(deck => (
             <div key={deck.public_id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.45rem 0.6rem', background: 'var(--surface-1)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', opacity: deck.enabled ? 1 : 0.62 }}>
-              <CardProgress deck={deck} />
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', flexShrink: 0, userSelect: 'none' }} title={deck.enabled ? t('mfx.pauseDeckHint') : t('mfx.resumeDeckHint')}>
                 <input
                   type="checkbox"
@@ -194,6 +193,7 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
                   {deck.last_content_sync_at && <> · {t('mfx.lastContent')}: {timeAgo(deck.last_content_sync_at)}</>}
                 </div>
               </div>
+              <CardProgress deck={deck} />
               <a
                 href={`https://moxfield.com/decks/${deck.public_id}`}
                 target="_blank"
