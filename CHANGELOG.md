@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
 [GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
 
+## [1.8.2] - 2026-08-20
+
+### Added
+- **Collection filters take more than one value.** Set, Supertype, Type, Rarity, Condition,
+  Printing, Grading, Mana Value, Language and Location are checklists now, so "Rare or
+  Double rare" or three particular sets is one view instead of three passes. Game, Sort and
+  the price range stay single-value. Thanks
+  [@JGHCode](https://github.com/JGHCode) ([#38](https://github.com/thenotoriousJeremy/bindarr/pull/38)).
+- **Duplicates can share a binder pocket.** A container's settings carry a new "Stack
+  duplicates in one pocket" option: with it on, copies of the same printing of the same card
+  in the same language sit in one pocket with a `×N` badge, a page's occupancy counts slots
+  used rather than cards held, auto-filing sends a duplicate to its twin's slot, and dropping
+  a copy onto its twin joins that pocket instead of swapping the two. Off by default, and off
+  it behaves exactly as before ([#40](https://github.com/thenotoriousJeremy/bindarr/pull/40)).
+- **A single container can be shared as itself.** A share link with `?container=<id>` renders
+  that binder or box the way its owner sees it — pockets and page spreads, or the box
+  coverflow — rather than as a flat card list. The links sit in Settings beside the
+  collection, trade and wishlist ones, and appear while "share locations" is on, since that
+  is the setting the view depends on ([#40](https://github.com/thenotoriousJeremy/bindarr/pull/40)).
+
+### Fixed
+- **A binder opened onto the wrong pages.** Pages were paired 1-2, 3-4, so page 1 faced page
+  2 — which no binder does: page 1 is a single leaf against the inside cover, its back is
+  page 2, and the pairs run 2-3, 4-5. Spreads follow that now, so a binder with an even page
+  count also ends on a page alone on the left
+  ([#40](https://github.com/thenotoriousJeremy/bindarr/pull/40)).
+- **The container settings modal showed a raw placeholder.** Its "cards currently stored" row
+  puts the count in the value beside the label, but the label it used was a whole sentence
+  with a `{count}` nothing ever filled in
+  ([#40](https://github.com/thenotoriousJeremy/bindarr/pull/40)).
+- **The new filter popover ignored the theme and the keyboard.** It painted itself from a CSS
+  variable that does not exist, so it stayed dark in the light and LCARS themes, its summary
+  and clear button were untranslated English, and its checkboxes were hidden inputs no
+  keyboard or screen reader could reach
+  ([#40](https://github.com/thenotoriousJeremy/bindarr/pull/40)).
+
 ## [1.8.1] - 2026-08-19
 
 ### Fixed
