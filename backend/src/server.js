@@ -29,6 +29,7 @@ const settingsRoutes = require('./routes/settings');
 const tagsRoutes = require('./routes/tags');
 const notesRoutes = require('./routes/notes');
 const cardArtRoutes = require('./routes/cardArt');
+const moxfieldRoutes = require('./routes/moxfield');
 const { getAuditLogs, revertAuditEvent } = require('./utils/auditLogger');
 const { startHttps, selfSignedTls } = require('./utils/tls');
 
@@ -253,6 +254,10 @@ db.initDb()
     // Periodic auto-backup (BACKUP_INTERVAL_HOURS, default 24; 0 disables)
     require('./backup').startAutoBackup();
 
+    // Moxfield sync: the 20-second tick polls each tracked author's deck list
+    // (slow interval) and checks every tracked deck's contents for changes
+    // (fast interval). No-op until somebody adds an author.
+    require('./moxfieldScheduler').startMoxfieldScheduler();
   })
   .catch(err => {
     console.error('Failed to initialize database:', err);
@@ -289,6 +294,7 @@ app.post('/api/audit-logs/:id/revert', revertAuditEvent);
 app.use('/api/sets', setsRoutes);
 app.use('/api/decks', decksRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/moxfield', moxfieldRoutes);
 
 // (compression() is registered early, before the API routes — see above.)
 const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
