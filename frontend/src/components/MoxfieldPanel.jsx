@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, RefreshCw, CheckCircle2, AlertTriangle, Clock, ExternalLink, Save } from 'lucide-react';
 import { useT } from '../utils/i18n';
 
-// Moxfield sync: the UI half of the author->decklist->deck-contents mirror.
-// The server runs both jobs on its own clocks (see backend moxfieldScheduler);
-// this view just shows where things stand, lets you add/remove authors, tune
-// the two intervals, and force a re-sync when something looks wrong. It polls
-// every 15s so the "Up to date / Stale" badges flip on their own.
+// Moxfield sync, embedded in the Settings panel (see Settings.jsx, which
+// provides the glass-panel wrapper and header). The server runs both jobs on
+// its own clocks (see backend moxfieldScheduler); this view just shows where
+// things stand, lets you add/remove authors, tune the two intervals, and force
+// a re-sync when something looks wrong. It polls every 15s so the "Up to date
+// / Stale" badges flip on their own.
 
 const POLL_MS = 15000;
 
@@ -167,7 +168,7 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
   );
 }
 
-export default function MoxfieldSync({ showToast, user }) {
+export default function MoxfieldPanel({ showToast, user }) {
   const { t } = useT();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -309,32 +310,27 @@ export default function MoxfieldSync({ showToast, user }) {
   const isAdmin = user && user.role === 'admin';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '72rem' }}>
-      {/* Header + add author */}
-      <div className="glass-panel" style={{ padding: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-          <div>
-            <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-strong)', margin: 0 }}>{t('mfx.title')}</h2>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '0.25rem' }}>{t('mfx.subtitle')}</div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <input
-              className="input-control"
-              value={newUsername}
-              onChange={e => setNewUsername(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addAuthor()}
-              placeholder={t('mfx.usernamePlaceholder')}
-              style={{ width: '14rem' }}
-            />
-            <button className="btn btn-primary" onClick={addAuthor} disabled={adding || !newUsername.trim()}>
-              <Plus size={16} /> {adding ? t('mfx.adding') : t('mfx.addAuthor')}
-            </button>
-          </div>
+    <>
+      {/* Intro + add author */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', maxWidth: '34rem', lineHeight: 1.45 }}>{t('mfx.subtitle')}</div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <input
+            className="input-control"
+            value={newUsername}
+            onChange={e => setNewUsername(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addAuthor()}
+            placeholder={t('mfx.usernamePlaceholder')}
+            style={{ width: '14rem' }}
+          />
+          <button className="btn btn-primary" onClick={addAuthor} disabled={adding || !newUsername.trim()}>
+            <Plus size={16} /> {adding ? t('mfx.adding') : t('mfx.addAuthor')}
+          </button>
         </div>
       </div>
 
       {/* Intervals */}
-      <div className="glass-panel" style={{ padding: '1rem' }}>
+      <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: '20rem' }}>
             <div style={{ fontWeight: 600, color: 'var(--text-strong)', fontSize: '0.9rem' }}>{t('mfx.intervals')}</div>
@@ -378,7 +374,7 @@ export default function MoxfieldSync({ showToast, user }) {
       {!data && !error ? (
         <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}><div className="spinner" aria-label={t('common.loading')} /></div>
       ) : (data && data.authors.length === 0 && !error) ? (
-        <div className="glass-panel" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.01)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
           <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>{t('mfx.noAuthors')}</div>
           <div style={{ fontSize: '0.85rem', marginTop: '0.4rem' }}>{t('mfx.noAuthorsHint')}</div>
         </div>
@@ -395,6 +391,6 @@ export default function MoxfieldSync({ showToast, user }) {
           onSyncDeck={syncDeck}
         />
       ))}
-    </div>
+    </>
   );
 }

@@ -19,7 +19,6 @@
   "nav.collection": "Collection",
   "nav.storage": "Storage",
   "nav.deckBuilder": "Deck Builder",
-  "nav.moxfield": "Moxfield",
   "mfx.title": "Moxfield Sync",
   "mfx.subtitle": "Mirror a Moxfield author's public decks into Bindarr. The deck list refreshes on a slow clock; the contents of each deck are checked for changes on a fast one.",
   "mfx.addAuthor": "Add Author",

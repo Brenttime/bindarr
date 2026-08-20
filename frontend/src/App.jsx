@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { LayoutDashboard, Database, MapPin, Sparkles, Settings as SettingsIcon, LogOut, ShieldAlert, Plus, Swords, StickyNote, Globe } from 'lucide-react';
+import { LayoutDashboard, Database, MapPin, Sparkles, Settings as SettingsIcon, LogOut, ShieldAlert, Plus, Swords, StickyNote } from 'lucide-react';
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
@@ -16,7 +16,6 @@ const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const SharedCollection = lazy(() => import('./components/SharedCollection'));
 const DeckBuilder = lazy(() => import('./components/DeckBuilder'));
 const Notes = lazy(() => import('./components/Notes'));
-const MoxfieldSync = lazy(() => import('./components/MoxfieldSync'));
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -251,8 +250,6 @@ function App() {
         );
       case 'deckbuilder':
         return <DeckBuilder showToast={showToast} />;
-      case 'moxfield':
-        return <MoxfieldSync showToast={showToast} user={user} />;
       case 'notes':
         return <Notes showToast={showToast} />;
       case 'settings':
@@ -311,14 +308,6 @@ function App() {
           >
             <Swords size={18} />
             <span>{t('nav.deckBuilder')}</span>
-          </button>
-
-          <button
-            className={`nav-tab ${activeTab === 'moxfield' ? 'active' : ''}`}
-            onClick={() => goTab('moxfield')}
-          >
-            <Globe size={18} />
-            <span>{t('nav.moxfield')}</span>
           </button>
 
           <button

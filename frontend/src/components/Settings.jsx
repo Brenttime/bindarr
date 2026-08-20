@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Layers, Languages } from 'lucide-react';
+import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Layers, Languages, Globe } from 'lucide-react';
 import { GAMES, enabledGames, setGameEnabled, gameOptions, defaultGame } from '../utils/games';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 import { REPO_URL } from '../utils/repo';
+import MoxfieldPanel from './MoxfieldPanel';
 
 // One secret: what it is called, what it buys you, and where to get one. Three of
 // these replaced three near-identical panels, so a fourth provider is a few lines
@@ -795,6 +796,16 @@ function Settings({ user, onUpdateUser, showToast }) {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Moxfield Sync Panel */}
+        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
+            <Globe size={20} style={{ color: 'var(--type-grass, #4ade80)' }} />
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('mfx.title')}</h3>
+          </div>
+
+          <MoxfieldPanel user={user} showToast={showToast} />
         </div>
 
         {/* Collection Backup & Data Options Panel */}
