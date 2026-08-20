@@ -22,6 +22,34 @@ function timeAgo(iso) {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+// Progress bar of how many cards are in the deck's main slot against the
+// format's target (commander 100, constructed 75). Green only when the deck
+// hits its target — anything short of that reads red, so a not-quite-full deck
+// is obvious at a glance. Paused decks show a muted gray fill instead.
+function CardProgress({ deck }) {
+  const { t } = useT();
+  const count = deck.card_count;
+  const target = deck.card_target;
+  if (count == null || !target) return null;
+  const pct = Math.max(0, Math.min(100, Math.round((count / target) * 100)));
+  const complete = count >= target;
+  const activeColor = complete ? 'var(--type-grass, #4ade80)' : 'var(--accent-red, #ff4747)';
+  const color = deck.enabled ? activeColor : 'var(--text-muted)';
+  const hint = deck.enabled
+    ? complete ? t('mfx.completeHint', { target }) : t('mfx.shortHint', { missing: target - count, target })
+    : t('mfx.deckPaused');
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.3rem' }}>
+      <div style={{ flex: 1, height: '0.4rem', borderRadius: '999px', background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }} title={hint}>
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: '999px', background: color, transition: 'width 0.3s ease' }} />
+      </div>
+      <span style={{ fontSize: '0.66rem', color: color, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+        {count}/{target}
+      </span>
+    </div>
+  );
+}
+
 function StatusBadge({ deck }) {
   const { t } = useT();
   if (!deck.enabled) {
@@ -163,6 +191,7 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
                   {deck.sideboard_count != null && <> · {t('mfx.sideboard')}: {deck.sideboard_count}</>}
                   {deck.last_content_sync_at && <> · {t('mfx.lastContent')}: {timeAgo(deck.last_content_sync_at)}</>}
                 </div>
+                <CardProgress deck={deck} />
               </div>
               <a
                 href={`https://moxfield.com/decks/${deck.public_id}`}

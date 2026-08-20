@@ -337,13 +337,28 @@ async function pullDeckContent(author, publicId, knownRow = null) {
 
   const details = await moxfieldApi.getDeckDetails(publicId);
   const entries = extractDeckCards(details);
-  const targetDeckId = row.bindarr_deck_id || await ensureLocalDeck(author, {
-    publicId,
-    name: details.name || row.name,
-    description: details.description || '',
-    format: details.format || row.format
-  });
-  if (!row.bindarr_deck_id) {
+
+  // A stored bindarr_deck_id can dangle if the mirror deck was deleted through
+  // the generic deck-delete (which doesn't clear the Moxfield pointer). Writing
+  // card rows into a nonexistent deck id would leave orphaned data and a bar
+  // that reads 0. Validate the pointer; if it's gone, re-mint the mirror.
+  let targetDeckId = row.bindarr_deck_id;
+  if (targetDeckId) {
+    const alive = await db.get(
+      `SELECT id FROM decks WHERE id = ? AND source = 'moxfield'`, [targetDeckId]
+    );
+    if (!alive) {
+      targetDeckId = null;
+      await db.run(`UPDATE moxfield_decks SET bindarr_deck_id = NULL WHERE id = ?`, [row.id]);
+    }
+  }
+  if (!targetDeckId) {
+    targetDeckId = await ensureLocalDeck(author, {
+      publicId,
+      name: details.name || row.name,
+      description: details.description || '',
+      format: details.format || row.format
+    });
     await db.run(`UPDATE moxfield_decks SET bindarr_deck_id = ? WHERE id = ?`, [targetDeckId, row.id]);
   }
 
@@ -541,11 +556,22 @@ async function getStatus(userId) {
        FROM moxfield_decks md WHERE md.author_id = ? ORDER BY md.last_updated_at DESC`,
       [a.id]
     );
-    a.decks = decks.map(d => ({
-      ...d,
-      enabled: d.enabled !== 0,
-      current: !!(d.last_synced_updated_at && d.last_synced_updated_at === d.last_updated_at)
-    }));
+    a.decks = decks.map(d => {
+      // "Allocated cards" = the cards in this deck's main slot, as Moxfield
+      // reports it (includes the commander for EDH, so a full commander deck
+      // reads 100). The target is the format's main-slot size: 100 for
+      // commander, 75 for constructed formats. A deck that hits its target is
+      // "complete"; anything under it is short cards.
+      const count = d.mainboard_count != null ? d.mainboard_count : null;
+      const target = targetSizeForFormat(d.format);
+      return {
+        ...d,
+        enabled: d.enabled !== 0,
+        current: !!(d.last_synced_updated_at && d.last_synced_updated_at === d.last_updated_at),
+        card_count: count,
+        card_target: target
+      };
+    });
   }
   return { authors };
 }
