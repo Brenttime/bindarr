@@ -37,6 +37,7 @@ const settingsRoutes = require('./routes/settings');
 const notesRoutes = require('./routes/notes');
 const cardArtRoutes = require('./routes/cardArt');
 const { authenticateToken } = require('./middleware/auth');
+const moxfieldRoutes = require('./routes/moxfield');
 const { startHttps, selfSignedTls } = require('./utils/tls');
 
 
@@ -222,6 +223,15 @@ async function autoUpdateCatalogs() {
   }
 }
 
+// gzip matters for the API payload as much as for static assets: a
+// multi-thousand-card collection's /api/collection response is tens of MB of
+// JSON, and must be registered BEFORE the API routes below or it never sees
+// them. For the scanner specifically, card detection runs in the browser
+// against OpenCV.js, which is an ~11 MB chunk. Uncompressed that is a long
+// wait on a phone over wifi and, worse, a stall that looks like a hang.
+// Compressed it is ~3.5 MB, and it is immutable-hashed so it is fetched once.
+app.use(compression());
+
 // Initialize Database on startup
 db.initDb()
   .then(async () => {
@@ -314,6 +324,11 @@ db.initDb()
 
     // Periodic auto-backup (BACKUP_INTERVAL_HOURS, default 24; 0 disables)
     require('./backup').startAutoBackup();
+
+    // Moxfield sync: the 20-second tick polls each tracked author's deck list
+    // (slow interval) and checks every tracked deck's contents for changes
+    // (fast interval). No-op until somebody adds an author.
+    require('./moxfieldScheduler').startMoxfieldScheduler();
   })
   .catch(err => {
     console.error('Failed to initialize database:', err);
@@ -380,6 +395,7 @@ app.use('/api', notesRoutes);
 app.use('/api/sets', setsRoutes);
 app.use('/api/decks', decksRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/moxfield', moxfieldRoutes);
 
 // The live overlay runs the SAME corner model the scan does, in the browser, so
 // what the user aims with and what the server matches cannot disagree. That
@@ -400,6 +416,7 @@ app.get('/models/cornelius.onnx', (req, res) => {
   });
 });
 
+// (compression() is registered early, before the API routes — see above.)
 const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
 // A year, immutable. Vite content-hashes every asset filename, so a changed file
 // is a changed URL and a stale cache cannot happen. Without this the browser

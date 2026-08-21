@@ -29,10 +29,27 @@ FROM node:20-slim AS production
 WORKDIR /app
 
 # Native build tools for SQLite3, gosu to drop root in the entrypoint, plus
-# wget (healthcheck) and ca-certificates (HTTPS to the card APIs).
+# wget (healthcheck), ca-certificates (HTTPS to the card APIs) and curl —
+# the Moxfield sync shells out to a TLS-impersonating curl because Cloudflare
+# fingerprints the TLS client (JA3) and challenges non-browser handshakes
+# from this host's egress IP: node's handshake and the system curl
+# (OpenSSL 3.0.x) get 403 challenge pages, a Chrome-shaped ClientHello gets
+# straight through (see backend/src/moxfieldApi.js).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 make g++ gosu wget ca-certificates \
+      python3 make g++ gosu wget ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
+
+# curl-impersonate v2.1.0 (glibc build): a curl built against BoringSSL that
+# presents a Chrome 124 TLS fingerprint — the only handshake Cloudflare in
+# front of api2.moxfield.com accepts from a server. Pinned release URL, x86_64
+# only (the build host is x86_64; swap the URL suffix for aarch64 if that
+# ever changes). backend/src/moxfieldApi.js execs /usr/local/bin/curl-impersonate
+# and falls back to plain curl if it is missing.
+RUN curl -fsSL "https://github.com/lexiforest/curl-impersonate/releases/download/v2.1.0/curl-impersonate-v2.1.0.x86_64-linux-gnu.tar.gz" -o /tmp/ci.tgz \
+  && tar xzf /tmp/ci.tgz -C /usr/local/bin curl-impersonate \
+  && chmod +x /usr/local/bin/curl-impersonate \
+  && rm -f /tmp/ci.tgz \
+  && /usr/local/bin/curl-impersonate --version | head -1
 
 # Set environment to production
 ENV NODE_ENV=production

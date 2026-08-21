@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick } from 'lucide-react';
 import { getCardDisplayName, translateJapaneseName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
@@ -315,6 +315,36 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // selectable and bulk actions hit real entry_ids (stacking merges rows).
   const displayCards = selectMode ? filteredCollection : processedCollection;
 
+  // Progressive rendering: a 20,000-card collection would otherwise mount every
+  // tile at once (tens of thousands of DOM nodes + images) and freeze the page
+  // for many seconds. Render in batches of 480 and extend on scroll — the page
+  // paints the first screenful almost immediately and grows as you scroll.
+  const INITIAL_COUNT = 480;
+  const LOAD_MORE = 480;
+  const [visibleCount, setVisibleCount] = useState(INITIAL_COUNT);
+  const sentinelRef = useRef(null);
+
+  // Reset to the first batch whenever the visible card set can change (filters,
+  // sort, search, stacking, view mode, selection mode) or after a fresh fetch.
+  useEffect(() => {
+    setVisibleCount(INITIAL_COUNT);
+  }, [displayCards, viewMode, selectMode, collection]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || visibleCount >= displayCards.length) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting) {
+        setVisibleCount(c => Math.min(c + LOAD_MORE, displayCards.length));
+      }
+    }, { rootMargin: '800px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [displayCards, visibleCount]);
+
+  const visibleCards = displayCards.slice(0, visibleCount);
+  const showSentinel = visibleCount < displayCards.length;
+
   const totalValue = useMemo(
     () => displayCards.reduce((sum, item) => sum + (item.price_trend || 0) * (item.quantity || 1), 0),
     [displayCards]
@@ -629,7 +659,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       ) : viewMode === 'gallery' ? (
         /* Visual Cards Grid Gallery View */
         <div className="card-grid">
-          {displayCards.map((item) => {
+          {visibleCards.map((item) => {
             const rarityStyle = getCardRarityBorder(item.rarity);
             const selected = selectedIds.has(item.entry_id);
 
@@ -741,6 +771,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               </div>
             );
           })}
+          {showSentinel && <div ref={sentinelRef} style={{ height: 1, clear: 'both' }} aria-hidden="true" />}
         </div>
       ) : (
         /* Traditional List Table View */
@@ -754,7 +785,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                 </tr>
               </thead>
               <tbody>
-                {displayCards.map((item) => {
+                {visibleCards.map((item) => {
                   const selected = selectedIds.has(item.entry_id);
                   return (
                   <tr key={item.entry_id} style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}>
@@ -811,6 +842,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                   </tr>
                   );
                 })}
+                {showSentinel && (
+                  <tr><td colSpan={2} style={{ padding: 0 }}><div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" /></td></tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -63,7 +63,8 @@ async function getEffectiveSettings() {
   const row = await db.get(`
     SELECT public_base_url, pokemon_provider,
            scan_exclude_tokens, scan_exclude_art_cards, scan_exclude_jumpstart, scan_exclude_promos,
-           scan_exclude_digital, setup_complete
+           scan_exclude_digital, setup_complete,
+           moxfield_decklist_interval_min, moxfield_content_interval_min
     FROM app_settings WHERE id = 1
   `);
   const public_base_url = (row && row.public_base_url) || process.env.PUBLIC_BASE_URL || '';
@@ -76,6 +77,10 @@ async function getEffectiveSettings() {
   // read as excluded rather than as included — see the column comment in db.js.
   const scan_exclude_digital = row ? !!row.scan_exclude_digital : true;
   const setup_complete = !!(row && row.setup_complete);
+  // Moxfield sync cadence. The defaults mirror the migration (60 / 1) so a
+  // pre-migration read never looks like "off".
+  const moxfield_decklist_interval_min = row ? (row.moxfield_decklist_interval_min || 60) : 60;
+  const moxfield_content_interval_min = row ? (row.moxfield_content_interval_min || 1) : 1;
   return {
     public_base_url,
     pokemon_provider,
@@ -85,6 +90,8 @@ async function getEffectiveSettings() {
     scan_exclude_promos,
     scan_exclude_digital,
     setup_complete,
+    moxfield_decklist_interval_min,
+    moxfield_content_interval_min,
   };
 }
 
@@ -109,6 +116,8 @@ router.put('/', requireAdmin, async (req, res) => {
     scan_exclude_promos,
     scan_exclude_digital,
     setup_complete,
+    moxfield_decklist_interval_min,
+    moxfield_content_interval_min,
   } = req.body;
 
   if (pokemon_provider !== undefined) {
@@ -149,6 +158,24 @@ router.put('/', requireAdmin, async (req, res) => {
   }
   if (scan_exclude_digital !== undefined) {
     await db.run(`UPDATE app_settings SET scan_exclude_digital = ? WHERE id = 1`, [scan_exclude_digital ? 1 : 0]);
+  }
+  // Moxfield cadence: minutes, clamped to [1, 1440]. A non-numeric value is
+  // rejected rather than coerced to the default, so a typo can't silently
+  // re-sync every deck every minute.
+  const clampInterval = (v, fallback) => {
+    const n = parseInt(v, 10);
+    if (!Number.isFinite(n) || n < 1) return null;
+    return Math.min(n, 24 * 60);
+  };
+  if (moxfield_decklist_interval_min !== undefined) {
+    const n = clampInterval(moxfield_decklist_interval_min, 60);
+    if (n === null) return res.status(400).json({ error: 'Moxfield decklist interval must be a whole number of minutes (1–1440)' });
+    await db.run(`UPDATE app_settings SET moxfield_decklist_interval_min = ? WHERE id = 1`, [n]);
+  }
+  if (moxfield_content_interval_min !== undefined) {
+    const n = clampInterval(moxfield_content_interval_min, 1);
+    if (n === null) return res.status(400).json({ error: 'Moxfield content interval must be a whole number of minutes (1–1440)' });
+    await db.run(`UPDATE app_settings SET moxfield_content_interval_min = ? WHERE id = 1`, [n]);
   }
 
   if (setup_complete !== undefined) {

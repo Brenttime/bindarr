@@ -689,6 +689,94 @@ async function initDb() {
     await run(`ALTER TABLE deck_cards ADD COLUMN checked_out INTEGER DEFAULT 0`);
   }
 
+  // --- Moxfield sync ---
+  // A Moxfield author whose public decks we mirror into this instance. The
+  // deck list (who exists, and when a deck changed) is polled on one interval;
+  // the card contents of every tracked deck on another, faster one. Both
+  // intervals live in app_settings below so the UI can tune them without a
+  // restart.
+  await run(`
+    CREATE TABLE IF NOT EXISTS moxfield_authors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      moxfield_user TEXT NOT NULL,
+      display_name TEXT,
+      profile_image_url TEXT,
+      last_decklist_sync_at DATETIME,
+      last_content_check_at DATETIME,
+      last_error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(user_id, moxfield_user)
+    )
+  `);
+  // Databases created before the per-minute check got its own timestamp keep
+  // their author rows; add the column in place so "last content check" is
+  // observable for existing installations too.
+  const mfxAuthorCols = await all(`PRAGMA table_info(moxfield_authors)`);
+  if (!mfxAuthorCols.some(c => c.name === 'last_content_check_at')) {
+    await run(`ALTER TABLE moxfield_authors ADD COLUMN last_content_check_at DATETIME`);
+  }
+  await run(`CREATE INDEX IF NOT EXISTS idx_mfx_author_user ON moxfield_authors(user_id)`);
+
+  // One row per Moxfield deck we track. `bindarr_deck_id` is NULL until the
+  // decklist sync has created the local deck; `last_updated_at` is Moxfield's
+  // own last-update stamp — the cheap change detector. When it differs from
+  // `last_synced_updated_at` the content sync pulls the full deck.
+  await run(`
+    CREATE TABLE IF NOT EXISTS moxfield_decks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      author_id INTEGER NOT NULL REFERENCES moxfield_authors(id) ON DELETE CASCADE,
+      public_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      format TEXT,
+      mainboard_count INTEGER,
+      sideboard_count INTEGER,
+      maybeboard_count INTEGER,
+      commander_count INTEGER,
+      last_updated_at TEXT,
+      last_synced_updated_at TEXT,
+      bindarr_deck_id INTEGER,
+      last_content_sync_at DATETIME,
+      last_error TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(author_id, public_id)
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_mfx_deck_author ON moxfield_decks(author_id)`);
+
+  // Per-deck on/off switch: unchecked decks stay tracked (their Moxfield
+  // listing is kept) but are never imported — no local mirror, no content
+  // pulls. Added after the fact; existing rows default to ON so nothing stops
+  // syncing without an explicit opt-out.
+  const mfxDeckCols = await all(`PRAGMA table_info(moxfield_decks)`);
+  if (!mfxDeckCols.some(c => c.name === 'enabled')) {
+    await run(`ALTER TABLE moxfield_decks ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`);
+  }
+
+  // Which Moxfield deck a local deck mirrors, when it is one. NULL for every
+  // hand-made deck; the sync only ever edits decks that carry this link, so a
+  // local deck stays untouched unless it was imported from Moxfield.
+  const mfxDecksCols = await all(`PRAGMA table_info(decks)`);
+  if (!mfxDecksCols.some(c => c.name === 'source')) {
+    await run(`ALTER TABLE decks ADD COLUMN source TEXT DEFAULT 'manual'`);
+  }
+  if (!mfxDecksCols.some(c => c.name === 'moxfield_public_id')) {
+    await run(`ALTER TABLE decks ADD COLUMN moxfield_public_id TEXT`);
+  }
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_mfx_public_id ON decks(moxfield_public_id) WHERE moxfield_public_id IS NOT NULL`);
+
+  // Moxfield sync cadence, per instance: how often the decklist refreshes
+  // (author exists? new decks? removed decks? which changed?) and how often
+  // the contents of tracked decks are checked. Minutes, clamped server-side.
+  if (!appSettingsCols.some(c => c.name === 'moxfield_decklist_interval_min')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN moxfield_decklist_interval_min INTEGER NOT NULL DEFAULT 60`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'moxfield_content_interval_min')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN moxfield_content_interval_min INTEGER NOT NULL DEFAULT 1`);
+  }
+
   const decksCols = await all(`PRAGMA table_info(decks)`);
   if (!decksCols.some(c => c.name === 'format')) {
     await run(`ALTER TABLE decks ADD COLUMN format TEXT DEFAULT 'Standard'`);
