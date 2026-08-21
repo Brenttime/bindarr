@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Layers, Languages, Globe } from 'lucide-react';
 import { GAMES, enabledGames, setGameEnabled, gameOptions, defaultGame } from '../utils/games';
 import { LOCALES, localeName, useT } from '../utils/i18n';
+import { buildCardListText } from '../utils/cardList';
 import { REPO_URL } from '../utils/repo';
 import MoxfieldPanel from './MoxfieldPanel';
 
@@ -284,6 +285,25 @@ function Settings({ user, onUpdateUser, showToast }) {
     } catch (err) {
       console.error(err);
       showToast(t('settings.errExportGeneric'));
+    }
+  };
+
+  // Text card list of the whole collection, "qty Name" or "qty Name (SET) num".
+  // Formatted in the browser from the same /api/collection data the UI shows —
+  // the server keeps an identical endpoint (/api/collection/cardlist) for
+  // scripts, and cardList.test.js proves the two copies agree.
+  const handleExportCardList = async (style) => {
+    try {
+      const response = await fetch('/api/collection?list_type=collection');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const cards = await response.json();
+      const text = buildCardListText(cards, style);
+      if (!text) { showToast(t('settings.cardlistEmpty')); return; }
+      await navigator.clipboard.writeText(text);
+      showToast(t('settings.cardlistCopied'));
+    } catch (err) {
+      console.error(err);
+      showToast(t('settings.errCardlist'));
     }
   };
 
@@ -836,6 +856,29 @@ function Settings({ user, onUpdateUser, showToast }) {
             >
               <Download size={14} />
               <span>{t('settings.exportJson')}</span>
+            </button>
+
+            <div style={{ width: '100%', height: '0.75rem' }} />
+
+            <button
+              type="button"
+              onClick={() => handleExportCardList('plain')}
+              className="btn btn-secondary"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+              title={t('settings.cardlistHint')}
+            >
+              <Clipboard size={14} />
+              <span>{t('settings.exportCardlistPlain')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExportCardList('detailed')}
+              className="btn btn-secondary"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+              title={t('settings.cardlistHint')}
+            >
+              <Clipboard size={14} />
+              <span>{t('settings.exportCardlistDetailed')}</span>
             </button>
 
             <label 

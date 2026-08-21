@@ -17,6 +17,7 @@ const { compartmentLabel, isBinderType, rebalanceCompartmentByScheme } = require
 const { checkedOutAllocation, resolveCompartmentAndPosition, describePlacement, setStackQuantity } = require('../utils/collectionHelpers');
 const { validateDeckAddition } = require('../utils/deckRules');
 const { splitPrice } = require('../utils/splitPrice');
+const { buildCardListText } = require('../../../shared/cardListText.js');
 
 const router = express.Router();
 
@@ -410,6 +411,29 @@ router.post('/scan-match', searchLimiter, async (req, res) => {
   } catch (error) {
     console.error('scan-match failed:', error.message);
     res.status(500).json({ error: 'Scan match failed' });
+  }
+});
+
+// Text card list of what the user owns — the shape ManaBox / TCGplayer
+// buylist tools paste: "qty Name" (plain) or "qty Name (SET) num" (detailed).
+// The frontend bulk bar formats the same rows itself, so this endpoint exists
+// for scripts and API-key users who want the identical text without pulling
+// the whole /api/collection payload.
+router.get('/collection/cardlist', async (req, res) => {
+  try {
+    const style = req.query.style === 'detailed' ? 'detailed' : 'plain';
+    const rows = await db.all(
+      `SELECT c.quantity, cc.name, cc.set_id, cc.number
+       FROM collection c
+       JOIN card_cache cc ON c.card_id = cc.id
+       WHERE c.user_id = ? AND c.list_type = 'collection'
+       ORDER BY c.added_at DESC`,
+      [req.user.id]
+    );
+    res.type('text/plain').send(buildCardListText(rows, style));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to build card list' });
   }
 });
 

@@ -6,6 +6,7 @@ import { CONDITIONS, PRINTINGS, GRADERS } from '../utils/cardOptions';
 import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
 import { sortCardsByOrder } from '../utils/cardSort';
+import { buildCardListText } from '../utils/cardList';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { defaultGameFilter, gameOptions, isGameEnabled, showGamePicker } from '../utils/games';
 import { useT } from '../utils/i18n';
@@ -149,6 +150,25 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       if (response.ok) setSetsList(await response.json());
     } catch (err) {
       console.error('Error fetching sets:', err);
+    }
+  };
+
+  // Copy the selected cards as a text card list — "qty Name" (vanilla) or
+  // "qty Name (SET) num" (detailed, ManaBox shape). The unstacked
+  // filteredCollection is the source: in select mode every entry is its own
+  // row, so nothing double-counts.
+  const handleExportSelectionList = async (style) => {
+    const rows = Array.from(selectedIds)
+      .map(id => filteredCollection.find(i => i.entry_id === id))
+      .filter(Boolean);
+    const text = buildCardListText(rows, style);
+    if (!text) { showToast(t('collection.errExportList')); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(t('collection.copiedList'));
+    } catch (err) {
+      console.error(err);
+      showToast(t('collection.errExportList'));
     }
   };
 
@@ -614,6 +634,8 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.85rem' }}>{t('bulk.selected', { count: selectedIds.size })}</span>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={() => setSelectedIds(new Set(filteredCollection.map(i => i.entry_id)))}>{t('bulk.selectAll', { count: filteredCollection.length })}</button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={clearSelection}>{t('bulk.clear')}</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => handleExportSelectionList('plain')} title={t('settings.cardlistHint')}>{t('collection.exportListPlain')}</button>
+          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => handleExportSelectionList('detailed')} title={t('settings.cardlistHint')}>{t('collection.exportListDetailed')}</button>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <button className="btn btn-danger" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('delete', null, t('bulk.confirmDelete', { count: selectedIds.size }))}>{t('bulk.delete')}</button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('trade', null)}>{t('bulk.markTrade')}</button>
