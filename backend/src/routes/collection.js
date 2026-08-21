@@ -3,6 +3,7 @@ const db = require('../db');
 const tcgApi = require('../tcgApi');
 const tcgdexApi = require('../tcgdexApi');
 const scryfallApi = require('../scryfallApi');
+const lorcastApi = require('../lorcastApi');
 const cvScan = require('../cvScan');
 const tcgplayerCatalog = require('../tcgplayerCatalog');
 const languages = require('../utils/languages');
@@ -37,8 +38,8 @@ async function attachOwnedQty(cards, userId) {
   for (const c of cards) c.owned_qty = owned.get(c.id) || 0;
 }
 
-// 1. Search cards (proxies to Pokémon TCG, Scryfall or TCGdex + database cache).
-// `game` and the PROVIDER route the request; all three return the same card shape.
+// 1. Search cards (proxies to Pokémon TCG, Scryfall, Lorcast or TCGdex + database cache).
+// `game` and the PROVIDER route the request; all return the same card shape.
 //
 // Language alone is not enough, and getting that wrong is not cosmetic. TCGdex can
 // serve English too, and when it is the selected provider the scan indexes are
@@ -62,20 +63,82 @@ const sameNumber = (a, b) => {
   const norm = (n) => String(n == null ? '' : n).trim().toLowerCase().replace(/^0+(?=\d)/, '');
   return !!norm(a) && norm(a) === norm(b);
 };
-router.get('/search', searchLimiter, async (req, res) => {
-  const { name, number, set, scope = 'database', game = 'pokemon', lang, prints } = req.query;
+// Normalize search inputs so combined queries (e.g. "Kangaskhan 5/64", "5/64",
+// "Kangaskhan #5", "FDN 540") decompose cleanly into name, number, and set.
+function normalizeSearchParams({ name = '', number = '', set = '', q = '' }) {
+  let cleanName = String(name || '').trim();
+  let cleanNumber = String(number || '').trim();
+  let cleanSet = String(set || '').trim();
+  const rawQuery = String(q || '').trim();
+
+  const input = (!cleanName && !cleanNumber && !cleanSet && rawQuery) ? rawQuery : cleanName;
+
+  if (input && !cleanNumber) {
+    const pureFrac = input.match(/^#?([A-Z0-9★\-]+)\s*\/\s*[A-Z0-9★\-]+$/i);
+    if (pureFrac) {
+      cleanNumber = pureFrac[1];
+      if (input === cleanName) cleanName = '';
+    } else if (/^#?\d+$/i.test(input) || /^#[A-Z0-9★\-]+$/i.test(input)) {
+      cleanNumber = input.replace(/^#/, '');
+      if (input === cleanName) cleanName = '';
+    } else {
+      const fracMatch = input.match(/^(.+?)\s+#?([A-Z0-9★\-]+)\s*\/\s*[A-Z0-9★\-]+$/i);
+      if (fracMatch) {
+        cleanName = fracMatch[1].trim();
+        cleanNumber = fracMatch[2].trim();
+      } else {
+        const hashMatch = input.match(/^(.+?)\s+#([A-Z0-9★\-]+)$/i);
+        if (hashMatch) {
+          cleanName = hashMatch[1].trim();
+          cleanNumber = hashMatch[2].trim();
+        } else {
+          const numMatch = input.match(/^(.+?)\s+(\d+[A-Z★]?)$/i);
+          if (numMatch) {
+            cleanName = numMatch[1].trim();
+            cleanNumber = numMatch[2].trim();
+          }
+        }
+      }
+    }
+  }
+
+  if (cleanNumber) {
+    cleanNumber = cleanNumber.replace(/^#/, '').split('/')[0].trim();
+  }
+
+  return { name: cleanName, number: cleanNumber, set: cleanSet };
+}
+
+router.all('/search', searchLimiter, async (req, res) => {
+  const query = req.method === 'POST' ? { ...req.query, ...req.body } : req.query;
+  const { name: rawName, number: rawNumber, set: rawSet, scope = 'database', game = 'pokemon', lang, prints, q, image, cropped } = query;
+  const { name, number, set } = normalizeSearchParams({ name: rawName, number: rawNumber, set: rawSet, q });
   // 1-based page over `limit`-sized pages. 250 is the pokemontcg.io ceiling and
   // a sane cap on how much one Scryfall search will page through per request.
-  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const limit = Math.min(250, Math.max(1, parseInt(req.query.limit, 10) || 60));
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(250, Math.max(1, parseInt(query.limit, 10) || 60));
   try {
     // Every provider takes the same options object and ignores what does not
     // apply to it, so there is one call here rather than a branch per provider.
-    const api = game === 'mtg' ? scryfallApi : await pokemonApiFor(lang);
-    const { cards, total } = await api.searchCards({
+    const api = game === 'mtg' ? scryfallApi : (game === 'lorcana' ? lorcastApi : await pokemonApiFor(lang));
+    let { cards, total } = await api.searchCards({
       name, number, set, scope, userId: req.user.id, lang,
       apiKey: req.user.tcg_api_key, allPrints: prints === '1', page, limit,
     });
+
+    // When an image from a camera scan is attached, score each candidate card
+    // against the scan's visual embedding and sort by similarity descending.
+    if (image && Array.isArray(cards) && cards.length > 0) {
+      const base64 = typeof image === 'string' ? image.replace(/^data:image\/\w+;base64,/, '') : '';
+      if (base64) {
+        const buf = Buffer.from(base64, 'base64');
+        const langName = languages.toName(lang);
+        if (cvScan.isBuilt(game, langName)) {
+          cards = await cvScan.scoreCards(buf, game, cards, { lang: langName, cropped: !!cropped });
+        }
+      }
+    }
+
     await attachOwnedQty(cards, req.user.id);
     // Header, not the body: every existing caller expects a bare array here.
     if (total != null) {
@@ -120,7 +183,7 @@ router.get('/collection/cert/:certNumber', searchLimiter, async (req, res) => {
     // a 1986 Fleer basketball card would return nonsense candidates rather than an
     // honest empty list.
     const brand = `${cert.brand || ''} ${cert.category || ''}`.toUpperCase();
-    const game = /POKEMON/.test(brand) ? 'pokemon' : (/MAGIC|GATHERING/.test(brand) ? 'mtg' : null);
+    const game = /POKEMON/.test(brand) ? 'pokemon' : (/MAGIC|GATHERING/.test(brand) ? 'mtg' : (/LORCANA/.test(brand) ? 'lorcana' : null));
     let candidates = [];
     if (game) {
       const name = psaApi.searchableName(cert.subject);
@@ -129,7 +192,7 @@ router.get('/collection/cert/:certNumber', searchLimiter, async (req, res) => {
         // discriminator between printings of the same name, and the search treats
         // it as optional so a label without one still returns something.
         const number = cert.card_number || '';
-        const api = game === 'mtg' ? scryfallApi : await pokemonApiFor(null);
+        const api = game === 'mtg' ? scryfallApi : (game === 'lorcana' ? lorcastApi : await pokemonApiFor(null));
         ({ cards: candidates } = await api.searchCards({
           name, number, userId: req.user.id, apiKey: req.user.tcg_api_key,
           allPrints: true, limit: 24,
@@ -154,7 +217,7 @@ router.get('/collection/cert/:certNumber', searchLimiter, async (req, res) => {
 // match nothing. Read-only counts, no build controls.
 router.get('/scan-sets', async (req, res) => {
   const { game = 'pokemon', lang } = req.query;
-  if (game !== 'mtg' && game !== 'pokemon') return res.status(400).json({ error: 'Invalid game' });
+  if (game !== 'mtg' && game !== 'pokemon' && game !== 'lorcana') return res.status(400).json({ error: 'Invalid game' });
   try {
     // `builtLangs` rides along because the scanner's language picker has no other
     // way to know: it offered all eleven languages, and for ten of them a Pokémon
@@ -210,7 +273,7 @@ async function pokemonBySetNumber(langName, number, setId, tcgApiKey) {
 router.post('/scan-match', searchLimiter, async (req, res) => {
   try {
     const { game = 'pokemon', image, set = '', lang, cropped = false } = req.body || {};
-    if (game !== 'mtg' && game !== 'pokemon') return res.status(400).json({ error: 'Invalid game' });
+    if (game !== 'mtg' && game !== 'pokemon' && game !== 'lorcana') return res.status(400).json({ error: 'Invalid game' });
     if (!image || typeof image !== 'string') return res.status(400).json({ error: 'Missing image' });
     const base64 = image.includes(',') ? image.slice(image.indexOf(',') + 1) : image;
     const buf = Buffer.from(base64, 'base64');
@@ -1152,4 +1215,5 @@ router.post('/collection/bulk', async (req, res) => {
   }
 });
 
+router.normalizeSearchParams = normalizeSearchParams;
 module.exports = router;

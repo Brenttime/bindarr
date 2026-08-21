@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick } from 'lucide-react';
 import { getCardDisplayName, translateJapaneseName } from '../utils/langHelper';
-import { formatPrice, priceText } from '../utils/formatPrice';
+import { priceText } from '../utils/formatPrice';
 import { CONDITIONS, PRINTINGS, GRADERS } from '../utils/cardOptions';
 import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
@@ -609,7 +609,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       {!loading && !selectMode && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', fontSize: '0.78rem', color: 'var(--text-secondary)', flexWrap: 'wrap', gap: '0.5rem' }}>
           <span><strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {t('collection.cardUnit', { count: displayCards.length })}</span>
-          <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
+          <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>{priceText(totalValue)}</strong></span>
         </div>
       )}
 

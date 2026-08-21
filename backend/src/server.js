@@ -15,6 +15,7 @@ const path = require('path');
 const db = require('./db');
 const tcgApi = require('./tcgApi');
 const scryfallApi = require('./scryfallApi');
+const lorcastApi = require('./lorcastApi');
 
 // Which module owns the Pokémon `sets` table. Asked per call rather than resolved
 // once: the provider is a setting an admin can change while the server is up, and
@@ -118,7 +119,7 @@ app.use(helmet({
       // break scanning the moment that flips.
       scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
       connectSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'blob:', 'https://images.pokemontcg.io', 'https://cards.scryfall.io', 'https://c1.scryfall.com', 'https://img.scryfall.com', 'https://assets.tcgdex.net'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https://images.pokemontcg.io', 'https://cards.scryfall.io', 'https://c1.scryfall.com', 'https://img.scryfall.com', 'https://assets.tcgdex.net', 'https://cards.lorcast.io'],
       // index.html loads Antonio, Outfit and Plus Jakarta Sans from Google Fonts,
       // which is two separate origins: the stylesheet comes from fonts.googleapis
       // .com and the .woff2 files it then references come from fonts.gstatic.com.
@@ -188,6 +189,7 @@ app.use(cors({
 const bigJson = express.json({ limit: '15mb' });
 app.use('/api/import', bigJson);
 app.use('/api/scan-match', bigJson);
+app.use('/api/search', bigJson);
 app.use(express.json({ limit: '1mb' }));
 
 // Rebuild any catalog that has fallen behind, right after the weekly set refresh
@@ -239,6 +241,7 @@ db.initDb()
     // provider none of its cards came from.
     await (await pokemonSetSource()).fetchAndCacheSets();
     await scryfallApi.fetchAndCacheSets();
+    await lorcastApi.fetchAndCacheSets();
 
     // Load sets into compartmentSort memory cache
     const { loadSetsCache } = require('./utils/compartmentSort');
@@ -251,7 +254,7 @@ db.initDb()
     // pays the load itself.
     try {
       const cvScan = require('./cvScan');
-      const warm = ['mtg', 'pokemon'].filter(g => cvScan.isBuilt(g));
+      const warm = ['mtg', 'pokemon', 'lorcana'].filter(g => cvScan.isBuilt(g));
       for (const g of warm) {
         cvScan.load(g).catch(err => console.warn(`cvScan ${g} warm-up failed:`, err.message));
       }
@@ -270,6 +273,7 @@ db.initDb()
       try {
         await (await pokemonSetSource()).fetchAndCacheSets(true);
         await scryfallApi.fetchAndCacheSets(true);
+        await lorcastApi.fetchAndCacheSets(true);
         await loadSetsCache(db);
         await autoUpdateCatalogs();
       } catch (err) {
@@ -283,6 +287,7 @@ db.initDb()
     setInterval(() => {
       tcgApi.updateCollectionPrices(true);
       scryfallApi.updateCollectionPrices(true);
+      lorcastApi.updateCollectionPrices(true);
       // Non-English Pokémon cards: their ids 404 on pokemontcg.io, so tcgApi's
       // sweep skips them and this is their only price refresh. No-op until the
       // user actually owns one.
@@ -301,6 +306,7 @@ db.initDb()
     setTimeout(() => {
       tcgApi.updateCollectionPrices();
       scryfallApi.updateCollectionPrices();
+      lorcastApi.updateCollectionPrices();
       require('./tcgdexApi').updateCollectionPrices();
       require('./tcgcsvApi').updateCollectionPrices();
     }, 30000);

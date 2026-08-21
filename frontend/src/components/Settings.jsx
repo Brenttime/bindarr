@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Layers, Languages } from 'lucide-react';
 import { GAMES, enabledGames, setGameEnabled, gameOptions, defaultGame } from '../utils/games';
+import { CURRENCIES, getCurrency, setCurrency } from '../utils/formatPrice';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 import { REPO_URL } from '../utils/repo';
 
@@ -70,6 +71,7 @@ function Settings({ user, onUpdateUser, showToast }) {
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
 
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+  const [currency, setCurrencyState] = useState(() => getCurrency());
   const [defaultGameValue, setDefaultGameValue] = useState(() => defaultGame());
   const [shownGames, setShownGames] = useState(() => enabledGames());
 
@@ -949,10 +951,35 @@ function Settings({ user, onUpdateUser, showToast }) {
             >
               <option value="dark">{t('theme.dark')}</option>
               <option value="light">{t('theme.light')}</option>
+              <option value="pokemon">{t('theme.pokemon')}</option>
+              <option value="mtg">{t('theme.mtg')}</option>
+              <option value="lorcana">{t('theme.lorcana')}</option>
               <option value="lcars">{t('theme.lcars')}</option>
             </select>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
               {t('prefs.themeHint')}
+            </div>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label htmlFor="settings-currency">{t('prefs.currency')}</label>
+            <select
+              id="settings-currency"
+              className="select-control"
+              value={currency}
+              onChange={(e) => {
+                const val = e.target.value;
+                setCurrencyState(val);
+                setCurrency(val);
+                showToast(t('prefs.currencySet', { currency: val }));
+              }}
+            >
+              {CURRENCIES.map(c => (
+                <option key={c.code} value={c.code}>{c.label}</option>
+              ))}
+            </select>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
+              {t('prefs.currencyHint')}
             </div>
           </div>
 
