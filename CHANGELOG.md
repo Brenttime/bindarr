@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
 [GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
 
+## [Unreleased]
+
+### Added
+- **Card list export.** The collection now copies itself as a plain text card
+  list — `4 Lightning Bolt` or, with set code and collector number,
+  `4 Lightning Bolt (JUD) 124` — the shape ManaBox, Moxfield and TCGplayer
+  Mass Entry paste. Settings → Collection Backup has a **Card List Export**
+  button for the whole collection; the browse view's multi-select bulk bar adds
+  the same pair for just the selected cards. The identical text is also
+  available to scripts and API keys at `GET /api/collection/cardlist`
+  (`?style=plain|detailed`). One shared builder
+  (`shared/cardListText.js`) feeds the UI and the endpoint, and a test asserts
+  the two copies never drift apart.
+
 ## [1.8.1] - 2026-08-19
 
 ### Fixed

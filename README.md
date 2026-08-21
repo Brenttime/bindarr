@@ -35,7 +35,7 @@ Try it without installing anything at **[thenotoriousjeremy.github.io/bindarr](h
 - **Dashboard** — collection value, 7/30-day trends, rarity and type breakdowns, set completion.
 - **Graded slabs** — record grader, grade and cert number per copy (PSA cert lookup fills them in), and give a slab its own value instead of the raw card's price.
 - **Cards in 11 languages** — search, scan and record Japanese, Korean, Chinese, German, French, Spanish, Italian, Portuguese and Russian printings. A copy references the printing it actually is, so it shows the name and artwork on the card while staying searchable by its English name.
-- **Exports and API** — CSV (TCGplayer-compatible) or JSON, plus a read-only API key for reading net worth from elsewhere.
+- **Exports and API** — CSV (TCGplayer-compatible) or JSON, a text card list (`qty Name` or `qty Name (SET) num`, for ManaBox / Moxfield / TCGplayer Mass Entry), plus a read-only API key for reading net worth from elsewhere.
 - **Multi-user** — session-token auth, admin panel for users and roles, optional public share links.
 - **11 UI languages**, community-translated.
 
