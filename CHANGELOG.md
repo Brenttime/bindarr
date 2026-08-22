@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
 [GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
 
+## [1.8.3] - 2026-08-21
+
+### Added
+- **Disney Lorcana TCG support.** Full integration for Disney Lorcana cards, sets, variants, and daily TCGplayer pricing via the Lorcast API. Includes dedicated Lorcana deck builder formats (Core Constructed, Casual, Draft), ink distribution analytics (Amber, Amethyst, Emerald, Ruby, Sapphire, Steel), card type breakdowns, and CollectorVision catalog embedding support ([#41](https://github.com/thenotoriousJeremy/bindarr/issues/41), [#42](https://github.com/thenotoriousJeremy/bindarr/pull/42)).
+- **Dedicated TCG themes.** Custom theme palette options tailored for Pokémon, Magic: The Gathering, and Disney Lorcana styling across the application ([#44](https://github.com/thenotoriousJeremy/bindarr/pull/44)).
+- **Comprehensive Multilingual Localization & Translation Dictionaries.** 
+  - Full official 1025-species Pokémon dictionary supporting translations across Japanese, French, German, Spanish, Italian, Korean, and Chinese with prefix/suffix parsing.
+  - Disney Lorcana character and subtitle translation dictionary across 6 printed languages.
+  - Game-scoped language filtering ensuring only printed languages appear for each game (e.g. restricting Lorcana to EN, FR, DE, IT, ZH, JA).
+  - Dynamic `/api/cards/:id/printing` endpoint enabling instant language switching with localized titles, set codes, numbers, and art across Search, Scanner, and Card Inspector.
+- **Scanner & Candidate Match Enhancements.** Visual candidate sorting by similarity, full-resolution camera detection, zero-allocation buffers, and mobile card detection optimizations ([#44](https://github.com/thenotoriousJeremy/bindarr/pull/44)).
+
+### Fixed
+- **Card Inspector language selection mutation.** Fixed state updates so changing languages in the inspector immediately updates the displayed card title, set, collector number, and artwork.
+- **Bidirectional foreign search query translation.** Fixed searching non-English Pokémon in English or English names in Japanese search.
+
 ## [1.8.2] - 2026-08-20
 
 ### Added

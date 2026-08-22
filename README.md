@@ -4,7 +4,7 @@
 
 # Bindarr
 
-**Self-hosted collection manager for Pokémon and Magic: The Gathering cards.**
+**Self-hosted collection manager for Pokémon, Magic: The Gathering, and Disney Lorcana cards.**
 
 Identify cards with your phone camera, track prices, record which binder page and slot each card lives in, and pull decks back out again.
 
@@ -28,7 +28,7 @@ Try it without installing anything at **[thenotoriousjeremy.github.io/bindarr](h
 
 ## Features
 
-- **Camera scanning** — photograph a card and the server identifies it from the image alone. Works for Magic and Pokémon.
+- **Camera scanning** — photograph a card and the server identifies it from the image alone. Works for Magic, Pokémon, and Lorcana.
 - **Physical location tracking** — binders by page and slot (1–9), boxes by row and divider, with a page-flip binder view. Drag cards between pockets to arrange a binder, or file them by tapping on a phone.
 - **Deck checkout** — reserve a deck's cards and get a checklist of exactly which slot each one sits in, then the same list in reverse when you put them back.
 - **Search and bulk add** — search or browse a whole set with multi-select; pin a set and add by collector number one keystroke at a time.
@@ -106,7 +106,7 @@ The HTTPS certificate is self-signed and generated on first start into the volum
 | Tag | Points at |
 | --- | --- |
 | `latest` | newest release — use this |
-| `1.8`, `1.8.2` | a specific release, if you want to control upgrades |
+| `1.8`, `1.8.3` | a specific release, if you want to control upgrades |
 | `edge` | newest `main` commit, including unreleased work |
 | `sha-<short>` | one exact commit |
 

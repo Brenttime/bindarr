@@ -4,8 +4,8 @@ Developer-facing reference for the codebase. For install/run/deploy and end-user
 features, see [README.md](README.md); this document explains **how the system is
 built and why**.
 
-Bindarr is a self-hosted trading-card collection manager for **Pokémon** and
-**Magic: The Gathering**. It identifies cards from a phone photo (no typing),
+Bindarr is a self-hosted trading-card collection manager for **Pokémon**,
+**Magic: The Gathering**, and **Disney Lorcana**. It identifies cards from a phone photo (no typing),
 tracks their real-world physical location (which binder page / box row slot),
 values the collection over time, and helps you pull and re-file the cards for a
 deck.
@@ -13,7 +13,7 @@ deck.
 - **Backend**: Node.js + Express, SQLite (single file), served together with the built frontend from one container.
 - **Frontend**: React + Vite SPA.
 - **Auth**: opaque session tokens in a server-side `sessions` table, sent as a `Bearer` header.
-- **Card data**: Pokémon TCG API (Pokémon) and Scryfall (MTG), cached locally in `card_cache`.
+- **Card data**: Pokémon TCG API / TCGdex (Pokémon), Scryfall (MTG), and Lorcast (Disney Lorcana), cached locally in `card_cache`.
 - **Image ID**: two small ONNX models — `cornelius` finds the card's corners, `milo` embeds the dewarped card as a 128-d unit vector — then a brute-force cosine sweep over a prebuilt catalog of every cached card's artwork. Corner detection also runs in the browser, so the outline on screen is the crop that gets matched.
 
 Stack: React + Vite + Recharts on the front, Express + `sqlite3` + Helmet +
@@ -41,6 +41,7 @@ backend/
       admin.js             user management, card seeding
     tcgApi.js              Pokémon TCG API client (search + fetch by id) -> card_cache shape
     scryfallApi.js         Scryfall (MTG) client -> same normalized card shape
+    lorcastApi.js          Lorcast (Disney Lorcana) client -> same normalized card shape
     tcgdexApi.js           TCGdex client: non-English Pokémon cards (the only source for them)
     tcgcsvApi.js           TCGCSV pricing + the tcgplayer_product id mapping
     psaApi.js              PSA cert lookup (what is in the slab), cached forever in psa_cert
