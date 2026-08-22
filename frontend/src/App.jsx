@@ -282,7 +282,7 @@ function App() {
       case 'settings':
         return <Settings user={user} onUpdateUser={handleUpdateUser} showToast={showToast} />;
       case 'admin':
-        return <AdminPanel showToast={showToast} />;
+        return <AdminPanel user={user} onUpdateUser={handleUpdateUser} showToast={showToast} />;
       default:
         return <Dashboard statsTrigger={statsTrigger} onNavigate={goTab} setSelectedLocationId={setSelectedLocationId} setFocusEntryId={setFocusEntryId} onUpdate={triggerRefresh} showToast={showToast} />;
     }

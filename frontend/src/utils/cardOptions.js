@@ -1,13 +1,14 @@
 // Shared <select> option lists for collection entry fields, previously
 // copy-pasted across LocationManager, CollectionList, CardSearch, and
 // CameraScanner's quick-add/edit forms.
-import { LANGUAGE_NAMES } from './languages';
+import { LANGUAGE_NAMES, getLanguageNamesForGame, getLanguagesForGame } from './languages';
 
 export const CONDITIONS = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged'];
 export const PRINTINGS = ['Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo'];
 // Re-exported from the language registry so the entry forms, the search language
 // picker and the backend can never drift out of sync.
 export const LANGUAGES = LANGUAGE_NAMES;
+export { getLanguageNamesForGame, getLanguagesForGame };
 
 // MTG and Lorcana cards are Nonfoil or Foil, never the Pokémon finishes. The foil
 // price is stored under the 'Holofoil' value, so we keep that stored value and label it "Foil".

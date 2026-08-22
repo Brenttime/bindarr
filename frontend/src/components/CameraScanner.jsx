@@ -9,7 +9,7 @@ import CardEntryFields from './CardEntryFields';
 import CardInspectorModal from './CardInspectorModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useMultiSelect } from '../utils/useMultiSelect';
-import { LANGUAGES, langName, langCode, displayName } from '../utils/languages';
+import { LANGUAGES, langName, langCode, getLanguagesForGame, isLanguageSupported } from '../utils/languages';
 import { requestDetect, stopDetect, smoothQuad, meanCornerDrift, DETECT_W } from '../utils/cardDetector';
 import { getPerspectiveTransform, warpPerspective } from '../../../shared/imgproc.mjs';
 import { shouldCapture, shouldRearm, autoStatusKey } from '../utils/autoCapture';
@@ -225,10 +225,17 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // remembered one has since been hidden.
   const [scanGame, setScanGameState] = useState(() => {
     const saved = localStorage.getItem('scanner_game');
-    if ((saved === 'mtg' || saved === 'pokemon') && isGameEnabled(saved)) return saved;
-    return defaultGame() === 'mtg' ? 'mtg' : 'pokemon';
+    if (saved && isGameEnabled(saved)) return saved;
+    return defaultGame() || 'pokemon';
   });
-  const setScanGame = (g) => { setScanGameState(g); localStorage.setItem('scanner_game', g); };
+  const setScanGame = (g) => {
+    setScanGameState(g);
+    localStorage.setItem('scanner_game', g);
+    if (!isLanguageSupported(g, scanLang)) {
+      setScanLang('en');
+      setLanguage(langName('en'));
+    }
+  };
   // Which language of card is being fed in. Card art is language-specific, so
   // this selects which set index the scan is matched against — and it becomes the
   // language each added copy is recorded as. Remembered across sessions because
@@ -242,7 +249,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // than a global search.
   const [scanSetCodes, setScanSetCodesState] = useState(() => {
     const savedGame = localStorage.getItem('scanner_game');
-    const g = ((savedGame === 'mtg' || savedGame === 'pokemon') && isGameEnabled(savedGame)) ? savedGame : (defaultGame() === 'mtg' ? 'mtg' : 'pokemon');
+    const g = (savedGame && isGameEnabled(savedGame)) ? savedGame : (defaultGame() || 'pokemon');
     const l = localStorage.getItem('scanner_lang') || 'en';
     return (localStorage.getItem(setsKey(g, l)) || '').split(',').map(s => s.trim()).filter(Boolean);
   });
@@ -966,12 +973,13 @@ function CameraScanner({ onAddSuccess, showToast }) {
         const data = await response.json();
         const qtyLabel = qty > 1 ? `${qty}× ` : '';
         const placementLabel = data.placement?.label || null;
+        const cardDisplayName = getCardDisplayName(card.name, autoLanguage, card.printed_name);
         if (placementLabel) {
-          showToast(t('scan.addedTo', { qty: qtyLabel, name: displayName(card), place: placementLabel }));
+          showToast(t('scan.addedTo', { qty: qtyLabel, name: cardDisplayName, place: placementLabel }));
         } else if (data.container_full) {
-          showToast(t('scan.addedFull', { qty: qtyLabel, name: displayName(card) }));
+          showToast(t('scan.addedFull', { qty: qtyLabel, name: cardDisplayName }));
         } else {
-          showToast(t('scan.autoAdded', { qty: qtyLabel, name: displayName(card), set: card.set_name }));
+          showToast(t('scan.autoAdded', { qty: qtyLabel, name: cardDisplayName, set: card.set_name }));
         }
 
         // Append to recent scans history log. entry_id (the last inserted row)
@@ -991,7 +999,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         
         onAddSuccess(); // Refresh stats
       } else {
-        showToast(t('scan.errAutoAdd', { name: displayName(card) }));
+        showToast(t('scan.errAutoAdd', { name: getCardDisplayName(card.name, autoLanguage, card.printed_name) }));
         signal('error');
       }
     } catch (err) {
@@ -1466,6 +1474,25 @@ function CameraScanner({ onAddSuccess, showToast }) {
     setIsDrawerOpen(true);
   };
 
+  const handleLanguageChange = async (newLang) => {
+    setLanguage(newLang);
+    if (!selectedCard) return;
+    try {
+      const targetGame = selectedCard.game || scanGame;
+      const resp = await fetch(`/api/cards/${encodeURIComponent(selectedCard.id)}/printing?lang=${encodeURIComponent(newLang)}&game=${encodeURIComponent(targetGame)}`);
+      if (resp.ok) {
+        const localized = await resp.json();
+        if (localized && localized.id) {
+          setSelectedCard(prev => (prev ? { ...prev, ...localized, language: newLang } : { ...localized, language: newLang }));
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not switch to localized printing:', e);
+    }
+    setSelectedCard(prev => (prev ? { ...prev, language: newLang } : prev));
+  };
+
   // "Change printing"
   //
   // Visual scanning matches artwork, but the same illustration is reprinted across sets.
@@ -1621,12 +1648,13 @@ function CameraScanner({ onAddSuccess, showToast }) {
       if (response.ok) {
         const data = await response.json();
         const placementLabel = data.placement?.label || null;
+        const cardDisplayName = getCardDisplayName(selectedCard.name, language, selectedCard.printed_name);
         if (placementLabel) {
-          showToast(t('scan.addedToPlain', { name: displayName(selectedCard), place: placementLabel }));
+          showToast(t('scan.addedToPlain', { name: cardDisplayName, place: placementLabel }));
         } else if (data.container_full) {
-          showToast(t('scan.addedFullPlain', { name: displayName(selectedCard) }));
+          showToast(t('scan.addedFullPlain', { name: cardDisplayName }));
         } else {
-          showToast(t('search.addedToCollection', { name: displayName(selectedCard) }));
+          showToast(t('search.addedToCollection', { name: cardDisplayName }));
         }
 
         // Append to recent scans history. Carry entry_id + saved fields so the
@@ -1876,7 +1904,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       that never released in English, and it files the English
                       printing. Offering eleven identical-looking options hid all
                       of that until after the scan. */}
-                  {LANGUAGES.map(l => (
+                  {getLanguagesForGame(scanGame).map(l => (
                     <option key={l.code} value={l.code}>
                       {l.name}{scanBuiltLangs.length && !scanBuiltLangs.includes(l.name)
                         ? ` — ${t('scan.langNoCatalogTag')}` : ''}
@@ -2132,7 +2160,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       return (
                         <div key={i} style={{ fontSize: '0.7rem', color: i === 0 ? '#fff' : 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           <span style={{ color: pass ? 'var(--type-grass)' : 'var(--accent-red)', fontWeight: 700 }}>{label}</span>
-                          {' '}{cd.card ? displayName(cd.card) : cd.name} <span style={{ color: 'var(--text-muted)' }}>({cd.set} #{cd.number})</span>
+                          {' '}{cd.card ? getCardDisplayName(cd.card.name, addLanguage(cd.card), cd.card.printed_name) : cd.name} <span style={{ color: 'var(--text-muted)' }}>({cd.set} #{cd.number})</span>
                         </div>
                       );
                     })}
@@ -2245,12 +2273,12 @@ function CameraScanner({ onAddSuccess, showToast }) {
             padding: '1rem'
           }}
         >
-          <div className="glass-panel animate-fade-in" style={{ maxWidth: '420px', width: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center', textAlign: 'center', border: '1px solid var(--accent-red)' }}>
+          <div className="glass-panel animate-fade-in scan-confirm-modal" style={{ maxWidth: '420px', width: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center', textAlign: 'center', border: '1px solid var(--accent-red)' }}>
             <div>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 800 }}>{t(autoAddEditing ? 'scan.adjustAndAdd' : 'scan.exactMatch')}</span>
               {/* The name AS PRINTED when the provider gave one, so a Japanese
                   scan reads as the Japanese card it is. Falls back to English. */}
-              <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-strong)', margin: '0.25rem 0 0.35rem 0' }}>{getCardDisplayName(autoAddTargetCard.name, autoAddTargetCard.language, autoAddTargetCard.printed_name)}</h3>
+              <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-strong)', margin: '0.25rem 0 0.35rem 0' }}>{getCardDisplayName(autoAddTargetCard.name, addLanguage(autoAddTargetCard), autoAddTargetCard.printed_name)}</h3>
               <p style={{ color: 'var(--text-primary)', fontSize: '1rem', fontWeight: 700, margin: 0 }}>#{autoAddTargetCard.number}</p>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>{autoAddTargetCard.set_name}</p>
               <LangFallbackNote card={autoAddTargetCard} />
@@ -2267,7 +2295,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
               style={{ position: 'relative', width: '115px', aspectRatio: 0.718, margin: '0.5rem 0', cursor: autoAddEditing ? 'default' : 'pointer' }}
               title={autoAddEditing ? undefined : 'Tap to change condition/foil'}
             >
-              <img src={autoAddTargetCard.image_url} alt={autoAddTargetCard.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '6px', boxShadow: 'var(--shadow-glow)' }} />
+              <img src={autoAddTargetCard.image_url} alt={getCardDisplayName(autoAddTargetCard.name, addLanguage(autoAddTargetCard), autoAddTargetCard.printed_name)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '6px', boxShadow: 'var(--shadow-glow)' }} />
               {!autoAddEditing && (
                 <div style={{
                   position: 'absolute',
@@ -2404,12 +2432,12 @@ function CameraScanner({ onAddSuccess, showToast }) {
                         setAutoAddAlternatives([]);
                         openQuickAdd(alt);
                       }}
-                      title={`${getCardDisplayName(alt.name, alt.language, alt.printed_name)} · ${alt.set_name} #${alt.number}`}
+                      title={`${getCardDisplayName(alt.name, addLanguage(alt), alt.printed_name)} · ${alt.set_name} #${alt.number}`}
                       style={{ flex: '0 0 auto', width: '68px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'center' }}
                     >
                       <img
                         src={alt.image_url}
-                        alt={alt.name}
+                        alt={getCardDisplayName(alt.name, addLanguage(alt), alt.printed_name)}
                         style={{ width: '100%', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border-glass-hover)' }}
                       />
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -2459,14 +2487,14 @@ function CameraScanner({ onAddSuccess, showToast }) {
             padding: '1rem'
           }}
         >
-          <div className="glass-panel animate-fade-in" style={{ maxWidth: '420px', width: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center', textAlign: 'center', border: '1px solid var(--accent-yellow)' }}>
+          <div className="glass-panel animate-fade-in scan-confirm-modal" style={{ maxWidth: '420px', width: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center', textAlign: 'center', border: '1px solid var(--accent-yellow)' }}>
             <div>
               <span style={{ fontSize: '0.75rem', color: 'var(--accent-yellow)', textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 800 }}>{t('scan.sameCardAgain')}</span>
-              <h3 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', margin: '0.25rem 0 0.5rem 0' }}>{getCardDisplayName(dupConfirmCard.name, dupConfirmCard.language, dupConfirmCard.printed_name)}</h3>
+              <h3 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', margin: '0.25rem 0 0.5rem 0' }}>{getCardDisplayName(dupConfirmCard.name, addLanguage(dupConfirmCard), dupConfirmCard.printed_name)}</h3>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>{dupConfirmCard.set_name} • #{dupConfirmCard.number}</p>
             </div>
 
-            <img src={dupConfirmCard.image_url} alt={dupConfirmCard.name} style={{ width: '110px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '6px', boxShadow: 'var(--shadow-glow)' }} />
+            <img src={dupConfirmCard.image_url} alt={getCardDisplayName(dupConfirmCard.name, addLanguage(dupConfirmCard), dupConfirmCard.printed_name)} style={{ width: '110px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: '6px', boxShadow: 'var(--shadow-glow)' }} />
 
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
               {t('scan.repeatHint')}
@@ -2548,7 +2576,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
           zIndex: 1000,
           padding: '1rem'
         }}>
-          <div className="glass-panel" style={{ maxWidth: '560px', width: '100%', padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="glass-panel scan-suggestions-modal" style={{ maxWidth: '560px', width: '100%', display: 'flex', flexDirection: 'column', gap: '1.25rem', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
               <h3 style={{ fontSize: '1.1rem', color: 'var(--text-strong)', margin: 0 }}>{t('scan.identifiedTitle')}</h3>
               <button 
@@ -2620,18 +2648,18 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 the ORB match list. Only the first few are shown: eight cards at
                 once is a wall to read while holding the card you are trying to
                 identify, and the answer is usually near the top. */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '1rem', maxHeight: '350px', overflowY: 'auto', padding: '0.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.75rem', maxHeight: '350px', overflowY: 'auto', padding: '0.25rem' }}>
               {(showAllMatches ? scanMatches : scanMatches.slice(0, PICKER_PREVIEW)).map(card => (
                 <div key={card.id} className="tcg-card" onClick={() => openQuickAdd(card)} style={{ cursor: 'pointer' }}>
                   <div className="tcg-card-inner" style={{ border: '1px solid var(--border-glass-hover)' }}>
-                    <img src={card.image_url} alt={displayName(card)} className="tcg-card-image" />
+                    <img src={card.image_url} alt={getCardDisplayName(card.name, addLanguage(card), card.printed_name)} className="tcg-card-image" />
                   </div>
                   {/* Name and number are what the choice is actually made on —
                       the picture is already on screen above them, and at 0.75/0.65rem
                       the two lines that say WHICH printing this is were the smallest
                       text in the modal. */}
                   <div className="tcg-card-info" style={{ textAlign: 'center', marginTop: '0.5rem' }}>
-                    <div className="tcg-card-name" style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-strong)', lineHeight: 1.2 }}>{getCardDisplayName(card.name, card.language, card.printed_name)}</div>
+                    <div className="tcg-card-name" style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-strong)', lineHeight: 1.2 }}>{getCardDisplayName(card.name, addLanguage(card), card.printed_name)}</div>
                     <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>#{card.number}</div>
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{card.set_name}</div>
                     <LangFallbackNote card={card} />
@@ -2722,7 +2750,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
               >
                 <img
                   src={item.image_url}
-                  alt={displayName(item)}
+                  alt={getCardDisplayName(item.name, item.language, item.printed_name)}
                   draggable={false}
                   style={{ width: '76px', height: '106px', objectFit: 'cover', borderRadius: '4px', border: selected ? '2px solid var(--accent-red)' : '1px solid var(--border-glass)', boxShadow: selected ? '0 0 12px var(--accent-red-glow)' : '0 2px 6px rgba(0,0,0,0.3)', pointerEvents: 'none' }}
                 />
@@ -2751,33 +2779,33 @@ function CameraScanner({ onAddSuccess, showToast }) {
       <div className={`drawer-backdrop ${isDrawerOpen ? 'open' : ''}`} onClick={closeDrawer}></div>
       <div className={`quick-add-drawer ${isDrawerOpen ? 'open' : ''}`}>
         {selectedCard && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%', maxWidth: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem', gap: '0.75rem', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
               {/* The name and number ARE the identification — the title above them
                   is boilerplate. So they get the size, and the set name (which the
                   number already implies) drops to the small line. */}
-              <div style={{ minWidth: 0 }}>
+              <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
                 <h3 style={{ color: 'var(--text-muted)', fontSize: '0.7rem', margin: 0, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 800 }}>{t('scan.addScannedTitle')}</h3>
-                <p style={{ color: 'var(--text-strong)', fontSize: '1.25rem', fontWeight: 800, margin: '0.1rem 0 0 0', lineHeight: 1.2 }}>
+                <p style={{ color: 'var(--text-strong)', fontSize: '1.25rem', fontWeight: 800, margin: '0.1rem 0 0 0', lineHeight: 1.2, wordBreak: 'break-word' }}>
                   {getCardDisplayName(selectedCard.name, language, selectedCard.printed_name)} <span style={{ color: 'var(--text-primary)' }}>#{selectedCard.number}</span>
                 </p>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: 0 }}>{selectedCard.set_name}</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: 0, wordBreak: 'break-word' }}>{selectedCard.set_name}</p>
                 <LangFallbackNote card={selectedCard} style={{ justifyContent: 'flex-start' }} />
               </div>
-              <button className="btn btn-secondary btn-icon-only" onClick={closeDrawer} style={{ borderRadius: '50%' }}>
+              <button className="btn btn-secondary btn-icon-only" onClick={closeDrawer} style={{ borderRadius: '50%', flexShrink: 0 }}>
                 <X size={18} />
               </button>
             </div>
 
             {/* Three Column Layout (No vertical scroll) */}
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div className="quick-add-grid" style={{ gridTemplateColumns: '200px 1fr' }}>
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+              <div className="quick-add-grid">
                 
                 {/* Column 1: Card Preview (Smaller card: width 150px) */}
                 <div className="quick-add-preview">
                   <img 
                     src={selectedCard.image_url} 
-                    alt={selectedCard.name} 
+                    alt={getCardDisplayName(selectedCard.name, language, selectedCard.printed_name)} 
                     className="quick-add-preview-img"
                   />
                   <div className="quick-add-preview-info">
@@ -2799,7 +2827,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     variant="stacked"
                     game={selectedCard.game || selectedCard.supertype}
                     quantity={quantity} purchasePrice={purchasePrice} condition={condition} printing={printing} language={language}
-                    onQuantity={setQuantity} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={setLanguage}
+                    onQuantity={setQuantity} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={handleLanguageChange}
                   />
                 </div>
               </div>
@@ -2807,31 +2835,34 @@ function CameraScanner({ onAddSuccess, showToast }) {
               {/* Submit Buttons.
                   "Other matches" goes back to what the scanner saw (alternative visual guesses).
                   "Right name, wrong printing" lists all printings of this card name across sets. */}
-              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid var(--border-glass)', paddingTop: '1rem', marginTop: '0.5rem' }}>
-                {lastMatches.length > 1 && (
+              <div className="quick-add-footer">
+                <div className="quick-add-footer-tools">
+                  {lastMatches.length > 1 && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => { closeDrawer(); setScanMatches(lastMatches); setShowAllMatches(true); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      <ListFilter size={14} /> {t('scan.backToMatches', { n: lastMatches.length })}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => { closeDrawer(); setScanMatches(lastMatches); setShowAllMatches(true); }}
+                    onClick={findOtherPrintings}
+                    disabled={findingPrintings}
+                    title={t('scan.otherPrintingsHint')}
                     style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
                   >
-                    <ListFilter size={14} /> {t('scan.backToMatches', { n: lastMatches.length })}
+                    {findingPrintings ? <RefreshCw size={14} className="spin" /> : <Layers size={14} />}
+                    <span>{findingPrintings ? t('scan.fetchingCandidates') : (t('scan.changePrinting') || t('scan.otherPrintings') || t('scan.rightNameWrongPrinting'))}</span>
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={findOtherPrintings}
-                  disabled={findingPrintings}
-                  title={t('scan.otherPrintingsHint')}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                >
-                  {findingPrintings ? <RefreshCw size={14} className="spin" /> : <Layers size={14} />}
-                  <span>{findingPrintings ? t('scan.fetchingCandidates') : (t('scan.changePrinting') || t('scan.otherPrintings') || t('scan.rightNameWrongPrinting'))}</span>
-                </button>
-                <span style={{ flex: 1 }} />
-                <button type="button" className="btn btn-secondary" onClick={closeDrawer} style={{ padding: '0.5rem 1.5rem' }}>{t('common.cancel')}</button>
-                <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 2rem' }}>{t('search.addToCollection')}</button>
+                </div>
+                <div className="quick-add-footer-actions">
+                  <button type="button" className="btn btn-secondary" onClick={closeDrawer}>{t('common.cancel')}</button>
+                  <button type="submit" className="btn btn-primary">{t('search.addToCollection')}</button>
+                </div>
               </div>
             </form>
           </div>

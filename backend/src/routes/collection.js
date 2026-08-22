@@ -330,6 +330,19 @@ router.post('/scan-match', searchLimiter, async (req, res) => {
           const use = localized || card;
           return { ...cand, name: use.name, set: use.set_id, number: use.number, card: use };
         }
+        if (game === 'lorcana') {
+          let row = await db.get(
+            `SELECT * FROM card_cache WHERE id = ? AND image_url IS NOT NULL AND image_url != '' LIMIT 1`,
+            [cand.cardId]
+          );
+          if (!row) {
+            const card = await lorcastApi.getCardById(cand.cardId).catch(() => null);
+            if (card) return { ...cand, name: card.name, set: card.set_id, number: card.number, card };
+            return cand;
+          }
+          const card = parseCardRow(row);
+          return { ...cand, name: card.name, set: card.set_id, number: card.number, card };
+        }
         const row = await db.get(
           `SELECT * FROM card_cache WHERE id = ? AND image_url IS NOT NULL AND image_url != '' LIMIT 1`,
           [cand.cardId]
@@ -342,6 +355,44 @@ router.post('/scan-match', searchLimiter, async (req, res) => {
         // or a card the localised one does not cover).
         const use = await localizedPokemon(card, langName);
         return { ...cand, name: use.name, set: use.set_id, number: use.number, card: use };
+      }
+      if (game === 'lorcana') {
+        const row = await db.get(
+          `SELECT c.* FROM tcgplayer_product t
+             JOIN card_cache c ON c.id = t.card_id
+            WHERE t.product_id = ? AND c.game = 'lorcana'
+              AND c.image_url IS NOT NULL AND c.image_url != ''
+            LIMIT 1`,
+          [cand.productId]
+        );
+        if (row) {
+          const card = parseCardRow(row);
+          return { ...cand, name: card.name, set: card.set_id, number: card.number, card };
+        }
+        const directRow = await db.get(
+          `SELECT * FROM card_cache WHERE tcgplayer_product_id = ? AND game = 'lorcana' AND image_url IS NOT NULL AND image_url != '' LIMIT 1`,
+          [cand.productId]
+        );
+        if (directRow) {
+          const card = parseCardRow(directRow);
+          return { ...cand, name: card.name, set: card.set_id, number: card.number, card };
+        }
+        const p = await tcgplayerCatalog.lookup(cand.productId);
+        if (!p) return cand;
+        const hint = { ...cand, name: p.name, set: p.set_id || p.group_name, number: p.number };
+        if (p.name) {
+          const { cards } = await lorcastApi.searchCards({ name: p.name, number: p.number, limit: 5 }).catch(() => ({ cards: [] }));
+          const card = (cards || []).find(c => sameNumber(c.number, p.number)) || cards?.[0];
+          if (card) {
+            await db.run(
+              `INSERT OR REPLACE INTO tcgplayer_product (card_id, product_id, category_id, confidence, matched_at)
+               VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+              [card.id, cand.productId, 71]
+            ).catch(() => {});
+            return { ...hint, name: card.name, set: card.set_id, number: card.number, card };
+          }
+        }
+        return hint;
       }
       // The published Pokemon catalog is keyed by TCGplayer product id.
       // tcgplayer_product is the authoritative mapping — card_cache's own column
@@ -760,6 +811,38 @@ async function addCardToCollection(user, body) {
   }
 }
 
+// 2b. Localize card to a specific language printing
+router.get('/cards/:id/printing', async (req, res) => {
+  try {
+    const cardId = req.params.id;
+    const targetLang = req.query.lang;
+    const game = req.query.game;
+    if (!targetLang) {
+      return res.status(400).json({ error: 'lang query parameter is required' });
+    }
+
+    let card = await db.get(`SELECT * FROM card_cache WHERE id = ?`, [cardId]);
+    if (!card) {
+      card = await cardApi.getCardById(cardId, { game, tcgApiKey: req.user?.tcg_api_key });
+    }
+    if (!card) {
+      return res.status(404).json({ error: `Card ID ${cardId} not found.` });
+    }
+
+    const localized = await cardApi.printingInLanguage(card, targetLang);
+    if (localized) {
+      const learned = await tcgdexApi.learnEnglishName(localized);
+      return res.status(200).json(learned || localized);
+    }
+
+    // Fallback: if no distinct localized printing exists, return the card with the target language tag
+    res.status(200).json({ ...card, language: languages.toName(targetLang) });
+  } catch (error) {
+    console.error('Error fetching card localized printing:', error);
+    res.status(500).json({ error: 'Failed to fetch card printing' });
+  }
+});
+
 // 3. Add Card to Collection
 router.post('/collection', async (req, res) => {
   try {
@@ -865,7 +948,21 @@ router.put('/collection/:id', async (req, res) => {
     const requestedQty = quantity !== undefined ? Math.max(1, parseInt(quantity, 10) || 1) : null;
     if (condition !== undefined) { updates.push('condition = ?'); params.push(condition); }
     if (printing !== undefined) { updates.push('printing = ?'); params.push(printing); }
-    if (language !== undefined) { updates.push('language = ?'); params.push(language); }
+    if (language !== undefined) {
+      updates.push('language = ?');
+      params.push(language);
+      if (language !== entry.language) {
+        let card = await db.get(`SELECT * FROM card_cache WHERE id = ?`, [entry.card_id]);
+        if (card) {
+          const localized = await cardApi.printingInLanguage(card, language);
+          if (localized && localized.id && localized.id !== entry.card_id) {
+            await tcgdexApi.learnEnglishName(localized);
+            updates.push('card_id = ?');
+            params.push(localized.id);
+          }
+        }
+      }
+    }
     if (purchase_price !== undefined) { updates.push('purchase_price = ?'); params.push(purchase_price); }
     if (isMoving || compartment_id !== undefined) {
       updates.push('location_id = ?', 'compartment_id = ?', 'position = ?');

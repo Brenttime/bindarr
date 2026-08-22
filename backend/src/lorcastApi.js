@@ -80,7 +80,10 @@ function formatRarity(r) {
     .join(' ');
 }
 
-function normalizeCard(raw) {
+const { translateLorcanaName } = require('./utils/lorcanaHelper');
+const languages = require('./utils/languages');
+
+function normalizeCard(raw, lang = 'English') {
   const name = raw.name ? (raw.version ? `${raw.name} - ${raw.version}` : raw.name) : '';
   const supertype = (Array.isArray(raw.type) && raw.type.length) ? raw.type[0] : 'Character';
   const subtypes = [
@@ -95,6 +98,8 @@ function normalizeCard(raw) {
   const cost = raw.cost != null ? parseFloat(raw.cost) : null;
   const setCode = raw.set?.code ? String(raw.set.code).toLowerCase() : '';
   const setId = setCode ? `lorcana-${setCode}` : (raw.set?.id || '');
+  const langName = languages.toName(lang);
+  const printedName = !languages.isEnglish(lang) ? translateLorcanaName(name, lang) : null;
 
   return {
     id: `lorcana-${raw.id}`,
@@ -120,14 +125,26 @@ function normalizeCard(raw) {
     cmc: cost,
     color_identity: inks,
     game: 'lorcana',
-    language: 'English',
-    printed_name: null,
+    language: langName,
+    printed_name: printedName,
     tcgplayer_url: raw.purchase_uris?.tcgplayer || (raw.tcgplayer_id ? `https://www.tcgplayer.com/product/${raw.tcgplayer_id}` : null),
     tcgplayer_product_id: raw.tcgplayer_id ? Number(raw.tcgplayer_id) : null,
   };
 }
 
-const cacheCards = (cards) => cacheNormalizedCards(cards, 'lorcana');
+const cacheCards = async (cards) => {
+  await cacheNormalizedCards(cards, 'lorcana');
+  const withProduct = (cards || []).filter(c => c && c.id && c.tcgplayer_product_id);
+  if (withProduct.length) {
+    for (const c of withProduct) {
+      await db.run(
+        `INSERT OR REPLACE INTO tcgplayer_product (card_id, product_id, category_id, confidence, matched_at)
+         VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+        [c.id, c.tcgplayer_product_id, 71]
+      ).catch(() => {});
+    }
+  }
+};
 
 async function searchCards({
   name = '', number = '', set = '', scope = 'database', userId = null,
@@ -237,15 +254,21 @@ async function getCardById(cardId) {
   return null;
 }
 
-async function getCardsBySet(setCode) {
+async function getCardsBySet(setCode, lang = 'English') {
   const cleanCode = String(setCode || '').replace(/^lorcana-/, '');
   try {
     const resp = await lorcastGetRetried('/cards/search', {
       params: { q: `set:${cleanCode}`, unique: 'prints' },
     });
     const results = (resp.data && resp.data.results) || [];
-    const normalized = results.map(normalizeCard);
-    if (normalized.length > 0) await cacheCards(normalized);
+    const normalized = results.map(r => normalizeCard(r, lang));
+    if (normalized.length > 0) {
+      await cacheCards(normalized);
+      await db.run(
+        `UPDATE sets SET total = ?, printed_total = ? WHERE game = 'lorcana' AND (LOWER(id) = ? OR LOWER(ptcgo_code) = ?)`,
+        [normalized.length, normalized.length, `lorcana-${cleanCode.toLowerCase()}`, cleanCode.toLowerCase()]
+      ).catch(() => {});
+    }
     return normalized;
   } catch (error) {
     console.error(`Error fetching Lorcana set ${setCode} from Lorcast:`, error.message);
@@ -253,9 +276,38 @@ async function getCardsBySet(setCode) {
   }
 }
 
+async function cacheAllCards() {
+  try {
+    const resp = await lorcastGetRetried('/cards/search', {
+      params: { q: 'cost>=0', unique: 'prints' },
+    });
+    const results = (resp.data && resp.data.results) || [];
+    const normalized = results.map(normalizeCard);
+    if (normalized.length > 0) {
+      await cacheCards(normalized);
+      const bySet = {};
+      for (const c of normalized) {
+        const sid = (c.set_id || '').toLowerCase();
+        bySet[sid] = (bySet[sid] || 0) + 1;
+      }
+      for (const [sid, count] of Object.entries(bySet)) {
+        const rawCode = sid.replace(/^lorcana-/, '');
+        await db.run(
+          `UPDATE sets SET total = ?, printed_total = ? WHERE game = 'lorcana' AND (LOWER(id) = ? OR LOWER(ptcgo_code) = ?)`,
+          [count, count, sid, rawCode]
+        ).catch(() => {});
+      }
+    }
+    return normalized;
+  } catch (err) {
+    console.error('Error caching all Lorcana cards:', err.message);
+    return [];
+  }
+}
+
 async function fetchAndCacheSets(force = false) {
   try {
-    const existing = await db.get(`SELECT COUNT(*) as count FROM sets WHERE game = 'lorcana'`);
+    const existing = await db.get(`SELECT COUNT(*) as count FROM sets WHERE game = 'lorcana' AND total IS NOT NULL AND total > 0`);
     if (!force && existing && existing.count > 0) {
       console.log(`Lorcana sets already populated (${existing.count} sets). Skipping fetch.`);
       return;
@@ -280,6 +332,17 @@ async function fetchAndCacheSets(force = false) {
           '',
         ]
       );
+    }
+    const cachedCounts = await db.all(
+      `SELECT set_id, COUNT(*) as count FROM card_cache WHERE game = 'lorcana' GROUP BY set_id`
+    );
+    for (const row of cachedCounts) {
+      const sid = String(row.set_id || '').toLowerCase();
+      const rawCode = sid.replace(/^lorcana-/, '');
+      await db.run(
+        `UPDATE sets SET total = ?, printed_total = ? WHERE game = 'lorcana' AND (LOWER(id) = ? OR LOWER(ptcgo_code) = ?)`,
+        [row.count, row.count, sid, rawCode]
+      ).catch(() => {});
     }
     console.log(`Cached ${sets.length} Lorcana sets.`);
   } catch (error) {
@@ -335,6 +398,7 @@ module.exports = {
   normalizeCard,
   cacheCards,
   getCardsBySet,
+  cacheAllCards,
   fetchAndCacheSets,
   updateCollectionPrices,
   getCardById,

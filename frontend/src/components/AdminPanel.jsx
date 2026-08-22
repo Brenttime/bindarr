@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Shield, UserPlus, Key, Trash2, ToggleLeft, ToggleRight, Search, Users, Globe, HardDriveDownload, Download } from 'lucide-react';
+import { Shield, UserPlus, Key, Trash2, ToggleLeft, ToggleRight, Search, Users, Globe, HardDriveDownload, Download, Sparkles } from 'lucide-react';
 import { useBackGuard } from '../utils/useBackGuard';
 import CatalogPanel from './CatalogPanel';
+import SetupWizard from './SetupWizard';
 import { currencySymbol } from '../utils/formatPrice';
 import { useT } from '../utils/i18n';
 
@@ -12,11 +13,12 @@ const formatBytes = (n) => {
   return `${(n / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`;
 };
 
-function AdminPanel({ showToast }) {
+function AdminPanel({ user, onUpdateUser, showToast }) {
   const { t, locale } = useT();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterText, setFilterText] = useState('');
+  const [showWizard, setShowWizard] = useState(false);
 
   // Add User Form States
   const [newUsername, setNewUsername] = useState('');
@@ -330,6 +332,14 @@ function AdminPanel({ showToast }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {showWizard && (
+        <SetupWizard 
+          user={user} 
+          onUpdateUser={onUpdateUser} 
+          showToast={showToast} 
+          onClose={() => setShowWizard(false)} 
+        />
+      )}
       {/* Header Info */}
       <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
@@ -337,6 +347,16 @@ function AdminPanel({ showToast }) {
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{t('admin.subtitle')}</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button 
+            type="button" 
+            className="btn btn-secondary btn-sm" 
+            onClick={() => setShowWizard(true)}
+            style={{ padding: '0.5rem 1rem', height: '34px', fontSize: '0.8rem', border: '1px solid var(--border-glass)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+          >
+            <Sparkles size={14} style={{ color: 'var(--accent-yellow)' }} />
+            {t('admin.runSetupWizard')}
+          </button>
+
           <button 
             type="button" 
             className="btn btn-secondary btn-sm" 
@@ -493,7 +513,7 @@ function AdminPanel({ showToast }) {
                 <thead>
                   <tr>
                     <th>{t('admin.colFile')}</th>
-                    <th>{t('admin.colCreated')}</th>
+                    <th className="hide-mobile">{t('admin.colCreated')}</th>
                     <th>{t('admin.colSize')}</th>
                     <th>{t('admin.colActions')}</th>
                   </tr>
@@ -502,7 +522,7 @@ function AdminPanel({ showToast }) {
                   {backups.map(b => (
                     <tr key={b.file}>
                       <td style={{ fontWeight: 600, color: 'var(--text-strong)', fontFamily: 'monospace', fontSize: '0.78rem' }}>{b.file}</td>
-                      <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(b.created_at).toLocaleString(locale)}</td>
+                      <td className="hide-mobile" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(b.created_at).toLocaleString(locale)}</td>
                       <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{formatBytes(b.size)}</td>
                       <td>
                         <button
@@ -556,7 +576,7 @@ function AdminPanel({ showToast }) {
                   <tr>
                     <th>{t('login.username')}</th>
                     <th>{t('admin.role')}</th>
-                    <th>{t('admin.colCreatedAt')}</th>
+                    <th className="hide-mobile">{t('admin.colCreatedAt')}</th>
                     <th>{t('sets.colCards')}</th>
                     <th>{t('admin.colPortfolio')}</th>
                     <th>{t('admin.colActions')}</th>
@@ -582,7 +602,7 @@ function AdminPanel({ showToast }) {
                           {t(user.role === 'admin' ? 'admin.roleAdmin' : 'admin.roleMember')}
                         </span>
                       </td>
-                      <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      <td className="hide-mobile" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                         {new Date(user.created_at).toLocaleDateString(locale)}
                       </td>
                       <td style={{ fontWeight: 600 }}>{t('admin.userCards', { count: user.total_cards })}</td>

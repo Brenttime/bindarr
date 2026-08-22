@@ -5,10 +5,10 @@ import { priceText } from '../utils/formatPrice';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
 import CardEntryFields from './CardEntryFields';
 import CardImageZoom from './CardImageZoom';
-import { translateJapaneseName } from '../utils/langHelper';
+import { translateJapaneseName, POKEMON_EN_TO_JP, getCardDisplayName } from '../utils/langHelper';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { CONDITIONS, PRINTINGS } from '../utils/cardOptions';
-import { LANGUAGES, langName, isEnglish, displayName, translatedName, setReference, setCode } from '../utils/languages';
+import { LANGUAGES, langName, isEnglish, displayName, translatedName, setReference, setCode, getLanguagesForGame, isLanguageSupported } from '../utils/languages';
 import { defaultGame, gameOptions, showGamePicker, gameLabel } from '../utils/games';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
@@ -149,11 +149,18 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     }
     try {
       const params = new URLSearchParams();
-      // The Japanese-name micro-dictionary only ever existed because the English
-      // Pokémon API can't be searched in Japanese. With a real Japanese source
-      // selected, the typed name goes straight through — it IS the card's name.
-      const translate = game === 'pokemon' && isEnglish(searchLang);
-      const finalQuery = query ? (translate ? (translateJapaneseName(query) || query) : query) : '';
+      // Support typing Japanese names in English search or English names in Japanese search
+      let finalQuery = query || '';
+      if (query && game === 'pokemon') {
+        const isJa = searchLang === 'ja' || searchLang === 'Japanese';
+        if (isJa) {
+          const jpMapped = POKEMON_EN_TO_JP[query.trim()];
+          if (jpMapped) finalQuery = jpMapped;
+        } else if (isEnglish(searchLang)) {
+          const enMapped = translateJapaneseName(query);
+          if (enMapped) finalQuery = enMapped;
+        }
+      }
       if (finalQuery) params.append('name', finalQuery);
       if (numberQuery) params.append('number', numberQuery);
       if (setCodeQuery) params.append('set', setCodeQuery);
@@ -417,6 +424,33 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     }
   };
 
+  const handleLanguageChange = async (newLang) => {
+    setLanguage(newLang);
+    if (!selectedCard) return;
+    try {
+      const targetGame = selectedCard.game || game;
+      const resp = await fetch(`/api/cards/${encodeURIComponent(selectedCard.id)}/printing?lang=${encodeURIComponent(newLang)}&game=${encodeURIComponent(targetGame)}`);
+      if (resp.ok) {
+        const localized = await resp.json();
+        if (localized && localized.id) {
+          setSelectedCard(prev => (prev ? { ...prev, ...localized, language: newLang } : { ...localized, language: newLang }));
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not switch to localized printing:', e);
+    }
+    setSelectedCard(prev => (prev ? { ...prev, language: newLang } : prev));
+  };
+
+  const handleGameChange = (newGame) => {
+    setGame(newGame);
+    if (!isLanguageSupported(newGame, searchLang)) {
+      setSearchLang('en');
+      setLanguage(langName('en'));
+    }
+  };
+
   const openQuickAdd = (card) => {
     setSelectedCard(card);
     setPurchasePrice(0); // Default to 0 purchase spend
@@ -515,7 +549,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                   type="button"
                   className={`sub-nav-tab ${game === value ? 'active' : ''}`}
                   style={{ padding: '0.4rem 0.9rem', fontSize: '0.8rem' }}
-                  onClick={() => setGame(value)}
+                  onClick={() => handleGameChange(value)}
                 >
                   {short}
                 </button>
@@ -561,7 +595,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                   setSetCodeQuery('');
                 }}
               >
-                {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+                {getLanguagesForGame(game).map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
@@ -908,12 +942,12 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       {/* Quick Add Drawer Sheet */}
       <div className={`quick-add-drawer ${isDrawerOpen ? 'open' : ''}`}>
         {selectedCard && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <h3 style={{ color: 'var(--text-strong)', fontSize: '1.25rem' }}>{t('search.addCardTitle')}</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                  {displayName(selectedCard)}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%', maxWidth: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+              <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                <h3 style={{ color: 'var(--text-strong)', fontSize: '1.25rem', margin: 0, wordBreak: 'break-word' }}>{t('search.addCardTitle')}</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.25rem 0 0 0', wordBreak: 'break-word' }}>
+                  {getCardDisplayName(selectedCard.name, language, selectedCard.printed_name, selectedCard.game || game)}
                   {translatedName(selectedCard) && <span style={{ color: 'var(--text-muted)' }}> ({translatedName(selectedCard)})</span>}
                   {' '}({selectedCard.set_name}
                   {/* Code only where the set name isn't readable to an English speaker. */}
@@ -921,19 +955,19 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                   {' • '}#{selectedCard.number})
                 </p>
               </div>
-              <button className="btn btn-secondary btn-icon-only" onClick={closeDrawer} style={{ borderRadius: '50%' }}>
+              <button className="btn btn-secondary btn-icon-only" onClick={closeDrawer} style={{ borderRadius: '50%', flexShrink: 0 }}>
                 <X size={18} />
               </button>
             </div>
 
-            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', width: '100%', maxWidth: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
               {/* Tap the art to enlarge, same as the collection inspector. */}
               <div
                 onClick={() => setIsFullScreen(true)}
                 title={t('inspector.zoomHint')}
                 style={{ position: 'relative', flexShrink: 0, cursor: 'pointer', lineHeight: 0 }}
               >
-                <CardImage card={selectedCard} style={{ width: '80px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }} />
+                <CardImage card={selectedCard} style={{ width: '75px', aspectRatio: 0.718, objectFit: 'cover', borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }} />
                 <div style={{
                   position: 'absolute', bottom: '4px', right: '4px',
                   background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)',
@@ -944,26 +978,27 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                   <Maximize2 size={11} />
                 </div>
               </div>
-              <div>
+              <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('search.tcgMarketPrice', { printing })}</div>
-                <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--accent-yellow)' }}>{priceText(resolveCardPrice(selectedCard, printing), selectedCard.price_currency)}</div>
+                <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--accent-yellow)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{priceText(resolveCardPrice(selectedCard, printing), selectedCard.price_currency)}</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{t('search.rarityLabel')} <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{selectedCard.rarity}</span></div>
               </div>
             </div>
 
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
               <CardEntryFields
                 quantity={quantity} purchasePrice={purchasePrice} condition={condition} printing={printing} language={language}
-                onQuantity={setQuantity} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={setLanguage}
+                onQuantity={setQuantity} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={handleLanguageChange}
+                game={selectedCard?.game || game}
                 grader={grader} grade={grade} certNumber={certNumber}
                 onGrader={setGrader} onGrade={setGrade} onCertNumber={setCertNumber}
               />
 
-
-
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={closeDrawer} style={{ flex: 1 }}>{t('common.cancel')}</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 2 }}>{t('search.addToCollection')}</button>
+              <div className="quick-add-footer" style={{ marginTop: '1.25rem', paddingTop: '1rem' }}>
+                <div className="quick-add-footer-actions">
+                  <button type="button" className="btn btn-secondary" onClick={closeDrawer}>{t('common.cancel')}</button>
+                  <button type="submit" className="btn btn-primary">{t('search.addToCollection')}</button>
+                </div>
               </div>
             </form>
           </div>
