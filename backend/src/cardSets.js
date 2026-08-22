@@ -199,6 +199,16 @@ async function listAllSets(game, lang) {
       .filter(s => s.code && !s.digital && !s.parent_set_code && (s.card_count || 0) > 0)
       .map(s => s.code);
   }
+  if (game === 'lorcana') {
+    const db = require('./db');
+    let rows = await db.all("SELECT id, ptcgo_code FROM sets WHERE game = 'lorcana' ORDER BY release_date ASC");
+    if (!rows.length) {
+      const lorcastApi = require('./lorcastApi');
+      await lorcastApi.fetchAndCacheSets(true);
+      rows = await db.all("SELECT id, ptcgo_code FROM sets WHERE game = 'lorcana' ORDER BY release_date ASC");
+    }
+    return rows.map(r => r.ptcgo_code || r.id.replace(/^lorcana-/, ''));
+  }
   if (game === 'pokemon') {
     const exclusions = await getScanExclusions();
     if (await pokemonProvider.usesTcgdex(code)) {
@@ -366,7 +376,20 @@ async function fetchPokemonSet(set) {
 // it. Returns the fetched cards so a caller can count them.
 async function cacheSetCards(game, set, lang, { excludeChildCodes = [] } = {}) {
   const code = langOf(lang);
-  if (game !== 'mtg' && game !== 'pokemon') throw new Error('only mtg/pokemon');
+  if (game !== 'mtg' && game !== 'pokemon' && game !== 'lorcana') throw new Error('only mtg/pokemon/lorcana');
+  if (game === 'lorcana') {
+    const lorcastApi = require('./lorcastApi');
+    const cleanSet = String(set || '').replace(/^lorcana-/, '');
+    const fetched = await lorcastApi.getCardsBySet(cleanSet, lang);
+    if (!fetched.length) throw absent(`no cards for set ${set}`);
+    return fetched.map(c => ({
+      name: c.printed_name || c.name || '',
+      set: c.set_id || set,
+      number: c.number || '',
+      img: c.image_url,
+      raw: c,
+    }));
+  }
   // One decision, read once and reused by BOTH the fetch and the cache below.
   // They used to derive it separately and disagreed: the fetch asked the
   // provider, the cache asked the language.

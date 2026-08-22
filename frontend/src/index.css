@@ -1494,17 +1494,17 @@ button, input, select, textarea {
 /* Shared card detail popup. Base = desktop two-column; mobile compacts padding,
    gaps and the image so it fits a phone popup without a wall of whitespace. */
 .card-inspector {
-  max-width: 720px;
+  max-width: 800px;
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
   overflow-x: hidden;
   box-sizing: border-box;
-  padding: 2.5rem;
+  padding: 2.25rem;
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
-  gap: 2.5rem;
+  gap: 2.25rem;
   position: relative;
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
@@ -1514,14 +1514,14 @@ button, input, select, textarea {
   /* Stacked on mobile: card image on top (the focus), details below full-width.
      Roomier than the old side-by-side squeeze; the dialog scrolls if tall. */
   .card-inspector {
-    padding: 1.25rem 1.1rem !important;
-    gap: 1.1rem !important;
+    padding: 1.25rem 1rem !important;
+    gap: 1rem !important;
     max-height: 90vh !important;
     flex-direction: column !important;
     flex-wrap: nowrap !important;
     align-items: stretch !important;
-    max-width: 440px !important;
-    width: 94vw !important;
+    max-width: min(96vw, 540px) !important;
+    width: 96vw !important;
     box-sizing: border-box !important;
     overflow-x: hidden !important;
     border-radius: var(--radius-md) !important;
@@ -1533,28 +1533,30 @@ button, input, select, textarea {
     gap: 0.6rem !important;
   }
   .card-inspector .ci-image-wrap {
-    max-width: 200px !important;
-    width: 62% !important;
+    max-width: 180px !important;
+    width: 55% !important;
+  }
+  /* In edit mode on mobile, keep the image preview compact so the form gets top billing */
+  .card-inspector.mode-edit .ci-image-wrap {
+    max-width: 110px !important;
+    width: 32% !important;
+  }
+  .card-inspector.mode-edit .ci-image-col {
+    gap: 0.3rem !important;
   }
   .card-inspector .ci-info-col {
     flex: 1 1 auto !important;
     min-width: 0 !important; /* let the column shrink instead of overflowing */
     width: 100% !important;
-    gap: 0.9rem !important;
+    gap: 0.85rem !important;
   }
   .card-inspector .ci-info-col h3 {
-    font-size: 1.4rem !important;
+    font-size: 1.3rem !important;
     line-height: 1.2 !important;
   }
   .card-entry-fields-row-3 {
-    grid-template-columns: repeat(2, 1fr) !important;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)) !important;
     gap: 0.5rem !important;
-  }
-}
-
-@media (max-width: 420px) {
-  .card-entry-fields-row-3 {
-    grid-template-columns: 1fr !important;
   }
 }
 
@@ -1634,6 +1636,9 @@ button, input, select, textarea {
   bottom: 0;
   left: 0;
   right: 0;
+  width: 100%;
+  max-width: 100vw;
+  box-sizing: border-box;
   background: var(--bg-secondary);
   border-top: 2px solid var(--border-glass-hover);
   border-radius: var(--radius-md) var(--radius-md) 0 0;
@@ -1641,9 +1646,11 @@ button, input, select, textarea {
   z-index: 1010;
   max-height: 80vh;
   overflow-y: auto;
+  overflow-x: hidden;
   box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
   transform: translateY(100%);
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  -webkit-overflow-scrolling: touch;
 }
 
 .quick-add-drawer.open {
@@ -1692,37 +1699,60 @@ button, input, select, textarea {
   pointer-events: auto;
 }
 
-/* Table Style for Collection Browse */
+/* Table Style for Collection Browse and Admin/Deck lists */
 .collection-table-wrapper {
   overflow-x: auto;
   margin-top: 1rem;
+  -webkit-overflow-scrolling: touch;
 }
 
 .collection-table {
   width: 100%;
-  min-width: 750px;
   border-collapse: collapse;
   text-align: left;
 }
 
+@media (min-width: 769px) {
+  .collection-table {
+    min-width: 600px;
+  }
+}
+
 .collection-table th {
-  padding: 1rem;
+  padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border-glass-hover);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .collection-table td {
-  padding: 1rem;
+  padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border-glass);
-  font-size: 0.95rem;
+  font-size: 0.88rem;
 }
 
 .collection-table tr:hover td {
   background: rgba(255, 255, 255, 0.01);
+}
+
+@media (max-width: 768px) {
+  .collection-table {
+    min-width: 0 !important;
+  }
+  .collection-table th {
+    padding: 0.5rem 0.4rem !important;
+    font-size: 0.72rem !important;
+  }
+  .collection-table td {
+    padding: 0.5rem 0.4rem !important;
+    font-size: 0.78rem !important;
+  }
+  .hide-mobile {
+    display: none !important;
+  }
 }
 
 .collection-card-row-info {
@@ -1880,6 +1910,42 @@ button, input, select, textarea {
   grid-column: span 2;
 }
 
+.quick-add-footer {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border-glass);
+  padding-top: 1rem;
+  margin-top: 0.5rem;
+}
+
+.quick-add-footer-tools {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.quick-add-footer-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-left: auto;
+}
+
+.scan-confirm-modal {
+  padding: 1.75rem;
+}
+
+.scan-suggestions-modal {
+  padding: 1.75rem;
+}
+
+.bulk-action-bar {
+  padding: 0.75rem 1rem;
+}
+
 @media (max-width: 1024px) {
   .quick-add-grid {
     grid-template-columns: 180px 1fr;
@@ -1912,10 +1978,18 @@ button, input, select, textarea {
   .quick-add-grid {
     grid-template-columns: 1fr !important;
     gap: 0.5rem !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
   }
   
   .quick-add-grid > div:last-child {
     grid-column: span 1 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
   }
 
   .quick-add-section-title {
@@ -1925,41 +1999,60 @@ button, input, select, textarea {
   .quick-add-preview {
     flex-direction: row !important;
     padding: 0.5rem !important;
-    gap: 1rem !important;
+    gap: 0.75rem !important;
     background: rgba(255,255,255,0.02) !important;
     border: 1px solid var(--border-glass) !important;
     border-radius: var(--radius-sm) !important;
     justify-content: flex-start !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
   }
 
   .quick-add-preview-img {
-    max-width: 104px !important;
+    width: 75px !important;
+    max-width: 75px !important;
+    flex-shrink: 0 !important;
     box-shadow: 0 4px 8px rgba(0,0,0,0.4) !important;
   }
 
   .quick-add-preview-info {
     text-align: left !important;
+    min-width: 0 !important;
+    flex: 1 !important;
+    overflow: hidden !important;
+    word-break: break-word !important;
   }
 
   .quick-add-full-width {
-    grid-column: span 1 !important; /* side-by-side on mobile! */
+    grid-column: 1 / -1 !important;
   }
   
-  /* The add-card sheet gets the screen, rather than being squeezed into as
-     little of it as possible. It was tuned to fit inside 80vh by shrinking
-     everything — 65px of card art, 0.7rem labels, 40px controls — and the result
-     was a cramped strip at the bottom of the phone with a lot of empty space
-     above it. dvh, not vh: vh counts the browser chrome as visible, so a sheet
-     sized in vh is cut off by the address bar it cannot see. */
   .quick-add-drawer {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    left: 0 !important;
+    right: 0 !important;
+    box-sizing: border-box !important;
     padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom)) !important;
     max-height: 92dvh !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
   }
   .quick-add-fields-group {
-    gap: 0.55rem !important;
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.5rem !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
   }
   .quick-add-grid .form-group {
     margin-bottom: 0.1rem !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
   }
   .quick-add-grid label {
     font-size: 0.8rem !important;
@@ -1967,13 +2060,71 @@ button, input, select, textarea {
     text-transform: none !important;
     letter-spacing: normal !important;
   }
-  /* 44px is the minimum comfortable touch target, and these are the controls the
-     whole sheet exists to set. */
   .quick-add-grid .input-control,
   .quick-add-grid .select-control {
     padding: 0.45rem 0.6rem !important;
     font-size: 0.9rem !important;
     height: 44px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .quick-add-footer {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0.5rem !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+  .quick-add-footer-tools {
+    width: 100% !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 0.4rem !important;
+    box-sizing: border-box !important;
+  }
+  .quick-add-footer-tools button {
+    flex: 1 1 calc(50% - 0.4rem) !important;
+    min-width: 0 !important;
+    font-size: 0.75rem !important;
+    padding: 0.45rem 0.4rem !important;
+    white-space: normal !important;
+    text-align: center !important;
+    justify-content: center !important;
+    box-sizing: border-box !important;
+  }
+  .quick-add-footer-actions {
+    width: 100% !important;
+    display: flex !important;
+    gap: 0.5rem !important;
+    margin-left: 0 !important;
+    box-sizing: border-box !important;
+  }
+  .quick-add-footer-actions button {
+    flex: 1 !important;
+    min-width: 0 !important;
+    padding: 0.6rem 0.5rem !important;
+    text-align: center !important;
+    justify-content: center !important;
+    box-sizing: border-box !important;
+  }
+
+  .scan-confirm-modal {
+    padding: 1.25rem 1rem !important;
+    gap: 1rem !important;
+  }
+
+  .scan-suggestions-modal {
+    padding: 1.25rem 1rem !important;
+    gap: 1rem !important;
+  }
+
+  .bulk-action-bar {
+    padding: 0.5rem 0.6rem !important;
+    gap: 0.35rem !important;
+    max-height: 40vh !important;
+    overflow-y: auto !important;
   }
 }
 

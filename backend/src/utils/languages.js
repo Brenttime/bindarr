@@ -49,4 +49,22 @@ const toName = (input) => resolve(input).name;
 // for "can we use what we already had".
 const isEnglish = (input) => resolve(input).code === 'en';
 
-module.exports = { LANGUAGES, DEFAULT, resolve, toCode, toName, isEnglish };
+// Which languages a game is printed in. Default/fallback is all languages.
+function getLanguagesForGame(game) {
+  if (!game) return LANGUAGES;
+  const g = String(game).toLowerCase();
+  return LANGUAGES.filter(l => !l.games || l.games.includes(g));
+}
+
+const getLanguageNamesForGame = (game) => getLanguagesForGame(game).map(l => l.name);
+
+const isLanguageSupported = (game, lang) => {
+  if (!game || !lang) return true;
+  const code = toCode(lang);
+  return getLanguagesForGame(game).some(l => l.code === code);
+};
+
+module.exports = {
+  LANGUAGES, DEFAULT, resolve, toCode, toName, isEnglish,
+  getLanguagesForGame, getLanguageNamesForGame, isLanguageSupported,
+};

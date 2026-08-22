@@ -395,6 +395,21 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
               <Failure what={`catalog:${c.game}`} />
             </div>
           ))}
+          {shownGames.includes('lorcana') && (
+            <div style={{ ...row, opacity: 0.9, background: 'rgba(255,255,255,0.03)' }}>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontSize: '0.76rem', color: 'var(--text-strong)' }}>
+                  {gameLabel('lorcana')}
+                </span>
+                <p style={{ ...body, fontSize: '0.72rem', marginTop: '0.15rem' }}>
+                  {t('setup.scan.lorcanaLocalNote')}
+                </p>
+              </div>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0, fontStyle: 'italic' }}>
+                {t('setup.scan.buildLocally')}
+              </span>
+            </div>
+          )}
         </div>
         {!modelsReady && (
           <p style={{ fontSize: '0.72rem', color: 'var(--accent-yellow)', margin: '0.4rem 0 0' }}>

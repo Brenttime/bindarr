@@ -1,4 +1,4 @@
-import { CONDITIONS, getPrintings, LANGUAGES, GRADERS, GRADES } from '../utils/cardOptions';
+import { CONDITIONS, getPrintings, getLanguageNamesForGame, GRADERS, GRADES } from '../utils/cardOptions';
 import { useT } from '../utils/i18n';
 
 // Shared quantity / purchase-price / condition / printing / language inputs for
@@ -18,6 +18,7 @@ export default function CardEntryFields({
   const { t } = useT();
   const stacked = variant === 'stacked';
   const printings = getPrintings(game);
+  const gameLanguages = getLanguageNamesForGame(game);
   const groupStyle = stacked ? { marginBottom: 0 } : undefined;
   // Grading is opt-in per caller: the scanner's quick-add has no room for it and a
   // scan cannot read a cert number off a slab anyway. Absent handlers means the
@@ -31,10 +32,10 @@ export default function CardEntryFields({
     // tap targets instead of a bare number input.
     <div className="form-group quick-add-full-width" style={groupStyle}>
       <label>{t('card.quantity')}</label>
-      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'stretch' }}>
-        <button type="button" className="btn btn-secondary" onClick={() => stepQty(-1)} aria-label={t('card.quantityDown')} style={{ padding: '0 1.1rem', fontSize: '1.3rem', flexShrink: 0 }}>&minus;</button>
-        <input type="number" className="input-control" min="1" value={quantity} onChange={(e) => onQuantity(e.target.value)} required style={{ flex: 1, minWidth: 0, textAlign: 'center', fontWeight: 700 }} />
-        <button type="button" className="btn btn-secondary" onClick={() => stepQty(1)} aria-label={t('card.quantityUp')} style={{ padding: '0 1.1rem', fontSize: '1.3rem', flexShrink: 0 }}>+</button>
+      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'stretch', width: '100%', boxSizing: 'border-box' }}>
+        <button type="button" className="btn btn-secondary" onClick={() => stepQty(-1)} aria-label={t('card.quantityDown')} style={{ width: '44px', height: '44px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', fontWeight: 800, flexShrink: 0 }}>&minus;</button>
+        <input type="number" className="input-control" min="1" value={quantity} onChange={(e) => onQuantity(e.target.value)} required style={{ flex: 1, minWidth: 0, textAlign: 'center', fontWeight: 700, height: '44px' }} />
+        <button type="button" className="btn btn-secondary" onClick={() => stepQty(1)} aria-label={t('card.quantityUp')} style={{ width: '44px', height: '44px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', fontWeight: 800, flexShrink: 0 }}>+</button>
       </div>
     </div>
   ) : (
@@ -76,7 +77,7 @@ export default function CardEntryFields({
       {/* The language the card was printed in — not the app's language. */}
       <label>{t('card.language')}</label>
       <select className="select-control" value={language} onChange={(e) => onLanguage(e.target.value)}>
-        {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+        {gameLanguages.map(l => <option key={l} value={l}>{l}</option>)}
       </select>
     </div>
   );
@@ -85,7 +86,7 @@ export default function CardEntryFields({
   // grader is chosen, so they stay disabled until one is — an empty cert box next
   // to grader 'Raw' invites typing a number that the backend then discards.
   const Grading = grading && (
-    <div className="card-entry-fields-row-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+    <div className="card-entry-fields-row-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.75rem' }}>
       <div className="form-group" style={groupStyle}>
         <label>{t('card.grader')}</label>
         <select className="select-control" value={grader} onChange={(e) => {
@@ -125,8 +126,8 @@ export default function CardEntryFields({
   }
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>{Quantity}{Price}</div>
-      <div className="card-entry-fields-row-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>{Condition}{Printing}{Language}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.75rem' }}>{Quantity}{Price}</div>
+      <div className="card-entry-fields-row-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.75rem' }}>{Condition}{Printing}{Language}</div>
       {Grading}
     </>
   );

@@ -57,6 +57,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
   const [certNumber, setCertNumber] = useState('');
   const [marketValue, setMarketValue] = useState('');
   const [fetchingValue, setFetchingValue] = useState(false);
+  const [activeCard, setActiveCard] = useState(card);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const hasToggledRef = useRef(false);
 
@@ -73,6 +74,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
 
   useEffect(() => {
     if (!card) return;
+    setActiveCard(card);
     hasToggledRef.current = false;
     setMode(startInEdit ? 'edit' : 'view');
     setQ(card.quantity ?? 1);
@@ -91,6 +93,34 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
     setMarketValue(card.market_value == null ? '' : String(card.market_value));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset form only when the entry changes, not on every card mutation
   }, [targetEntryId, startInEdit]);
+
+  const handleLanguageChange = async (newLang) => {
+    setLanguage(newLang);
+    if (!activeCard) return;
+    try {
+      const cardId = activeCard.card_id || activeCard.id;
+      const resp = await fetch(`/api/cards/${encodeURIComponent(cardId)}/printing?lang=${encodeURIComponent(newLang)}&game=${activeCard.game || activeCard.supertype || ''}`);
+      if (resp.ok) {
+        const localized = await resp.json();
+        if (localized && localized.id) {
+          setActiveCard(prev => {
+            const updated = {
+              ...(prev || {}),
+              ...localized,
+              card_id: localized.id,
+              language: newLang,
+            };
+            if (card) {
+              Object.assign(card, updated);
+            }
+            return updated;
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Could not switch to localized printing:', e);
+    }
+  };
 
   const handleClose = () => {
     if (hasToggledRef.current && onUpdate) {
@@ -299,7 +329,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
       justifyContent: 'center',
       zIndex: 999
     }} onClick={handleClose}>
-      <div className="glass-panel card-inspector" onClick={(e) => e.stopPropagation()}>
+      <div className={`glass-panel card-inspector ${mode === 'edit' ? 'mode-edit' : ''}`} onClick={(e) => e.stopPropagation()}>
         <button className="btn btn-secondary btn-icon-only" onClick={handleClose} style={{
           position: 'absolute',
           top: '1rem',
@@ -324,7 +354,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                 uploads it, and a card with no provider art rendered as a broken
                 image icon here alone. */}
             <CardImage
-              card={card}
+              card={activeCard}
               style={{
                 width: '100%',
                 aspectRatio: 0.718,
@@ -356,8 +386,8 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
             </div>
           </div>
           <CardArtEditor
-            card={card}
-            hasProviderArt={!!card.image_url}
+            card={activeCard}
+            hasProviderArt={!!activeCard.image_url}
             showToast={showToast}
             onChanged={onUpdate}
           />
@@ -367,12 +397,12 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
         <div className="ci-info-col" style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', gap: '1.25rem', justifyContent: 'space-between' }}>
           <div>
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-              {card.list_type === 'wishlist' && (
+              {activeCard.list_type === 'wishlist' && (
                 <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(6, 182, 212, 0.15)', color: '#06b6d4', border: '1px solid rgba(6, 182, 212, 0.3)' }}>
                   {t('inspector.wishlistItem')}
                 </span>
               )}
-              {card.is_trade === 1 && (
+              {activeCard.is_trade === 1 && (
                 <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(74, 222, 128, 0.15)', color: 'var(--type-grass)', border: '1px solid rgba(74, 222, 128, 0.3)' }}>
                   {t('inspector.forTrade')}
                 </span>
@@ -380,25 +410,25 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
             </div>
 
             <h3 style={{ fontSize: '1.65rem', color: 'var(--text-strong)', fontWeight: 800, lineHeight: 1.15, marginBottom: '0.25rem' }}>
-              {getCardDisplayName(card.name, card.language, card.printed_name)}
+              {getCardDisplayName(activeCard.name, language, activeCard.printed_name, activeCard.game || activeCard.supertype)}
             </h3>
             {/* The English name when the provider gives us one for this printing
                 (Magic always does). Nothing is shown for a Japan-only Pokémon
                 card — no provider has an English name for it. */}
-            {translatedName(card) && (
+            {translatedName(activeCard) && (
               <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 500, marginBottom: '0.25rem' }}>
-                {translatedName(card)}
+                {translatedName(activeCard)}
               </p>
             )}
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 500 }}>
-              {card.set_name}
+              {activeCard.set_name}
               {/* Set code alongside the native set name: it reads the same in every
                   language, so it is the part you can search or quote. The collector
                   number is already spelled out just after, so only the code here. */}
-              {!isEnglish(card.language) && setCode(card) && (
-                <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}> ({setCode(card)})</span>
+              {!isEnglish(language) && setCode(activeCard) && (
+                <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}> ({setCode(activeCard)})</span>
               )}
-              {cardNumber ? ` • #${cardNumber}` : ''}{card.rarity ? ` • ${card.rarity}` : ''} • {t('inspector.owned', { count: card.quantity ?? 1 })}
+              {(activeCard.number || activeCard.collector_number || activeCard.card_number) ? ` • #${activeCard.number || activeCard.collector_number || activeCard.card_number}` : ''}{activeCard.rarity ? ` • ${activeCard.rarity}` : ''} • {t('inspector.owned', { count: activeCard.quantity ?? 1 })}
             </p>
 
             {/* MTG cards: show color pips + type line (Pokémon energy types are
@@ -444,7 +474,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               <CardEntryFields
                 game={card.game || card.supertype}
                 quantity={q} purchasePrice={purchasePrice} condition={condition} printing={printing} language={language}
-                onQuantity={setQ} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={setLanguage}
+                onQuantity={setQ} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={handleLanguageChange}
                 grader={grader} grade={grade} certNumber={certNumber}
                 onGrader={setGrader} onGrade={setGrade} onCertNumber={setCertNumber}
               />

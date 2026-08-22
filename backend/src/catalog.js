@@ -29,7 +29,7 @@ const MODEL_DIR = process.env.CV_MODEL_DIR || path.join(__dirname, '..', 'data',
 const SIZE = 448;
 const MEAN = [0.485, 0.456, 0.406];
 const STD = [0.229, 0.224, 0.225];
-const GAMES = ['mtg', 'pokemon'];
+const GAMES = ['mtg', 'pokemon', 'lorcana'];
 
 const suffix = (lang) => (!lang || lang === 'en' || lang === 'English' ? '' : `-${String(lang).toLowerCase()}`);
 const binPath = (game, lang) => path.join(MODEL_DIR, `milo-${game}${suffix(lang)}-local.bin`);
@@ -127,13 +127,13 @@ async function newSetCount(game, lang = 'English') {
     const row = await db.get(
       `SELECT COUNT(*) n FROM sets s
         WHERE s.game = ? AND COALESCE(s.total, 0) > 0
-          AND LOWER(CASE WHEN s.id LIKE 'mtg-%' THEN SUBSTR(s.id, 5) ELSE s.id END) NOT IN (
+          AND LOWER(CASE WHEN s.id LIKE 'mtg-%' THEN SUBSTR(s.id, 5) WHEN s.id LIKE 'lorcana-%' THEN SUBSTR(s.id, 9) ELSE s.id END) NOT IN (
             SELECT set_id FROM set_data_gaps WHERE game = s.game AND language = ?
           )
           AND NOT EXISTS (
             SELECT 1 FROM card_cache c
              WHERE c.game = s.game AND c.language = ?
-               AND LOWER(c.set_id) = LOWER(CASE WHEN s.id LIKE 'mtg-%' THEN SUBSTR(s.id, 5) ELSE s.id END)
+               AND (LOWER(c.set_id) = LOWER(s.id) OR LOWER(c.set_id) = LOWER(CASE WHEN s.id LIKE 'mtg-%' THEN SUBSTR(s.id, 5) WHEN s.id LIKE 'lorcana-%' THEN SUBSTR(s.id, 9) ELSE s.id END))
           )`,
       [game, lang, lang]
     );
@@ -278,9 +278,16 @@ async function setCounts(game, lang = 'English') {
 
   const sets = {};
   for (const r of rows) {
-    const e = sets[r.sid] || (sets[r.sid] = { cached: 0, embedded: 0 });
+    const sid = r.sid;
+    const bare = sid.replace(/^(mtg|lorcana)-/, '');
+    const e = sets[sid] || (sets[sid] = { cached: 0, embedded: 0 });
     e.cached++;
     if (embedded && embedded.has(r.id)) e.embedded++;
+    if (bare !== sid) {
+      const eBare = sets[bare] || (sets[bare] = { cached: 0, embedded: 0 });
+      eBare.cached++;
+      if (embedded && embedded.has(r.id)) eBare.embedded++;
+    }
   }
   return {
     game, lang, sets,
@@ -375,12 +382,16 @@ async function embedPhase(job) {
   // Foundations vectors built last week, since this phase writes exactly the rows
   // it embedded.
   const scoped = job.sets && job.sets.length;
+  const setFilter = scoped ? job.sets.flatMap(s => {
+    const bare = s.replace(/^(mtg|lorcana)-/, '');
+    return [bare, `${job.game}-${bare}`];
+  }) : [];
   const rows = await db.all(
     `SELECT id, image_url FROM card_cache
       WHERE game = ? AND language = ? AND image_url IS NOT NULL AND image_url != ''
-        ${scoped ? `AND LOWER(set_id) IN (${job.sets.map(() => '?').join(',')})` : ''}
+        ${scoped ? `AND LOWER(set_id) IN (${setFilter.map(() => '?').join(',')})` : ''}
       ORDER BY id`,
-    scoped ? [job.game, job.lang, ...job.sets.map(s => String(s).toLowerCase())] : [job.game, job.lang]
+    scoped ? [job.game, job.lang, ...setFilter.map(s => String(s).toLowerCase())] : [job.game, job.lang]
   );
   job.phase = 'embed';
   job.total = rows.length;
@@ -420,7 +431,13 @@ async function embedPhase(job) {
   // Swapped here rather than in tcgdexApi.imageUrl on purpose: card_cache's url is
   // what the frontend renders, and making every grid thumbnail high-res would cost
   // the whole app bandwidth to fix one pipeline.
-  const embedUrl = (row) => row.image_url.replace(/\/low\.png$/, '/high.png');
+  const embedUrl = (row) => {
+    let url = row.image_url.replace(/\/low\.png$/, '/high.png');
+    if (url.includes('cards.lorcast.io/card/digital/')) {
+      url = url.replace(/\/card\/digital\/(?:small|normal)\//, '/card/digital/large/');
+    }
+    return url;
+  };
 
   // Scryfall's image CDN rejects a request with no User-Agent — 400, not 403, which
   // reads like a bad URL. Version comes from package.json rather than a literal: the
@@ -544,4 +561,4 @@ function start(game, lang = 'English', opts = {}) {
 let last = null;
 const lastResult = () => last;
 
-module.exports = { list, listLanguages, setCounts, keptFromPrev, start, stop, state, lastResult, binPath, metaPath };
+module.exports = { list, listLanguages, setCounts, keptFromPrev, start, stop, state, lastResult, binPath, metaPath, GAMES };

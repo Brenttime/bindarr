@@ -155,7 +155,7 @@ function ReadyMadeCard({ engine, onDownload, busy, enginePresent, productMap, on
             <tr>
               <th>{t('catalog.thGame')}</th>
               <th>{t('catalog.thSize')}</th>
-              <th>{t('catalog.thSnapshot')}</th>
+              <th className="hide-mobile">{t('catalog.thSnapshot')}</th>
               <th style={{ textAlign: 'right' }}>{t('catalog.thStatus')}</th>
             </tr>
           </thead>
@@ -164,7 +164,7 @@ function ReadyMadeCard({ engine, onDownload, busy, enginePresent, productMap, on
               <tr key={c.name}>
                 <td style={{ fontWeight: 600, color: 'var(--text-strong)' }}>{GAME_LABEL[c.game] || c.game}</td>
                 <td>{mb(c.bytes)}</td>
-                <td>{c.snapshot}</td>
+                <td className="hide-mobile">{c.snapshot}</td>
                 <td style={{ textAlign: 'right' }}>
                   {c.present
                     ? <span style={{ color: 'var(--type-grass)', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}><Check size={14} /> {t('catalog.installed')}</span>
@@ -238,7 +238,11 @@ function BuildPicker({ game, lang, disabled, onBuild, showToast, label }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const codeOf = (s) => game === 'mtg' ? (s.ptcgo_code || (s.id || '').replace(/^mtg-/, '')) : s.id;
+  const codeOf = (s) => game === 'mtg'
+    ? (s.ptcgo_code || (s.id || '').replace(/^mtg-/, ''))
+    : game === 'lorcana'
+      ? (s.ptcgo_code || (s.id || '').replace(/^lorcana-/, ''))
+      : s.id;
 
   useEffect(() => {
     if (!open || sets.length) return;
@@ -303,7 +307,7 @@ function BuildPicker({ game, lang, disabled, onBuild, showToast, label }) {
         className="input-control"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder={game === 'mtg' ? t('catalog.searchMtgPlaceholder') : t('catalog.searchPokemonPlaceholder')}
+        placeholder={game === 'mtg' ? t('catalog.searchMtgPlaceholder') : game === 'lorcana' ? t('catalog.searchLorcanaPlaceholder') : t('catalog.searchPokemonPlaceholder')}
         style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }}
       />
       {loading
@@ -379,7 +383,7 @@ function OtherLanguages({ disabled, onBuild, showToast }) {
                   <tr>
                     <th>{t('prefs.language')}</th>
                     <th>{t('catalog.thCardsIndexable')}</th>
-                    <th>{t('catalog.thSets')}</th>
+                    <th className="hide-mobile">{t('catalog.thSets')}</th>
                     <th>{t('catalog.thCatalog')}</th>
                     <th style={{ textAlign: 'right' }}></th>
                   </tr>
@@ -394,7 +398,7 @@ function OtherLanguages({ disabled, onBuild, showToast }) {
                         {num(l.withArt)} of {num(l.claimed)}
                         {l.claimed ? <span style={{ color: 'var(--text-muted)' }}> · {pct(l.withArt, l.claimed)}%</span> : null}
                       </td>
-                      <td>{num(l.sets)}</td>
+                      <td className="hide-mobile">{num(l.sets)}</td>
                       <td style={{ color: l.built ? 'var(--type-grass)' : 'var(--text-secondary)' }}>
                         {l.built ? t('catalog.nIndexed', { count: num(l.built.rows) }) : t('catalog.productMapNotBuilt')}
                       </td>

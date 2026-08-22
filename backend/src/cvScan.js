@@ -405,7 +405,7 @@ async function match(imageBuffer, game = 'mtg', topK = 8, opts = {}) {
   // narrowed the scan on purpose, and an unscoped sweep of the other language is
   // exactly the wrong-card answer the scope was meant to prevent.
   const wanted = (opts.sets || []).map(x => String(x).toLowerCase()).filter(Boolean);
-  const want = new Set(wanted);
+  const want = new Set(wanted.flatMap(x => [x, x.replace(/^(mtg|lorcana)-/, ''), `${game}-${x.replace(/^(mtg|lorcana)-/, '')}`]));
   let scoped = null;
   const search = [];
   for (const c of cats) {
@@ -476,10 +476,10 @@ async function match(imageBuffer, game = 'mtg', topK = 8, opts = {}) {
     const id = String(h.c.ids[h.i]).replace(/_back$/, '');
     if (seen.has(id)) continue;
     seen.add(id);
-    // A local catalog is already keyed by card_cache.id for either game; only the
+    // A local catalog is already keyed by card_cache.id for any game; only the
     // published catalogs need their provider id translated.
     candidates.push(h.c.local ? { cardId: id, score: h.sim, catalogLang: h.c.lang }
-      : game === 'pokemon' ? { productId: Number(id), score: h.sim, catalogLang: h.c.lang }
+      : (game === 'pokemon' || game === 'lorcana') ? { productId: Number(id), score: h.sim, catalogLang: h.c.lang }
         : { cardId: `${game}-${id}`, score: h.sim, catalogLang: h.c.lang });
     if (candidates.length >= topK) break;
   }
@@ -549,7 +549,7 @@ async function scoreCards(imageBuffer, game = 'mtg', cards = [], opts = {}) {
     }
 
     let prodMap = null;
-    if (game === 'pokemon') {
+    if (game === 'pokemon' || game === 'lorcana') {
       const db = require('./db');
       const cardIds = cards.map(c => c.id).filter(Boolean);
       if (cardIds.length) {
@@ -569,7 +569,7 @@ async function scoreCards(imageBuffer, game = 'mtg', cards = [], opts = {}) {
       const possibleIds = [];
       if (card.id) {
         possibleIds.push(String(card.id));
-        possibleIds.push(String(card.id).replace(/^(mtg|pokemon)-/, ''));
+        possibleIds.push(String(card.id).replace(/^(mtg|pokemon|lorcana)-/, ''));
       }
       if (card.scryfall_id) possibleIds.push(String(card.scryfall_id));
       if (card.tcgplayer_id) possibleIds.push(String(card.tcgplayer_id));

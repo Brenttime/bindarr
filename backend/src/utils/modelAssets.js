@@ -153,7 +153,7 @@ function start(what) {
       // A newly installed catalog or model has to be picked up without a restart.
       try {
         const cvScan = require('../cvScan');
-        for (const game of ['mtg', 'pokemon']) cvScan.reload(game);
+        for (const game of ['mtg', 'pokemon', 'lorcana']) cvScan.reload(game);
       } catch { /* nothing loaded yet is fine — the next scan loads it */ }
       // The published Pokémon catalog is keyed by TCGplayer product id, and a
       // product id names no card without the product map. Downloading one without
