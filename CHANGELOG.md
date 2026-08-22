@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
 [GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
 
+## [1.8.4] - 2026-08-22
+
+### Fixed
+- **Card Inspector crash on card open.** Fixed a `TypeError` where opening a card in the inspector could attempt to evaluate properties on a `null` active card reference when the modal mounted prior to card selection ([#47](https://github.com/thenotoriousJeremy/bindarr/issues/47), [#48](https://github.com/thenotoriousJeremy/bindarr/pull/48)).
+
 ## [1.8.3] - 2026-08-21
 
 ### Added
