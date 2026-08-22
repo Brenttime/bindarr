@@ -100,6 +100,13 @@ async function runTests() {
     assert.ok(detailed.includes('4 Lightning Bolt (JUD) 124'), 'set code uppercased + collector number');
     assert.ok(detailed.includes('1 The Legend of Yangchen // Avatar Yangchen (TLA) 27'), 'split name stays one line');
     assert.strictEqual(detailed.split('\n').filter(l => l.trim()).length, 3);
+    // Pattern-level guard: every detailed line must be "QTY Name" or
+    // "QTY Name (SET) NUMBER" — the ManaBox/MTGA format their docs show
+    // (scryfall collector numbers are "N" or "N//N" for split cards).
+    const manaboxPattern = /^\d+ .+( \([A-Z0-9]{2,13}\) \d+(\/\/\d+)?)?$/;
+    for (const line of detailed.split('\n').filter(l => l.trim())) {
+      assert.ok(manaboxPattern.test(line), `line not in ManaBox pattern: ${line}`);
+    }
     // Unknown style values fall back to plain.
     const resU = await fetch(`http://localhost:${port}/api/collection/cardlist?style=garbage`, { headers: authHeaders });
     assert.strictEqual(await resU.text(), plain, 'unknown style falls back to plain');

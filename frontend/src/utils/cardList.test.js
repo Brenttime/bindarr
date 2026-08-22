@@ -18,6 +18,23 @@ assert.strictEqual(cardListLine(cards[2], 'detailed'), '2 Basic Snow Island', 'm
 assert.strictEqual(cardListLine(cards[3], 'detailed'), '1 Daily Bugle Newspaper (MSC) 749');
 assert.strictEqual(cardListLine({ quantity: 0, name: 'X' }, 'plain'), '1 X', 'quantity floors at 1');
 
+// ManaBox's own documented "most standard format" (manabox.app/guides/decks/
+// import-export/ and .../collection/import-export/ — the MTGA format). This is
+// the pattern the detailed export must stay byte-identical to.
+//   4 Tarmogoyf
+//   3 Verdant Catacombs (MH2) 260
+//   2 Surgical Extraction
+const manaboxDoc = [
+  { quantity: 4, name: 'Tarmogoyf' },
+  { quantity: 3, name: 'Verdant Catacombs', set_id: 'mh2', number: '260' },
+  { quantity: 2, name: 'Surgical Extraction' },
+];
+assert.strictEqual(
+  buildCardListText(manaboxDoc, 'detailed'),
+  '4 Tarmogoyf\n3 Verdant Catacombs (MH2) 260\n2 Surgical Extraction',
+  'detailed export must match the ManaBox documented MTGA format'
+);
+
 const plain = buildCardListText(cards, 'plain');
 assert.strictEqual(plain.split('\n').length, 4);
 assert.ok(plain.startsWith('4 Lightning Bolt\n'), 'plain line one');
