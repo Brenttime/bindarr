@@ -27,10 +27,12 @@ async function main() {
   assert.strictEqual(await count(), 1, 'restarts must not pile up identical rows');
 
   // 3. A real movement IS recorded.
+  await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(await recordPrice(CARD, 2.25), true, 'a price change should be recorded');
   assert.strictEqual(await count(), 2);
 
   // 4. Returning to an earlier price is still a movement worth recording.
+  await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(await recordPrice(CARD, 1.5), true, 'a move back down is still a move');
   assert.strictEqual(await count(), 3);
 

@@ -88,11 +88,18 @@ async function recordPrice(cardId, price) {
   // movements in the same second collided and the second one was silently
   // dropped by OR IGNORE. %f keeps the guard while making that effectively
   // impossible. parseSqliteUtc already reads the fractional form correctly.
-  await db.run(
+  const res = await db.run(
     `INSERT OR IGNORE INTO price_history (card_id, price, recorded_at)
      VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))`,
     [cardId, price]
   );
+  if (res && res.changes === 0) {
+    await db.run(
+      `INSERT OR IGNORE INTO price_history (card_id, price, recorded_at)
+       VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now', '+1 millisecond'))`,
+      [cardId, price]
+    );
+  }
   return true;
 }
 
