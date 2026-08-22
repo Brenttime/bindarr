@@ -4,7 +4,7 @@
 // mean the UI offering a language the server does not recognise. Each row also
 // carries the provider-specific spellings (Scryfall's zht, TCGdex's zh-tw); the UI
 // ignores them and only ever speaks the canonical code.
-import LANGUAGE_TABLE from '../../../shared/languages.json' with { type: 'json' };
+import LANGUAGE_TABLE from '../../../shared/languages.js';
 
 export const LANGUAGES = LANGUAGE_TABLE;
 

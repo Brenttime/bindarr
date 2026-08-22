@@ -1,4 +1,4 @@
-import POKEMON_TRANSLATIONS from '../../../shared/pokemonTranslations.json' with { type: 'json' };
+import POKEMON_TRANSLATIONS from '../../../shared/pokemonTranslations.js';
 import { langCode } from './languages.js';
 
 const PREFIXES = {

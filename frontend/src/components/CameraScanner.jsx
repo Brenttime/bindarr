@@ -9,7 +9,7 @@ import CardEntryFields from './CardEntryFields';
 import CardInspectorModal from './CardInspectorModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useMultiSelect } from '../utils/useMultiSelect';
-import { LANGUAGES, langName, langCode, getLanguagesForGame, isLanguageSupported } from '../utils/languages';
+import { langName, langCode, getLanguagesForGame, isLanguageSupported } from '../utils/languages';
 import { requestDetect, stopDetect, smoothQuad, meanCornerDrift, DETECT_W } from '../utils/cardDetector';
 import { getPerspectiveTransform, warpPerspective } from '../../../shared/imgproc.mjs';
 import { shouldCapture, shouldRearm, autoStatusKey } from '../utils/autoCapture';

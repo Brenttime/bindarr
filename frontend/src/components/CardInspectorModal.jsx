@@ -308,8 +308,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
     }
   };
 
-  const cardNumber = card.number || card.collector_number || card.card_number || '';
-
   // Resolved against the printing selected RIGHT NOW, not the one that was saved
   // when this row was fetched. `card.price_trend` arrives from the server already
   // resolved for the stored printing, so rendering it directly meant switching
