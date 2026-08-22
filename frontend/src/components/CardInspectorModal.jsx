@@ -57,13 +57,20 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
   const [certNumber, setCertNumber] = useState('');
   const [marketValue, setMarketValue] = useState('');
   const [fetchingValue, setFetchingValue] = useState(false);
-  const [activeCard, setActiveCard] = useState(card);
+  const [localizedCard, setLocalizedCard] = useState(null);
+  const [prevTargetId, setPrevTargetId] = useState(card?.entry_id || card?.id || null);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const hasToggledRef = useRef(false);
 
   useBackGuard(isFullScreen, () => setIsFullScreen(false));
 
   const targetEntryId = card?.entry_id || card?.id;
+  if (targetEntryId !== prevTargetId) {
+    setPrevTargetId(targetEntryId);
+    if (localizedCard) setLocalizedCard(null);
+  }
+
+  const activeCard = card ? (localizedCard || card) : null;
 
   useEffect(() => {
     fetch('/api/locations')
@@ -74,7 +81,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
 
   useEffect(() => {
     if (!card) return;
-    setActiveCard(card);
+    setLocalizedCard(null);
     hasToggledRef.current = false;
     setMode(startInEdit ? 'edit' : 'view');
     setQ(card.quantity ?? 1);
@@ -103,18 +110,16 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
       if (resp.ok) {
         const localized = await resp.json();
         if (localized && localized.id) {
-          setActiveCard(prev => {
-            const updated = {
-              ...(prev || {}),
-              ...localized,
-              card_id: localized.id,
-              language: newLang,
-            };
-            if (card) {
-              Object.assign(card, updated);
-            }
-            return updated;
-          });
+          const updated = {
+            ...(card || {}),
+            ...localized,
+            card_id: localized.id,
+            language: newLang,
+          };
+          if (card) {
+            Object.assign(card, updated);
+          }
+          setLocalizedCard(updated);
         }
       }
     } catch (e) {
@@ -131,7 +136,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
 
   useBackGuard(!!card, handleClose);
 
-  if (!card) return null;
+  if (!card || !activeCard) return null;
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -314,7 +319,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
   // Normal to Reverse Holofoil in the form changed nothing on screen — the number
   // only caught up after a save and a refetch, which reads as "prices don't
   // respond to the foil type". Same resolution order as the server.
-  const displayPrice = resolveCardPrice(card, printing);
+  const displayPrice = resolveCardPrice(activeCard, printing);
 
   return (
     <div className="modal-overlay" style={{
@@ -431,9 +436,9 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
 
             {/* MTG cards: show color pips + type line (Pokémon energy types are
                 already conveyed via the type-glow styling elsewhere). */}
-            {card.supertype === 'MTG' && (
+            {(activeCard.supertype === 'MTG' || activeCard.game === 'mtg') && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                {(Array.isArray(card.types) ? card.types : []).map(color => (
+                {(Array.isArray(activeCard.types) ? activeCard.types : []).map(color => (
                   <span key={color} className={`mtg-color-pip mtg-color-${color.toLowerCase()}`} style={{
                     fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.03em',
                     padding: '0.15rem 0.45rem', borderRadius: '999px',
@@ -441,11 +446,11 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                     color: MTG_COLOR_FG[color] || '#fff', border: '1px solid rgba(0,0,0,0.2)'
                   }}>{color}</span>
                 ))}
-                {(!card.types || card.types.length === 0) && (
+                {(!activeCard.types || activeCard.types.length === 0) && (
                   <span style={{ fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.15rem 0.45rem', borderRadius: '999px', background: 'rgba(180,180,180,0.25)', color: '#eee' }}>{t('inspector.colorless')}</span>
                 )}
-                {Array.isArray(card.subtypes) && card.subtypes.length > 0 && (
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{card.subtypes.join(' ')}</span>
+                {Array.isArray(activeCard.subtypes) && activeCard.subtypes.length > 0 && (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{activeCard.subtypes.join(' ')}</span>
                 )}
               </div>
             )}
@@ -470,7 +475,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               )}
 
               <CardEntryFields
-                game={card.game || card.supertype}
+                game={activeCard.game || activeCard.supertype}
                 quantity={q} purchasePrice={purchasePrice} condition={condition} printing={printing} language={language}
                 onQuantity={setQ} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={handleLanguageChange}
                 grader={grader} grade={grade} certNumber={certNumber}
@@ -541,13 +546,13 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                 <div>
                   <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700 }}>{t('inspector.marketPrice')}</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-yellow)', marginTop: '0.15rem' }}>
-                    {priceText(displayPrice, card.price_currency)}
+                    {priceText(displayPrice, activeCard.price_currency)}
                   </div>
                   {/* Say where a non-English price came from and in what currency —
                       it is Cardmarket's EUR figure rendered with the app's $. */}
-                  {priceSource(card) && (
+                  {priceSource(activeCard) && (
                     <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
-                      {t('inspector.priceVia', { source: priceSource(card).name, currency: priceSource(card).currency })}
+                      {t('inspector.priceVia', { source: priceSource(activeCard).name, currency: priceSource(activeCard).currency })}
                     </div>
                   )}
                   {/* Every price source this app has — TCGplayer, Scryfall,
@@ -556,13 +561,13 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                       copy the number above is either a value set on this copy, or it
                       is the raw price and says so. Inventing a grade multiplier
                       would be worse than either: confidently wrong. */}
-                  {card.market_value > 0 ? (
+                  {activeCard.market_value > 0 ? (
                     <div style={{ fontSize: '0.62rem', color: 'var(--accent-yellow)', marginTop: '0.1rem', lineHeight: 1.35 }}>
-                      {card.market_value_source && card.market_value_source !== 'manual'
-                        ? t('inspector.valueFromProvider', { source: card.market_value_source })
+                      {activeCard.market_value_source && activeCard.market_value_source !== 'manual'
+                        ? t('inspector.valueFromProvider', { source: activeCard.market_value_source })
                         : t('inspector.valueFromYou')}
                     </div>
-                  ) : card.grader && card.grader !== 'Raw' && (
+                  ) : activeCard.grader && activeCard.grader !== 'Raw' && (
                     <div style={{ fontSize: '0.62rem', color: 'var(--accent-yellow)', marginTop: '0.1rem', lineHeight: 1.35 }}>
                       {t('inspector.priceRawOnly')}
                     </div>
@@ -573,7 +578,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                       NM price with nothing to explain it, and beats inventing a
                       condition multiplier, which would be a made-up number wearing
                       the same styling as a real one. */}
-                  {!(card.market_value > 0) && condition && condition !== 'Near Mint' && (
+                  {!(activeCard.market_value > 0) && condition && condition !== 'Near Mint' && (
                     <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: '0.1rem', lineHeight: 1.35 }}>
                       {t('inspector.priceNearMintOnly', { condition })}
                     </div>
@@ -582,7 +587,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                 <div>
                   <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700 }}>{t('inspector.purchaseValue')}</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-strong)', marginTop: '0.15rem' }}>
-                    {priceText(card.purchase_price)}
+                    {priceText(activeCard.purchase_price)}
                   </div>
                 </div>
               </div>
@@ -595,18 +600,18 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                   A search is still offered, as its own action with its own words, so
                   the reader can tell which of the two they are about to get. */}
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {tcgplayerUrl(card) && (
+                {tcgplayerUrl(activeCard) && (
                   <a
-                    href={tcgplayerUrl(card)} target="_blank" rel="noopener noreferrer"
+                    href={tcgplayerUrl(activeCard)} target="_blank" rel="noopener noreferrer"
                     className="btn btn-secondary"
                     style={{ flex: 1, minWidth: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontSize: '0.75rem' }}
                   >
                     <ExternalLink size={13} /> {t('inspector.viewOnTcgplayer')}
                   </a>
                 )}
-                {cardmarketUrl(card) && (
+                {cardmarketUrl(activeCard) && (
                   <a
-                    href={cardmarketUrl(card)} target="_blank" rel="noopener noreferrer"
+                    href={cardmarketUrl(activeCard)} target="_blank" rel="noopener noreferrer"
                     className="btn btn-secondary"
                     style={{ flex: 1, minWidth: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontSize: '0.75rem' }}
                   >
@@ -615,9 +620,9 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                 )}
                 {/* Only shown when there is no direct link — as a fallback the reader
                     chooses, not a substitute presented as the real thing. */}
-                {!tcgplayerUrl(card) && !cardmarketUrl(card) && searchUrl(card) && (
+                {!tcgplayerUrl(activeCard) && !cardmarketUrl(activeCard) && searchUrl(activeCard) && (
                   <a
-                    href={searchUrl(card)} target="_blank" rel="noopener noreferrer"
+                    href={searchUrl(activeCard)} target="_blank" rel="noopener noreferrer"
                     className="btn btn-secondary"
                     style={{ flex: 1, minWidth: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontSize: '0.75rem' }}
                   >
@@ -625,37 +630,37 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                   </a>
                 )}
               </div>
-              {noLinkReason(card) && (
+              {noLinkReason(activeCard) && (
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                  {noLinkReason(card)}
+                  {noLinkReason(activeCard)}
                 </div>
               )}
 
               {/* Price History Area Chart */}
-              <PriceHistoryChart cardId={card.card_id} currency={card.price_currency} height={100} defaultRange="30d" />
+              <PriceHistoryChart cardId={activeCard.card_id || activeCard.id} currency={activeCard.price_currency} height={100} defaultRange="30d" />
 
               {/* Specifications Details Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem 1rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem' }}>
                 {/* A slab reports its grade where a raw card reports its condition:
                     they answer the same question, and showing 'Near Mint' for a
                     PSA 9 states an opinion the grader already overruled. */}
-                {card.grader && card.grader !== 'Raw' ? (
-                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specGrade')}</span> <span style={{ color: 'var(--accent-yellow)', fontWeight: 700 }}>{card.grader}{card.grade != null ? ` ${card.grade}` : ''}</span></div>
+                {activeCard.grader && activeCard.grader !== 'Raw' ? (
+                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specGrade')}</span> <span style={{ color: 'var(--accent-yellow)', fontWeight: 700 }}>{activeCard.grader}{activeCard.grade != null ? ` ${activeCard.grade}` : ''}</span></div>
                 ) : (
-                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.condition}</span></div>
+                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{activeCard.condition}</span></div>
                 )}
-                {card.cert_number && (
-                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCert')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.cert_number}</span></div>
+                {activeCard.cert_number && (
+                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCert')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{activeCard.cert_number}</span></div>
                 )}
-                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.printing}</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.language}</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specSupertype')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.supertype}</span></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{activeCard.printing}</span></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{activeCard.language}</span></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specSupertype')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{activeCard.supertype}</span></div>
               </div>
 
               {/* Storage Container details (clickable to view in storage) */}
-              {card.list_type !== 'wishlist' && (
+              {activeCard.list_type !== 'wishlist' && (
                 <div 
-                  onClick={() => onViewStorage && card.list_type !== 'wishlist' && onViewStorage(card)}
+                  onClick={() => onViewStorage && activeCard.list_type !== 'wishlist' && onViewStorage(activeCard)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.5rem',
                     background: 'rgba(255, 71, 71, 0.03)', padding: '0.65rem 0.75rem',
@@ -669,21 +674,21 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                     <span style={{ color: 'var(--text-muted)' }}>{t('inspector.locationLabel')} </span>
                     <strong style={{ color: 'var(--text-strong)' }}>
-                      {card.location_name ? `${card.location_name}${card.location_type ? ` (${card.location_type})` : ''}` : t('bulk.unassignedPile')}
+                      {activeCard.location_name ? `${activeCard.location_name}${activeCard.location_type ? ` (${activeCard.location_type})` : ''}` : t('bulk.unassignedPile')}
                     </strong>
-                    {card.location_name && card.compartment_display_label && (
+                    {activeCard.location_name && activeCard.compartment_display_label && (
                       <span style={{ color: 'var(--text-secondary)' }}>
-                        {` • ${card.compartment_display_label}`}
-                        {getSlotNumber(card) !== null ? ` • ${t('wizard.slot', { slot: getSlotNumber(card) })}` : ''}
+                        {` • ${activeCard.compartment_display_label}`}
+                        {getSlotNumber(activeCard) !== null ? ` • ${t('wizard.slot', { slot: getSlotNumber(activeCard) })}` : ''}
                       </span>
                     )}
                   </div>
                 </div>
               )}
 
-              {card.notes && (
+              {activeCard.notes && (
                 <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {card.notes}
+                  {activeCard.notes}
                 </div>
               )}
 
@@ -699,7 +704,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                   style={{ fontSize: '0.8rem', padding: '0.45rem 0.5rem', maxWidth: '140px' }}
                 />
 
-                {card.list_type === 'wishlist' && (
+                {activeCard.list_type === 'wishlist' && (
                   <button 
                     className="btn btn-secondary" 
                     style={{ backgroundColor: 'rgba(74,222,128,0.2)', color: 'var(--type-grass)', border: '1px solid rgba(74,222,128,0.3)', padding: '0 0.75rem', fontSize: '0.8rem' }} 
@@ -736,7 +741,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
       </div>
 
       {isFullScreen && (
-        <CardImageZoom card={card} onClose={() => setIsFullScreen(false)} />
+        <CardImageZoom card={activeCard} onClose={() => setIsFullScreen(false)} />
       )}
     </div>
   );
