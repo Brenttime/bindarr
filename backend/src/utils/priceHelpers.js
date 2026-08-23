@@ -50,18 +50,6 @@ function parseCardRow(row) {
   };
 }
 
-// position orders cards WITHIN a single compartment (a binder page, a box
-// row) — see compartmentSort.js for how a card's compartment+position is
-// chosen in the first place.
-async function rebalanceCompartmentPositions(db, compartmentId, userId) {
-  if (!compartmentId) return;
-  const cards = await db.all(`SELECT id FROM collection WHERE compartment_id = ? AND user_id = ? ORDER BY position ASC`, [compartmentId, userId]);
-  for (let i = 0; i < cards.length; i++) {
-    const cleanPos = (i + 1) * 1000;
-    await db.run(`UPDATE collection SET position = ? WHERE id = ?`, [cleanPos, cards[i].id]);
-  }
-}
-
 const isVintageSet = (setId) => {
   const id = (setId || '').toLowerCase();
   return id.startsWith('base') || id.startsWith('gym') || id.startsWith('neo') ||
@@ -147,7 +135,6 @@ module.exports = {
   PRICE_SWEEP_INTERVAL_MS,
   resolveCardPrice,
   parseCardRow,
-  rebalanceCompartmentPositions,
   isVintageSet,
   recordPrice
 };

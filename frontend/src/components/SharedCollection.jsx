@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis } from 'recharts';
-import { Search, Trophy, Compass, Library, ShieldAlert, Sparkles, X, MapPin, SlidersHorizontal } from 'lucide-react';
+import { Search, Trophy, Compass, Library, ShieldAlert, Sparkles, X, SlidersHorizontal } from 'lucide-react';
 import Logo from './Logo';
 import { priceText } from '../utils/formatPrice';
 import { PRINTINGS } from '../utils/cardOptions';
@@ -99,7 +99,6 @@ function SharedCollection({ shareToken }) {
   }, [shareToken, listType, t]);
 
   const collection = useMemo(() => data?.collection || [], [data]);
-  const shareLocations = data?.shareLocations;
 
   const uniqueRarities = useMemo(() => Array.from(new Set(collection.map(c => c.rarity).filter(Boolean))), [collection]);
   const uniqueTypes = useMemo(
@@ -423,11 +422,6 @@ function SharedCollection({ shareToken }) {
                     <span style={{ fontSize: '0.7rem' }}>{card.set_name} • #{card.number}</span>
                     <span className="tcg-card-price">{priceText(card.price_trend, card.price_currency)}</span>
                   </div>
-                  {shareLocations && card.location && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                      <MapPin size={11} /> {card.location}
-                    </div>
-                  )}
                 </div>
               </div>
             );
@@ -479,12 +473,6 @@ function SharedCollection({ shareToken }) {
                   <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.printing}</span>
                   <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.language}</span>
                 </div>
-                {shareLocations && activeCard.location && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                    <MapPin size={13} style={{ color: 'var(--accent-red)' }} />
-                    <span style={{ color: 'var(--text-muted)' }}>{t('inspector.locationLabel')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.location}</span>
-                  </div>
-                )}
               </div>
             </div>
           </div>

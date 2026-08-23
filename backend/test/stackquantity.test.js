@@ -5,7 +5,7 @@ const assert = require('assert');
 const { setStackQuantity } = require('../src/utils/collectionHelpers');
 
 const USER = 7;
-const base = { user_id: USER, card_id: 'c-A', quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 2, location_id: 5, compartment_id: 9, position: 4000, is_trade: 0, favorite: 0, list_type: 'collection', game: 'pokemon' };
+const base = { user_id: USER, card_id: 'c-A', quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 2, is_trade: 0, favorite: 0, list_type: 'collection', game: 'pokemon' };
 
 // Fake db covering the three statements setStackQuantity issues.
 function makeFakeDb(rows) {
@@ -21,19 +21,19 @@ function makeFakeDb(rows) {
       return rows
         .filter(r => r.user_id === userId && r.card_id === cardId && r.condition === condition
           && r.printing === printing && r.language === language && r.list_type === listType && r.id !== excludeId)
-        // unplaced first, then newest — the trim order the helper asks for
-        .sort((a, b) => ((a.location_id === null) === (b.location_id === null) ? b.id - a.id : (a.location_id === null ? -1 : 1)));
+        // newest first — the trim order the helper asks for
+        .sort((a, b) => b.id - a.id);
     },
     async run(sql, params) {
       if (/^\s*INSERT INTO collection/.test(sql)) {
         const [card_id, user_id, condition, printing, language, purchase_price,
-          location_id, compartment_id, position, is_trade, favorite, list_type, game] = params;
-        rows.push({ id: ++nextId, card_id, user_id, quantity: 1, condition, printing, language, purchase_price, location_id, compartment_id, position, is_trade, favorite, list_type, game });
+          is_trade, favorite, list_type, game] = params;
+        rows.push({ id: ++nextId, card_id, user_id, quantity: 1, condition, printing, language, purchase_price, is_trade, favorite, list_type, game });
       } else if (/^\s*DELETE FROM collection/.test(sql)) {
         rows.splice(rows.findIndex(r => r.id === params[0]), 1);
       } else if (/SET quantity = quantity - \?/.test(sql)) {
         rows.find(r => r.id === params[1]).quantity -= params[0];
-      } else if (/SET quantity = \?/.test(sql)) {
+      } else if (/^\s*UPDATE collection SET quantity = \?/.test(sql)) {
         rows.find(r => r.id === params[1]).quantity = params[0];
       }
     },
@@ -44,21 +44,20 @@ const copies = (db) => db.rows.filter(r => r.card_id === 'c-A').reduce((n, r) =>
 
 async function main() {
   // The reported bug: two copies, asked for one, ended up with more.
-  let db = makeFakeDb([{ ...base, id: 1 }, { ...base, id: 2, location_id: null, compartment_id: null }]);
+  let db = makeFakeDb([{ ...base, id: 1 }, { ...base, id: 2 }]);
   assert.strictEqual(await setStackQuantity(db, USER, 1, 1), -1, 'two copies down to one drops a copy');
   assert.strictEqual(copies(db), 1, 'exactly one copy left');
-  assert.strictEqual(db.rows[0].id, 1, 'the edited row survives; the unplaced copy went first');
+  assert.strictEqual(db.rows[0].id, 1, 'the edited row survives; the newest sibling went first');
 
   // Saving the same number again is a no-op, not another duplicate.
   assert.strictEqual(await setStackQuantity(db, USER, 1, 1), 0, 're-saving changes nothing');
   assert.strictEqual(copies(db), 1, 'still one copy');
 
-  // Growing mirrors the edited row's placement onto its own slot.
+  // Growing adds single-card rows mirroring the edited row.
   assert.strictEqual(await setStackQuantity(db, USER, 1, 3), 2, 'one copy up to three adds two');
   const all = db.rows.filter(r => r.card_id === 'c-A');
   assert.strictEqual(all.length, 3, 'three single-card rows');
-  assert.ok(all.every(r => r.quantity === 1 && r.compartment_id === 9), 'copies are single rows in the same compartment');
-  assert.strictEqual(new Set(all.map(r => r.position)).size, 3, 'copies have distinct positions');
+  assert.ok(all.every(r => r.quantity === 1 && r.user_id === USER && r.printing === 'Normal'), 'copies are single rows of the same printing');
 
   // A different printing is not part of the stack and must not be trimmed.
   db = makeFakeDb([{ ...base, id: 1 }, { ...base, id: 2 }, { ...base, id: 3, printing: 'Holofoil' }]);

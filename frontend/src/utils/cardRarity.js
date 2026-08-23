@@ -1,4 +1,4 @@
-// Single source of truth for the rarity tiers used across LocationManager's
+// Single source of truth for the rarity tiers used across the card
 // visualizers (card border glow, badge color, badge label).
 export function getRarityTier(rarity) {
   const r = (rarity || '').toLowerCase();
@@ -13,8 +13,8 @@ export function getRarityTier(rarity) {
 // Scarcity rank for sorting: higher = rarer. Checked rarest-keyword first so
 // "Rare Secret" scores as secret, not plain rare, and "Uncommon" before
 // "Common" (it contains the substring). Unknown rarities score 0 (before
-// Common on ascending). Must stay aligned with RARITY_RANK in
-// backend/src/utils/compartmentSort.js so display order matches placement.
+// Common on ascending). Must stay aligned with rarityRank() in
+// backend/src/utils/cardSort.js so display order matches.
 const RARITY_RANK = [
   { kw: 'classic collection', rank: 16 },
   { kw: 'hyper', rank: 15 },

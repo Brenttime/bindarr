@@ -1,5 +1,5 @@
 // Shared <select> option lists for collection entry fields, previously
-// copy-pasted across LocationManager, CollectionList, CardSearch, and
+// copy-pasted across CollectionList, CardSearch, and
 // CameraScanner's quick-add/edit forms.
 import { LANGUAGE_NAMES } from './languages';
 

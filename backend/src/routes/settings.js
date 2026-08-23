@@ -136,7 +136,6 @@ router.put('/', requireAdmin, async (req, res) => {
         try {
           const source = want === 'tcgdex' ? require('../tcgdexApi') : require('../tcgApi');
           await source.fetchAndCacheSets(true);
-          await require('../utils/compartmentSort').loadSetsCache(db);
           require('../tcgplayerCatalog').start();
         } catch (e) {
           console.error(`Provider switch follow-up failed: ${e.message}`);

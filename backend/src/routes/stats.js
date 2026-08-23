@@ -17,11 +17,9 @@ router.get('/stats', async (req, res) => {
       SELECT
         c.quantity, c.purchase_price, c.added_at, c.printing, c.condition, c.card_id, c.market_value,
         cc.types, cc.subtypes, cc.supertype, cc.game, cc.rarity, cc.set_name, cc.set_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition,
-        cc.price_avg1, cc.price_avg7, cc.price_avg30,
-        l.name as location_name
+        cc.price_avg1, cc.price_avg7, cc.price_avg30
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
-      LEFT JOIN locations l ON c.location_id = l.id
       WHERE c.user_id = ?${gameFilter}
     `;
     const rows = await db.all(query, statsParams);
@@ -30,7 +28,6 @@ router.get('/stats', async (req, res) => {
     let uniqueCards = rows.length;
     let totalValue = 0;
     let totalSpent = 0;
-    let unsortedCount = 0;
     let nearMintCount = 0;
     let vintageCount = 0;
 
@@ -50,7 +47,6 @@ router.get('/stats', async (req, res) => {
     const typeCounts = {};
     const rarityCounts = {};
     const setCounts = {};
-    const locationCounts = {};
 
     rows.forEach(row => {
       const qty = row.quantity || 1;
@@ -60,7 +56,6 @@ router.get('/stats', async (req, res) => {
       totalCards += qty;
       totalValue += qty * price;
       totalSpent += qty * (row.purchase_price || 0);
-      if (!row.location_name) unsortedCount += qty;
 
       if (row.condition === 'Near Mint') {
         nearMintCount += qty;
@@ -121,17 +116,12 @@ router.get('/stats', async (req, res) => {
       }
       setCounts[row.set_id].count += qty;
       setCounts[row.set_id].value += qty * price;
-
-      // Location
-      const loc = row.location_name || 'Unassigned';
-      locationCounts[loc] = (locationCounts[loc] || 0) + qty;
     });
 
     // Get top most valuable cards (scoped to user)
     const topValuableQuery = `
       SELECT
-        c.id AS entry_id, c.location_id, (SELECT name FROM locations WHERE id = c.location_id) AS location_name,
-        (SELECT type FROM locations WHERE id = c.location_id) AS location_type,
+        c.id AS entry_id,
         c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.is_trade, c.favorite, c.list_type,
         c.grader, c.grade, c.market_value,
         cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
@@ -211,8 +201,7 @@ router.get('/stats', async (req, res) => {
 
     // Recently added cards (most useful "what did I just add" glance)
     const recentRows = await db.all(`
-      SELECT c.id AS entry_id, c.location_id, (SELECT name FROM locations WHERE id = c.location_id) AS location_name,
-             (SELECT type FROM locations WHERE id = c.location_id) AS location_type,
+      SELECT c.id AS entry_id,
              c.quantity, c.condition, c.printing, c.language, c.added_at, c.is_trade, c.favorite, c.list_type,
              c.grader, c.grade, c.market_value,
              cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
@@ -241,7 +230,6 @@ router.get('/stats', async (req, res) => {
         totalSpent: parseFloat(totalSpent.toFixed(2)),
         roi,
         avgCardValue,
-        unsortedCount,
         duplicateCopies: Math.max(totalCards - uniqueCards, 0),
         mintRate,
         vintageRatio,
@@ -271,7 +259,6 @@ router.get('/stats', async (req, res) => {
         count: setCounts[id].count,
         value: parseFloat(setCounts[id].value.toFixed(2))
       })).sort((a, b) => b.value - a.value).slice(0, 8),
-      locations: Object.keys(locationCounts).map(name => ({ name, value: locationCounts[name] })),
       topValuable,
       recentAdditions,
       setProgress: setProgress.slice(0, 4)

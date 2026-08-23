@@ -117,15 +117,6 @@ function hashPassword(password) {
 
 // Initialize tables
 async function initDb() {
-  const existingCollectionCols = await all(`PRAGMA table_info(collection)`).catch(() => []);
-  if (existingCollectionCols.some(c => c.name === 'sub_location_1')) {
-    console.log('Resetting locations/collection tables for the new compartment-based storage schema...');
-    await run(`PRAGMA foreign_keys = OFF`);
-    await run(`DROP TABLE IF EXISTS collection`);
-    await run(`DROP TABLE IF EXISTS locations`);
-    await run(`PRAGMA foreign_keys = ON`);
-  }
-
   // Create users table
   await run(`
     CREATE TABLE IF NOT EXISTS users (
@@ -156,40 +147,6 @@ async function initDb() {
     )
   `);
   await run(`INSERT OR IGNORE INTO app_settings (id, public_base_url) VALUES (1, '')`);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS locations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      type TEXT CHECK(type IN ('Binder', 'Toploader Binder', 'Box', 'Toploader Box', 'Graded Slab Box', 'Display Shelf / Stand', 'Deck Box', 'Tin / Case', 'Other')) NOT NULL,
-      sort_order TEXT DEFAULT '[{"by":"name","dir":"asc"}]',
-      foil_sorting TEXT DEFAULT 'normals_first',
-      rule_type TEXT DEFAULT 'any',
-      rule_config TEXT,
-      game TEXT DEFAULT 'any',
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS compartments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-      idx INTEGER NOT NULL,
-      label TEXT,
-      capacity INTEGER NOT NULL DEFAULT 40,
-      rule_config TEXT,
-      UNIQUE(location_id, idx)
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS compartment_assignments (
-      compartment_id INTEGER NOT NULL REFERENCES compartments(id) ON DELETE CASCADE,
-      filter_value TEXT NOT NULL,
-      PRIMARY KEY(compartment_id, filter_value)
-    )
-  `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS sets (
@@ -247,16 +204,11 @@ async function initDb() {
       printing TEXT CHECK(printing IN ('Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo')) DEFAULT 'Normal',
       language TEXT DEFAULT 'English',
       purchase_price REAL,
-      location_id INTEGER,
-      compartment_id INTEGER,
-      position REAL DEFAULT 0,
       favorite INTEGER DEFAULT 0,
       is_trade INTEGER DEFAULT 0,
       list_type TEXT DEFAULT 'collection',
       game TEXT DEFAULT 'pokemon',
       added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(location_id) REFERENCES locations(id) ON DELETE SET NULL,
-      FOREIGN KEY(compartment_id) REFERENCES compartments(id) ON DELETE SET NULL,
       FOREIGN KEY(card_id) REFERENCES card_cache(id)
     )
   `);
@@ -607,12 +559,6 @@ async function initDb() {
   if (!collectionCols.some(c => c.name === 'list_type')) {
     await run(`ALTER TABLE collection ADD COLUMN list_type TEXT DEFAULT 'collection'`);
   }
-  if (!collectionCols.some(c => c.name === 'compartment_id')) {
-    await run(`ALTER TABLE collection ADD COLUMN compartment_id INTEGER REFERENCES compartments(id) ON DELETE SET NULL`);
-  }
-  if (!collectionCols.some(c => c.name === 'position')) {
-    await run(`ALTER TABLE collection ADD COLUMN position REAL DEFAULT 0`);
-  }
   if (!collectionCols.some(c => c.name === 'game')) {
     await run(`ALTER TABLE collection ADD COLUMN game TEXT DEFAULT 'pokemon'`);
   }
@@ -672,26 +618,91 @@ async function initDb() {
      WHERE cert_number IS NOT NULL AND cert_number != ''`
   );
 
-  const locationsCols = await all(`PRAGMA table_info(locations)`);
-  if (!locationsCols.some(c => c.name === 'user_id')) {
-    await run(`ALTER TABLE locations ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE`);
-  }
-  if (!locationsCols.some(c => c.name === 'sort_order')) {
-    await run(`ALTER TABLE locations ADD COLUMN sort_order TEXT DEFAULT '[{"by":"name","dir":"asc"}]'`);
-  }
-  if (!locationsCols.some(c => c.name === 'foil_sorting')) {
-    await run(`ALTER TABLE locations ADD COLUMN foil_sorting TEXT DEFAULT 'normals_first'`);
-  }
-  if (!locationsCols.some(c => c.name === 'game')) {
-    await run(`ALTER TABLE locations ADD COLUMN game TEXT DEFAULT 'any'`);
+  // --- Storage removal (2026-08) ---
+  // The physical storage feature (binder/box locations, compartments, card
+  // placement) is gone. Databases created before it is removed still hold the
+  // locations/compartments/compartment_assignments tables plus the
+  // location_id/compartment_id/position columns on collection. Drop all of it
+  // while keeping every card row.
+  //
+  // The columns are dropped by REBUILDING the table, not DROP COLUMN: SQLite
+  // refuses to drop a column that a foreign-key definition still names
+  // ("unknown column in foreign key definition"), and collection's FKs name
+  // both placement columns. Guarded and idempotent — a database already in the
+  // new shape is a no-op.
+  {
+    const migCols = await all(`PRAGMA table_info(collection)`);
+    const hasPlacement = migCols.some(c => ['location_id', 'compartment_id', 'position'].includes(c.name));
+    const locationsTable = await get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'locations'`);
+    if (hasPlacement || locationsTable) {
+    console.log('Removing storage schema (locations, compartments, placement columns)...');
+    const keepList = migCols
+      .filter(c => !['location_id', 'compartment_id', 'position'].includes(c.name))
+      .map(c => c.name)
+      .join(', ');
+    if (locationsTable) {
+      // The storage tables drop OUTSIDE any transaction: PRAGMA foreign_keys
+      // only takes effect when no transaction is open, and the drops need it
+      // off (compartment_assignments -> compartments -> locations).
+      await run(`PRAGMA foreign_keys = OFF`);
+      await run(`DROP TABLE IF EXISTS compartment_assignments`);
+      await run(`DROP TABLE IF EXISTS compartments`);
+      await run(`DROP TABLE IF EXISTS locations`);
+      await run(`PRAGMA foreign_keys = ON`);
+      await run(`DROP INDEX IF EXISTS idx_collection_comp_user_qty`);
+      await run(`DROP INDEX IF EXISTS idx_collection_loc_pos`);
+    }
+    if (hasPlacement) {
+      // Rebuild collection without the placement columns. keepList is built
+      // from the LIVE column list, so an old database missing some newer
+      // columns still copies over cleanly; the new table's defaults fill in.
+      await withTransaction(async () => {
+        await run(`DROP TABLE IF EXISTS collection_new`);
+        await run(`
+          CREATE TABLE collection_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id TEXT NOT NULL,
+            quantity INTEGER DEFAULT 1,
+            condition TEXT CHECK(condition IN ('Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged')) DEFAULT 'Near Mint',
+            printing TEXT CHECK(printing IN ('Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo')) DEFAULT 'Normal',
+            language TEXT DEFAULT 'English',
+            purchase_price REAL,
+            favorite INTEGER DEFAULT 0,
+            is_trade INTEGER DEFAULT 0,
+            list_type TEXT DEFAULT 'collection',
+            game TEXT DEFAULT 'pokemon',
+            added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT DEFAULT '',
+            grader TEXT CHECK(grader IN ('Raw','PSA','BGS','CGC','SGC','TAG')) DEFAULT 'Raw',
+            grade REAL,
+            cert_number TEXT,
+            market_value REAL,
+            market_value_source TEXT,
+            market_value_at DATETIME,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(card_id) REFERENCES card_cache(id)
+          )
+        `);
+        await run(`INSERT INTO collection_new (${keepList}) SELECT ${keepList} FROM collection`);
+        await run(`DROP TABLE collection`);
+        await run(`ALTER TABLE collection_new RENAME TO collection`);
+      });
+    }
+      // The rebuild dropped collection's indexes with the old table; recreate
+      // the two that outlived storage.
+      await run(`CREATE INDEX IF NOT EXISTS idx_collection_user_game ON collection(user_id, game)`);
+      await run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_cert
+        ON collection(user_id, grader, cert_number)
+        WHERE cert_number IS NOT NULL AND cert_number != ''
+      `);
+      console.log('Storage schema removed; collection rows preserved.');
+    }
   }
 
   const usersCols = await all(`PRAGMA table_info(users)`);
   if (!usersCols.some(c => c.name === 'tcg_api_key')) {
     await run(`ALTER TABLE users ADD COLUMN tcg_api_key TEXT DEFAULT ''`);
-  }
-  if (!usersCols.some(c => c.name === 'share_locations')) {
-    await run(`ALTER TABLE users ADD COLUMN share_locations INTEGER DEFAULT 0`);
   }
   // PSA's public API token. Per user, alongside tcg_api_key, because PSA issues
   // these per account and rate-limits per token — one shared instance token would
@@ -820,26 +831,10 @@ async function initDb() {
     await run(`ALTER TABLE decks ADD COLUMN target_size INTEGER DEFAULT 60`);
   }
 
-  // Lock flags: a locked compartment/location is skipped by auto-filing
-  // (recommendSlot) so it never receives new cards; existing cards stay put and
-  // manual moves still work.
-  const compartmentsCols = await all(`PRAGMA table_info(compartments)`);
-  if (!compartmentsCols.some(c => c.name === 'locked')) {
-    await run(`ALTER TABLE compartments ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`);
-  }
-  const locationsLockCols = await all(`PRAGMA table_info(locations)`);
-  if (!locationsLockCols.some(c => c.name === 'locked')) {
-    await run(`ALTER TABLE locations ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`);
-  }
-
   // --- PERFORMANCE INDEXES ---
   // `user_id` first, because it is the predicate on essentially every read in the
   // app — every collection query, every stats aggregate — and nothing indexed it.
-  // idx_collection_comp_user_qty below cannot serve it: a composite index is only
-  // usable from its leading column, and that one leads with compartment_id.
   await run(`CREATE INDEX IF NOT EXISTS idx_collection_user_game ON collection(user_id, game)`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_collection_comp_user_qty ON collection(compartment_id, user_id, quantity)`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_collection_loc_pos ON collection(location_id, position)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_set_num ON card_cache(set_id, number)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_deck_cards_checkout ON deck_cards(deck_id, checked_out)`);
   // Indexes on the retired tags/audit_logs tables. A fresh database never creates
@@ -882,44 +877,17 @@ async function initDb() {
 
   if (adminId) {
     await adoptOrphanRows(adminId);
-    await seedStarterLocations(adminId);
   }
 }
 
-// Cards and locations from before multi-user carry `user_id IS NULL`. They belong
-// to whoever owns the install. Runs from initDb when an admin already exists (or
+// Cards from before multi-user carry `user_id IS NULL`. They belong to whoever
+// owns the install. Runs from initDb when an admin already exists (or
 // DEFAULT_ADMIN_PASSWORD just made one), and from the bootstrap route when the
 // owner account is created through the UI instead — a database with orphan rows
 // and no users reaches the app that way and would otherwise show an empty
 // collection.
 async function adoptOrphanRows(userId) {
   await run(`UPDATE collection SET user_id = ? WHERE user_id IS NULL`, [userId]);
-  await run(`UPDATE locations SET user_id = ? WHERE user_id IS NULL`, [userId]);
-}
-
-// A binder and a bulk box, so a new account has somewhere to put its first card.
-// Runs from initDb when DEFAULT_ADMIN_PASSWORD seeds the account, and from the
-// bootstrap route when the owner creates it through the UI instead.
-async function seedStarterLocations(userId) {
-  const locCount = await get(`SELECT COUNT(*) as count FROM locations`);
-  if (locCount.count > 0) return;
-
-  console.log('Populating default locations...');
-  const binder = await run(`INSERT INTO locations (name, type, user_id) VALUES (?, ?, ?)`, [
-    'Main Binder', 'Binder', userId
-  ]);
-  await createCompartments(binder.lastID, 10, 9);
-
-  const box = await run(`INSERT INTO locations (name, type, user_id) VALUES (?, ?, ?)`, [
-    'Bulk Storage Box 1', 'Box', userId
-  ]);
-  await createCompartments(box.lastID, 2, 100);
-}
-
-async function createCompartments(locationId, count, capacity) {
-  for (let i = 1; i <= count; i++) {
-    await run(`INSERT INTO compartments (location_id, idx, capacity) VALUES (?, ?, ?)`, [locationId, i, capacity]);
-  }
 }
 
 module.exports = {
@@ -930,8 +898,6 @@ module.exports = {
   all,
   withTransaction,
   initDb,
-  createCompartments,
-  seedStarterLocations,
   adoptOrphanRows,
   hashPassword,
   // Exported for tests — the rename runs at module load, so it can't be

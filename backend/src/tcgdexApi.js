@@ -505,10 +505,10 @@ async function fetchAndCacheSets(force = false) {
       const { data } = await client.get(`/en/sets/${encodeURIComponent(s.id)}`);
       await db.run(
         `UPDATE sets SET release_date = ?, series = ?, symbol_url = ?, logo_url = ? WHERE id = ? AND game = 'pokemon'`,
-        // Slashes, not TCGdex's hyphens: compartmentSort orders by this column as a
-        // STRING (`ORDER BY release_date ASC`), and pokemontcg.io wrote YYYY/MM/DD.
+        // Slashes, not TCGdex's hyphens: release_date is compared as a STRING
+        // (`ORDER BY release_date ASC`), and pokemontcg.io wrote YYYY/MM/DD.
         // Mixing the two formats sorts '-' before '/' and puts 2026 ahead of 2023 —
-        // which is exactly what a chronological binder must not do on an install
+        // which is exactly what a chronological set list must not do on an install
         // that holds rows from both providers.
         [String(data.releaseDate || '').replace(/-/g, '/'),
           (series.get(s.id) || {}).name || (data.serie && data.serie.name) || '',

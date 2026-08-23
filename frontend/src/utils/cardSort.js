@@ -4,9 +4,9 @@ import sortSchemes from '../../../shared/sortSchemes.json';
 
 // Shared comparator logic for ordering collection cards. Previously copy-pasted
 // across autoSortContainerCards, findNextRecommendedSlot, the sorting assistant
-// queue, and the unsorted list view in LocationManager.jsx.
+// queue.
 // Category orderings come from shared/cardOrder.json so display order matches
-// the backend filing engine (compartmentSort.js) exactly.
+// the backend sort engine (backend/src/utils/cardSort.js) exactly.
 export const POKEMON_TYPE_ORDER = cardOrder.pokemonType;
 
 // Mirrors typeCategory in the backend: multi-color MTG cards bucket together.

@@ -51,7 +51,7 @@ export function useMultiSelect({ showToast, onChanged, guard } = {}) {
   const exitSelectMode = () => { setSelectMode(false); clearSelection(); setBulkMoveTarget(''); };
 
   // Enter select mode and select `entryId`. Exposed so callers that own the
-  // long-press elsewhere (CompartmentView) can arm the same state.
+  // long-press elsewhere can arm the same state.
   const arm = (entryId) => {
     const blocked = guard && guard();
     if (blocked) { showToast(blocked); return; }

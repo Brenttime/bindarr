@@ -17,24 +17,6 @@ router.use(authenticateToken, requireAdmin);
 
 router.post('/seed-cards', async (req, res) => {
   try {
-    let binder = await db.get(`SELECT id FROM locations WHERE user_id = ? AND type = 'Binder' LIMIT 1`, [req.user.id]);
-    if (!binder) {
-      const result = await db.run(`
-        INSERT INTO locations (name, type, sort_order, user_id) VALUES (?, ?, ?, ?)
-      `, ['Binder Seed Box', 'Binder', 'custom', req.user.id]);
-      await db.createCompartments(result.lastID, 12, 9);
-      binder = { id: result.lastID };
-    }
-
-    let box = await db.get(`SELECT id FROM locations WHERE user_id = ? AND type = 'Box' LIMIT 1`, [req.user.id]);
-    if (!box) {
-      const result = await db.run(`
-        INSERT INTO locations (name, type, sort_order, user_id) VALUES (?, ?, ?, ?)
-      `, ['Box Seed Box', 'Box', 'custom', req.user.id]);
-      await db.createCompartments(result.lastID, 4, 40);
-      box = { id: result.lastID };
-    }
-
     const SEED_SETS = ['base1', 'sv1', 'swsh1'];
     const MOCK_POOL = [];
     for (const setId of SEED_SETS) {
@@ -102,39 +84,21 @@ router.post('/seed-cards', async (req, res) => {
       };
     };
 
-    const fillLocation = async (locationId, maxPrice, fillRatio) => {
-      const compartments = await db.all(
-        `SELECT id, capacity FROM compartments WHERE location_id = ? ORDER BY idx`,
-        [locationId]
-      );
-      for (const comp of compartments) {
-        const slots = Math.max(1, Math.round(comp.capacity * fillRatio));
-        for (let s = 0; s < slots; s++) {
-          const e = randomEntry(maxPrice);
-          await db.run(`
-            INSERT INTO collection (card_id, quantity, condition, printing, language, purchase_price, location_id, compartment_id, position, user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `, [e.card.id, e.qty, e.condition, e.print, e.language, e.purchasePrice, locationId, comp.id, s * 1000, req.user.id]);
-          addedCount += e.qty;
-        }
-      }
-    };
-
-    await fillLocation(binder.id, 10, 0.7);
-    await fillLocation(box.id, 5, 0.6);
-
-    let unsortedAdded = 0;
-    for (let i = 0; i < 40; i++) {
-      const e = randomEntry(5);
+    const insertSeedEntry = async (maxPrice) => {
+      const e = randomEntry(maxPrice);
       await db.run(`
-        INSERT INTO collection (card_id, quantity, condition, printing, language, purchase_price, location_id, compartment_id, position, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?)
+        INSERT INTO collection (card_id, quantity, condition, printing, language, purchase_price, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `, [e.card.id, e.qty, e.condition, e.print, e.language, e.purchasePrice, req.user.id]);
       addedCount += e.qty;
-      unsortedAdded++;
-    }
+    };
 
-    res.json({ message: `Successfully seeded a large test collection: ${addedCount} cards for admin user (${unsortedAdded} left unsorted to try Assistant Mode on).` });
+    // 168 assorted cards, priced up to $10; another 40 cheap fillers (the old
+    // seed filled 12 binder pages + 4 box rows; same card count, no storage).
+    for (let i = 0; i < 168; i++) await insertSeedEntry(10);
+    for (let i = 0; i < 40; i++) await insertSeedEntry(5);
+
+    res.json({ message: `Successfully seeded a large test collection: ${addedCount} cards for admin user.` });
   } catch (error) {
     console.error('SEEDING ERROR:', error);
     res.status(500).json({ error: 'Failed to seed test cards' });
@@ -274,10 +238,9 @@ router.delete('/users/:id', async (req, res) => {
 
     await db.run(`DELETE FROM sessions WHERE user_id = ?`, [id]);
     await db.run(`DELETE FROM collection WHERE user_id = ?`, [id]);
-    await db.run(`DELETE FROM locations WHERE user_id = ?`, [id]);
     await db.run(`DELETE FROM users WHERE id = ?`, [id]);
 
-    res.json({ message: `User "${targetUser.username}" and all their card collections/locations have been permanently deleted.` });
+    res.json({ message: `User "${targetUser.username}" and all their card collections have been permanently deleted.` });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to delete user' });

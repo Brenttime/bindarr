@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, MapPin, Trash2, Star, Maximize2, ExternalLink, Search } from 'lucide-react';
+import { X, Trash2, Star, Maximize2, ExternalLink, Search } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { translatedName, setCode, isEnglish } from '../utils/languages';
 import { formatPrice, priceText } from '../utils/formatPrice';
@@ -22,32 +22,18 @@ const MTG_COLOR_FG = {
   White: '#3a3520', Blue: '#fff', Black: '#fff', Red: '#fff', Green: '#fff'
 };
 
-function getSlotNumber(c) {
-  if (!c) return null;
-  if (c.slot != null) return c.slot;
-  if (c.slot_number != null) return c.slot_number;
-  if (c.__slotNumber != null) return c.__slotNumber;
-  if (typeof c.position === 'number') {
-    if (c.position >= 1000) return Math.floor(c.position / 1000);
-    return Math.floor(c.position) + 1;
-  }
-  return null;
-}
-
-// Shared card detail popup used by Dashboard, CollectionList and LocationManager.
+// Shared card detail popup used by Dashboard and CollectionList.
 // Self-contained: owns its edit form (PUT) and delete (DELETE) so every screen
 // gets the same rich view + edit without duplicating the form. onUpdate() lets
-// the parent refetch after a change. onViewStorage is optional (hidden if absent).
-function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onViewStorage, startInEdit = false }) {
+// the parent refetch after a change.
+function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, startInEdit = false }) {
   const { t } = useT();
   const [mode, setMode] = useState('view');
-  const [locations, setLocations] = useState([]);
   const [q, setQ] = useState(1);
   const [condition, setCondition] = useState('Near Mint');
   const [printing, setPrinting] = useState('Normal');
   const [language, setLanguage] = useState('English');
   const [purchasePrice, setPurchasePrice] = useState(0);
-  const [locationId, setLocationId] = useState('');
   const [isTrade, setIsTrade] = useState(0);
   const [favorite, setFavorite] = useState(0);
   const [listType, setListType] = useState('collection');
@@ -65,13 +51,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
   const targetEntryId = card?.entry_id || card?.id;
 
   useEffect(() => {
-    fetch('/api/locations')
-      .then(r => r.ok ? r.json() : [])
-      .then(setLocations)
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
     if (!card) return;
     hasToggledRef.current = false;
     setMode(startInEdit ? 'edit' : 'view');
@@ -80,7 +59,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
     setPrinting(card.printing || 'Normal');
     setLanguage(card.language || 'English');
     setPurchasePrice(card.purchase_price || 0);
-    setLocationId(card.location_id || '');
     setIsTrade(card.is_trade ? 1 : 0);
     setFavorite(card.favorite ? 1 : 0);
     setListType(card.list_type || 'collection');
@@ -122,7 +100,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
           printing,
           language,
           purchase_price: parseFloat(purchasePrice) || 0,
-          location_id: locationId ? parseInt(locationId, 10) : null,
           list_type: listType,
           is_trade: isTrade ? 1 : 0,
           favorite: favorite ? 1 : 0,
@@ -144,7 +121,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
         card.printing = printing;
         card.language = language;
         card.purchase_price = parseFloat(purchasePrice) || 0;
-        card.location_id = locationId ? parseInt(locationId, 10) : null;
         card.list_type = listType;
         card.is_trade = isTrade ? 1 : 0;
         card.favorite = favorite ? 1 : 0;
@@ -480,16 +456,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
               </div>
 
               <div className="form-group">
-                <label>{t('inspector.storageContainer')}</label>
-                <select className="select-control" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-                  <option value="">{t('bulk.unassignedPile')}</option>
-                  {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>{loc.name} ({loc.type})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
                 <label>{t('nav.notes')}</label>
                 <textarea
                   className="input-control"
@@ -623,35 +589,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, onV
                 <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.language}</span></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specSupertype')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.supertype}</span></div>
               </div>
-
-              {/* Storage Container details (clickable to view in storage) */}
-              {card.list_type !== 'wishlist' && (
-                <div 
-                  onClick={() => onViewStorage && card.list_type !== 'wishlist' && onViewStorage(card)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '0.5rem',
-                    background: 'rgba(255, 71, 71, 0.03)', padding: '0.65rem 0.75rem',
-                    borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)',
-                    fontSize: '0.75rem', cursor: onViewStorage ? 'pointer' : 'default',
-                    transition: 'background 0.2s'
-                  }}
-                  title={onViewStorage ? t('inspector.viewInStorage') : undefined}
-                >
-                  <MapPin size={14} style={{ color: 'var(--accent-red)', flexShrink: 0 }} />
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                    <span style={{ color: 'var(--text-muted)' }}>{t('inspector.locationLabel')} </span>
-                    <strong style={{ color: 'var(--text-strong)' }}>
-                      {card.location_name ? `${card.location_name}${card.location_type ? ` (${card.location_type})` : ''}` : t('bulk.unassignedPile')}
-                    </strong>
-                    {card.location_name && card.compartment_display_label && (
-                      <span style={{ color: 'var(--text-secondary)' }}>
-                        {` • ${card.compartment_display_label}`}
-                        {getSlotNumber(card) !== null ? ` • ${t('wizard.slot', { slot: getSlotNumber(card) })}` : ''}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {card.notes && (
                 <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>

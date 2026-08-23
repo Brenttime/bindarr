@@ -34,7 +34,7 @@ const TYPE_COLORS = {
   'Land': '#d97706'
 };
 
-function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEntryId, onUpdate, showToast }) {
+function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
   const { t, locale } = useT();
   // Money and dates follow the interface language, not the browser's: a user who
   // picked German sees 1.234,56 and 3.8.2026 even on an en-US browser.
@@ -274,7 +274,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
           </div>
           <div className="metric-value">{summary.totalCards}</div>
           <div className="metric-footer">
-            <span>{t('dash.uniqueCount', { count: summary.uniqueCards })}{summary.unsortedCount > 0 ? ` • ${t('dash.unsortedCount', { count: summary.unsortedCount })}` : ''}</span>
+            <span>{t('dash.uniqueCount', { count: summary.uniqueCards })}</span>
           </div>
         </div>
       </div>
@@ -548,12 +548,7 @@ function Dashboard({ statsTrigger, onNavigate, setSelectedLocationId, setFocusEn
         onClose={() => setInspectorCard(null)}
         onUpdate={onUpdate}
         showToast={showToast}
-        onViewStorage={(card) => {
-          if (setSelectedLocationId) setSelectedLocationId(card.location_id || 'unsorted');
-          if (setFocusEntryId) setFocusEntryId(card.entry_id || card.id);
-          onNavigate('storage');
-          setInspectorCard(null);
-        }}
+        onViewStorage={undefined}
       />
     </div>
   );

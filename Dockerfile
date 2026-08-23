@@ -101,7 +101,7 @@ COPY backend/src/ ./src/
 # cardSources.js is what it resolves reference images through.
 COPY backend/scripts/ ./scripts/
 
-# Shared JSON tables required at runtime by backend/src/utils/compartmentSort.js
+# Shared JSON tables required at runtime by backend/src/utils/cardSort.js
 # via ../../../shared/*.json (resolves to /app/shared)
 COPY shared/ /app/shared/
 

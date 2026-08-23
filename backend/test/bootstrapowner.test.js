@@ -34,7 +34,6 @@ async function main() {
 
   // Stand in for a database written before `user_id` existed.
   await db.run(`INSERT INTO card_cache (id, name) VALUES (?, ?)`, ['test-card-1', 'Test Card']);
-  const loc = await db.run(`INSERT INTO locations (name, type, user_id) VALUES (?, ?, NULL)`, ['Old Binder', 'Binder']);
   await db.run(`INSERT INTO collection (card_id, quantity, user_id) VALUES (?, ?, NULL)`, ['test-card-1', 3]);
 
   // What the bootstrap route does after inserting the owner.
@@ -45,17 +44,7 @@ async function main() {
   await db.adoptOrphanRows(owner.lastID);
 
   const orphanCards = await db.get(`SELECT COUNT(*) AS count FROM collection WHERE user_id IS NULL`);
-  const orphanLocs = await db.get(`SELECT COUNT(*) AS count FROM locations WHERE user_id IS NULL`);
   assert.strictEqual(orphanCards.count, 0, 'orphan collection rows must be adopted');
-  assert.strictEqual(orphanLocs.count, 0, 'orphan location rows must be adopted');
-
-  const adopted = await db.get(`SELECT user_id FROM locations WHERE id = ?`, [loc.lastID]);
-  assert.strictEqual(adopted.user_id, owner.lastID, 'rows go to the owner account, not some other id');
-
-  // An install with existing locations does not get starter binders on top.
-  await db.seedStarterLocations(owner.lastID);
-  const locCount = await db.get(`SELECT COUNT(*) AS count FROM locations`);
-  assert.strictEqual(locCount.count, 1, 'starter locations must not be added to a populated database');
 
   console.log('bootstrap owner adoption: OK');
 }

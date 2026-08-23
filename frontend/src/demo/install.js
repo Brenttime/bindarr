@@ -5,7 +5,7 @@
 
 // Route = '/api/' + fixture basename with '_' -> '/'. Capture filenames were
 // chosen so this mapping is exact: stats_history -> /api/stats/history,
-// locations_43_compartments -> /api/locations/43/compartments, etc.
+// decks_4 -> /api/decks/4, etc.
 const files = import.meta.glob('./fixtures/*.json', { eager: true, import: 'default' });
 const routes = {};
 for (const [path, data] of Object.entries(files)) {
@@ -60,7 +60,7 @@ window.fetch = (input, opts = {}) => {
   // views render instead of crashing. List-ish paths get [], everything else {}.
   if (method === 'GET') {
     if (path === '/api/notes') return Promise.resolve(json({ notes: [] }));
-    const listish = /\/(collection|locations|decks|sets|search|users|compartments|notes)/.test(path);
+    const listish = /\/(collection|decks|sets|search|users|notes)/.test(path);
     return Promise.resolve(json(listish ? [] : {}));
   }
   return Promise.resolve(json({ message: 'Demo mode: changes are not saved.' }));

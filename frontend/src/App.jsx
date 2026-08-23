@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { LayoutDashboard, Database, MapPin, Sparkles, Settings as SettingsIcon, LogOut, ShieldAlert, Plus, Swords, StickyNote, ListChecks } from 'lucide-react';
+import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, ShieldAlert, Plus, Swords, StickyNote, ListChecks } from 'lucide-react';
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
@@ -10,7 +10,6 @@ import { useT } from './utils/i18n';
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const AddCards = lazy(() => import('./components/AddCards'));
 const CollectionList = lazy(() => import('./components/CollectionList'));
-const LocationManager = lazy(() => import('./components/LocationManager'));
 const Settings = lazy(() => import('./components/Settings'));
 const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const SetupWizard = lazy(() => import('./components/SetupWizard'));
@@ -98,8 +97,6 @@ function App() {
   // while it is genuinely incomplete — setupNeeded() reads the same endpoints the
   // wizard does so there is one definition of 'set up'.
   const [showSetup, setShowSetup] = useState(false);
-  const [selectedLocationId, setSelectedLocationId] = useState(null);
-  const [focusEntryId, setFocusEntryId] = useState(null);
   const [selectedCardFilter, setSelectedCardFilter] = useState('');
   const [toast, setToast] = useState(null);
   const [statsTrigger, setStatsTrigger] = useState(0);
@@ -239,7 +236,7 @@ function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <Dashboard statsTrigger={statsTrigger} onNavigate={goTab} setSelectedLocationId={setSelectedLocationId} setFocusEntryId={setFocusEntryId} onUpdate={triggerRefresh} showToast={showToast} />;
+        return <Dashboard statsTrigger={statsTrigger} onNavigate={goTab} onUpdate={triggerRefresh} showToast={showToast} />;
       case 'add-cards':
         return <AddCards onAddSuccess={triggerRefresh} showToast={showToast} setActiveTab={goTab} />;
       case 'collection':
@@ -251,21 +248,6 @@ function App() {
             token={token} 
             selectedCardFilter={selectedCardFilter}
             setSelectedCardFilter={setSelectedCardFilter}
-            onNavigate={goTab}
-            setSelectedLocationId={setSelectedLocationId}
-            setFocusEntryId={setFocusEntryId}
-          />
-        );
-      case 'storage':
-        return (
-          <LocationManager
-            statsTrigger={statsTrigger}
-            onUpdate={triggerRefresh}
-            showToast={showToast}
-            selectedLocationId={selectedLocationId}
-            setSelectedLocationId={setSelectedLocationId}
-            focusEntryId={focusEntryId}
-            setFocusEntryId={setFocusEntryId}
           />
         );
       case 'deckbuilder':
@@ -279,7 +261,7 @@ function App() {
       case 'admin':
         return <AdminPanel showToast={showToast} />;
       default:
-        return <Dashboard statsTrigger={statsTrigger} onNavigate={goTab} setSelectedLocationId={setSelectedLocationId} setFocusEntryId={setFocusEntryId} onUpdate={triggerRefresh} showToast={showToast} />;
+        return <Dashboard statsTrigger={statsTrigger} onNavigate={goTab} onUpdate={triggerRefresh} showToast={showToast} />;
     }
   };
 
@@ -321,13 +303,6 @@ function App() {
           >
             <Database size={18} />
             <span>{t('nav.collection')}</span>
-          </button>
-          <button
-            className={`nav-tab ${activeTab === 'storage' ? 'active' : ''}`}
-            onClick={() => goTab('storage')}
-          >
-            <MapPin size={18} />
-            <span>{t('nav.storage')}</span>
           </button>
           <button
             className={`nav-tab ${activeTab === 'deckbuilder' ? 'active' : ''}`}

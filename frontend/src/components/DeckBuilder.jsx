@@ -419,9 +419,6 @@ function DeckBuilder({ showToast }) {
     if (!targetDeck) return;
     try {
       setCheckingOut(true);
-      // Capture where each card lives before flipping the flag, so the check-in
-      // guide can show where to return them (cards stay in their slots either
-      // way, but fetch first to be safe).
       const locRes = await fetch(`/api/decks/${targetDeck.id}/locations`);
       const locData = locRes.ok ? await locRes.json() : null;
       const res = await fetch(`/api/decks/${targetDeck.id}/return`, { method: 'PUT' });
@@ -2194,7 +2191,7 @@ function DeckBuilder({ showToast }) {
         </div>
       )}
 
-      {/* Checkout Locator Modal */}
+      {/* Checkout Coverage Modal */}
       {showCheckoutModal && (
         <CheckoutWizardModal
           locationsData={checkoutLocations}

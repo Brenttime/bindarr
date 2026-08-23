@@ -230,7 +230,6 @@
   color: var(--text-strong);
 }
 
-
 * {
   box-sizing: border-box;
   margin: 0;
@@ -354,8 +353,6 @@ button, input, select, textarea {
   gap: 0.75rem;
 }
 
-/* Binder-page mark: a fanned card behind a three-hole-punched binder page
-   (works for Pokémon + MTG). SVG lives in App.jsx. */
 .logo-icon {
   width: 48px;
   height: 48px;
@@ -797,11 +794,9 @@ button, input, select, textarea {
 }
 
 /* Suppress the OS long-press callout/save-image popup on card art so
-   long-press-to-select works cleanly on touch (Collection + Storage). */
+   long-press-to-select works cleanly on touch. */
 .tcg-card-image,
-.collection-row-thumbnail,
-.binder-pocket img,
-.box-coverflow-card img {
+.collection-row-thumbnail {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
@@ -994,7 +989,6 @@ button, input, select, textarea {
     grid-template-columns: 1fr !important;
   }
 }
-
 
 /* Card Target Overlay overlay with visual crop zones */
 .camera-overlay {
@@ -1233,33 +1227,6 @@ button, input, select, textarea {
 }
 
 /* Responsive Split Layout for Storage Locations Page */
-.location-split-layout {
-  display: flex;
-  flex-direction: row;
-  gap: 1.5rem;
-  align-items: start;
-  width: 100%;
-}
-
-.location-sidebar {
-  width: 320px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-@media (max-width: 1024px) {
-  .location-split-layout {
-    flex-direction: column;
-  }
-  .location-sidebar {
-    width: 100%;
-    flex-direction: row;
-    overflow-x: auto;
-    padding-bottom: 0.5rem;
-  }
-}
 
 /* Quick Add 3-Column responsive grid layout */
 .quick-add-grid {
@@ -1415,67 +1382,8 @@ button, input, select, textarea {
 }
 
 /* Double Page Binder Layout Styles */
-.binder-page-container {
-  display: flex;
-  background: radial-gradient(circle at center, #222 0%, #111 100%);
-  background-image: radial-gradient(circle at center, #222 0%, #111 100%), url("data:image/svg+xml,%3Csvg width='4' height='4' viewBox='0 0 4 4' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 3h1v1H1V3zm2-2h1v1H3V1z' fill='%23000000' fill-opacity='0.2' fill-rule='evenodd'/%3E%3C/svg%3E");
-  border: 2px solid #3d2b1f; /* Richer dark leather brown */
-  border-radius: var(--radius-md);
-  box-shadow: 0 25px 60px rgba(0,0,0,0.8), inset 0 0 40px rgba(0,0,0,0.95);
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-  max-width: 1000px; /* Cap width on desktop so binder isn't oversized */
-  margin: 0 auto;
-  perspective: 1500px; /* Enable 3D flip rotation */
-}
-
-.binder-spine {
-  width: 24px;
-  background: linear-gradient(to right, #0a0a0a 0%, #3a3a3a 35%, #555 50%, #3a3a3a 65%, #0a0a0a 100%);
-  border-left: 1px solid rgba(255,255,255,0.1);
-  border-right: 1px solid rgba(255,255,255,0.1);
-  box-shadow: inset 0 0 15px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.6);
-  flex-shrink: 0;
-  position: relative;
-}
 
 /* Binder metal rings representation */
-.binder-spine::after {
-  content: "";
-  position: absolute;
-  top: 10%;
-  bottom: 10%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 12px;
-  border-radius: 6px;
-  box-shadow: 2px 0 5px rgba(0,0,0,0.5);
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent,
-    transparent 60px,
-    #777 60px,
-    #ccc 62px,
-    #eee 65px,
-    #999 68px,
-    #555 70px,
-    transparent 70px,
-    transparent 120px
-  );
-}
-
-.binder-page-left {
-  flex: 1;
-  padding: 0.4rem; /* Reduced padding to maximize card display */
-  position: relative;
-}
-
-.binder-page-right {
-  flex: 1;
-  padding: 0.4rem; /* Reduced padding to maximize card display */
-  position: relative;
-}
 
 .page-flip-effect {
   animation: pageFlip3D 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
@@ -1496,81 +1404,9 @@ button, input, select, textarea {
   }
 }
 
-@media (max-width: 768px) {
-  .binder-page-container {
-    flex-direction: column;
-    border-width: 3px;
-    gap: 10px;
-  }
-  .binder-spine {
-    display: none;
-  }
-  .binder-page-left, .binder-page-right {
-    padding: 0.35rem;
-    width: 100%;
-    min-width: 0;
-  }
-}
-
-.binder-pocket-grid {
-  display: grid;
-  gap: 6px;
-  flex: 1;
-  align-content: start;
-}
-
-.binder-pocket {
-  position: relative;
-  aspect-ratio: 0.718;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.8), 0 2px 5px rgba(0, 0, 0, 0.3);
-  transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94), box-shadow 0.2s ease, border-color 0.2s ease;
-}
-
-.binder-pocket:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.8), 0 8px 15px rgba(0, 0, 0, 0.5);
-  border-color: rgba(255, 255, 255, 0.3);
-  z-index: 10;
-}
-
 /* Subtle plastic glare overlay for the pocket */
-.binder-pocket::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 5px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 20%, transparent 40%, transparent 100%);
-  pointer-events: none;
-  z-index: 5;
-}
-
-.binder-pocket img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  border-radius: 4px;
-}
-
-.binder-pocket-empty {
-  aspect-ratio: 0.718;
-  border-radius: 4px;
-  border: 1px dashed rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.15);
-}
 
 /* Ghost preview of the card being filed, sitting in its recommended pocket. */
-.binder-pocket.recommended-ghost {
-  border: 2px dashed #ffc107;
-  background: rgba(255, 193, 7, 0.12);
-  box-shadow: 0 0 12px rgba(255, 193, 7, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
 .rec-ghost-label {
   position: absolute;
@@ -1589,9 +1425,6 @@ button, input, select, textarea {
 }
 
 /* First pocket of each set run — marks where sets change. */
-.binder-pocket.set-start {
-  border-left: 3px solid var(--accent-red);
-}
 
 .set-divider-label {
   position: absolute;
@@ -1609,41 +1442,6 @@ button, input, select, textarea {
   white-space: nowrap;
   z-index: 5;
   pointer-events: none;
-}
-
-.binder-pocket-actions {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.85), transparent);
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.binder-pocket:hover .binder-pocket-actions {
-  opacity: 1;
-}
-
-.binder-pocket-actions select {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.55rem;
-  padding: 1px 2px;
-}
-
-.binder-pocket-actions button {
-  background: transparent;
-  border: none;
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  padding: 1px;
-  flex-shrink: 0;
 }
 
 /* Storage Coordinator Workspace Layout */
@@ -1905,19 +1703,6 @@ button, input, select, textarea {
 @keyframes pulse-border {
   0% { box-shadow: 0 0 5px var(--accent-yellow); }
   100% { box-shadow: 0 0 20px var(--accent-yellow); }
-}
-
-.slot-move-targetable {
-  border: 2px dashed var(--accent-yellow) !important;
-  background: rgba(234, 179, 8, 0.08) !important;
-  cursor: pointer !important;
-  transform: scale(1.02);
-  transition: all 0.2s ease;
-}
-
-.slot-move-targetable:hover {
-  border-color: var(--accent-red) !important;
-  background: rgba(255, 71, 71, 0.12) !important;
 }
 
 .box-row-move-targetable {
@@ -2529,13 +2314,7 @@ button, input, select, textarea {
   box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
-
-
-@keyframes recPulse { 0% { box-shadow: 0 0 0px var(--accent-yellow-glow); border-color: rgba(234, 179, 8, 0.4); } 50% { box-shadow: 0 0 15px var(--accent-yellow-glow); border-color: rgba(234, 179, 8, 1); } 100% { box-shadow: 0 0 0px var(--accent-yellow-glow); border-color: rgba(234, 179, 8, 0.4); } } .recommended-ghost { border: 2px dashed var(--accent-yellow) !important; animation: recPulse 1.5s infinite ease-in-out; } @keyframes recPulseOpacity { 0% { opacity: 0.3; } 50% { opacity: 0.7; } 100% { opacity: 0.3; } } .recommended-ghost img { animation: recPulseOpacity 1.5s infinite ease-in-out; }
-
 @keyframes row-flash { 0% { background-color: rgba(234, 179, 8, 0.4); } 100% { background-color: rgba(0,0,0,0.1); } } .row-flash { animation: row-flash 1.5s ease-out; }
-
-
 
 @media (max-width: 768px) {
   .locations-wrapper {
@@ -2562,13 +2341,6 @@ button, input, select, textarea {
   z-index: 100 !important;
 }
 
-.focus-flash {
-  animation: pulseHighlight 1s ease-out 3 !important;
-  border: 2.5px solid #facc15 !important;
-  box-shadow: 0 0 15px rgba(250, 204, 21, 0.7) !important;
-  z-index: 100 !important;
-}
-
 /* Recharts Tooltip styling across all themes (Dark, LCARS, Light, Cyberpunk) */
 .recharts-default-tooltip {
   background-color: var(--bg-secondary) !important;
@@ -2585,4 +2357,3 @@ button, input, select, textarea {
 .recharts-tooltip-item-value {
   color: var(--text-strong) !important;
 }
-

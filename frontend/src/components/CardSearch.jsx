@@ -76,7 +76,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
   const [selectedCard, setSelectedCard] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [, setLocations] = useState([]);
   
   // Form states
   const [quantity, setQuantity] = useState(1);
@@ -87,12 +86,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
   const [grader, setGrader] = useState('Raw');
   const [grade, setGrade] = useState('');
   const [certNumber, setCertNumber] = useState('');
-  const [, setLocationId] = useState('');
-
-  // Fetch physical locations on mount for the form dropdown
-  useEffect(() => {
-    fetchLocations();
-  }, []);
 
   // Set codes for the autocomplete. The sets table already holds every set for
   // both games, so nobody has to know that "ltr" means Tales of Middle-earth.
@@ -114,22 +107,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [game, searchLang]);
-
-  const fetchLocations = async () => {
-    try {
-      const response = await fetch('/api/locations');
-      if (response.ok) {
-        const data = await response.json();
-        setLocations(data);
-        if (data.length > 0) {
-          // Default to Unassigned Pile
-          setLocationId('');
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching locations:', err);
-    }
-  };
 
   // pageNum > 1 appends to the existing results instead of replacing them.
   const runSearch = async (pageNum, size = pageSize) => {
@@ -338,7 +315,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
         language,
         purchase_price: parseFloat(purchasePrice) || 0,
         game,
-        location_id: null,
         stackable: true
       })
     });
@@ -463,7 +439,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           printing,
           language,
           purchase_price: parseFloat(purchasePrice) || 0,
-          location_id: null,
           grader,
           grade: grade === '' ? null : parseFloat(grade),
           cert_number: certNumber.trim() || null
@@ -832,7 +807,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                     <div style={{ position: 'absolute', top: '6px', right: '6px', zIndex: 20, width: '22px', height: '22px', borderRadius: '50%', background: isSelected ? 'var(--accent-red)' : 'rgba(0,0,0,0.6)', border: '2px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-strong)', fontSize: '0.8rem', fontWeight: 900 }}>{isSelected ? '✓' : ''}</div>
                   )}
                   <CardImage card={card} className="tcg-card-image" loading="lazy" draggable={false} />
-                  {/* Already-in-the-binder count, so a set browse doesn't invite
+                  {/* Already-owned count, so a set browse doesn't invite
                       re-adding what the user already has. */}
                   {card.owned_qty > 0 && (
                     <div style={{ position: 'absolute', top: '8px', left: '8px', background: 'var(--accent-green, #22c55e)', color: '#04210f', padding: '2px 6px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.65rem', fontWeight: 800 }}>

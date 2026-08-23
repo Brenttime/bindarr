@@ -13,8 +13,7 @@ const cardApi = require('../utils/cardApi');
 const { searchLimiter } = require('../middleware/auth');
 const { resolveCardPrice, parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { parseSetList } = require('../utils/setQuery');
-const { compartmentLabel, isBinderType, rebalanceCompartmentByScheme } = require('../utils/compartmentSort');
-const { checkedOutAllocation, resolveCompartmentAndPosition, describePlacement, setStackQuantity } = require('../utils/collectionHelpers');
+const { checkedOutAllocation, setStackQuantity } = require('../utils/collectionHelpers');
 const { validateDeckAddition } = require('../utils/deckRules');
 const { splitPrice } = require('../utils/splitPrice');
 const { buildCardListText } = require('../../../shared/cardListText.js');
@@ -442,7 +441,6 @@ router.get('/collection', async (req, res) => {
   try {
     const listType = req.query.list_type || 'collection';
     const isTrade = req.query.is_trade;
-    const compId = req.query.compartment_id;
 
     let filterSql = `WHERE c.user_id = ? AND c.list_type = ?`;
     let filterParams = [req.user.id, listType];
@@ -450,10 +448,6 @@ router.get('/collection', async (req, res) => {
     if (isTrade !== undefined) {
       filterSql += ` AND c.is_trade = ?`;
       filterParams.push(isTrade === 'true' || isTrade === '1' ? 1 : 0);
-    }
-    if (compId !== undefined) {
-      filterSql += ` AND c.compartment_id = ?`;
-      filterParams.push(compId);
     }
 
     const query = `
@@ -465,8 +459,6 @@ router.get('/collection', async (req, res) => {
         c.printing,
         c.language,
         c.purchase_price,
-        c.compartment_id,
-        c.position,
         c.added_at,
         c.is_trade,
         c.favorite,
@@ -502,17 +494,9 @@ router.get('/collection', async (req, res) => {
         cc.game,
         cc.tcgplayer_url,
         cc.cardmarket_url,
-        cc.tcgplayer_product_id,
-        l.id as location_id,
-        l.name as location_name,
-        l.type as location_type,
-        cp.idx as compartment_idx,
-        cp.label as compartment_label,
-        cp.capacity as compartment_capacity
+        cc.tcgplayer_product_id
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
-      LEFT JOIN locations l ON c.location_id = l.id
-      LEFT JOIN compartments cp ON c.compartment_id = cp.id
       ${filterSql}
       ORDER BY c.added_at DESC
     `;
@@ -523,13 +507,7 @@ router.get('/collection', async (req, res) => {
     const formatted = rows.map(row => ({
       ...parseCardRow(row),
       price_trend: resolveCardPrice(row),
-      checked_out_qty: alloc.get(row.entry_id) || 0,
-      compartment_display_label: row.compartment_id
-        ? compartmentLabel({ idx: row.compartment_idx, label: row.compartment_label }, row.location_type)
-        : null,
-      sub_location: row.compartment_id
-        ? `${row.location_type === 'Binder' ? 'Page' : 'Row'} ${row.compartment_idx}`
-        : ''
+      checked_out_qty: alloc.get(row.entry_id) || 0
     }));
 
     res.json(formatted);
@@ -559,7 +537,6 @@ async function addCardToCollection(user, body) {
     printing = 'Normal',
     language = 'English',
     purchase_price = 0,
-    location_id = null,
     list_type = 'collection',
     is_trade = 0,
     game = 'pokemon',
@@ -641,23 +618,6 @@ async function addCardToCollection(user, body) {
       ? req.body.game
       : (card.game || cardApi.gameOf(cardId));
 
-    if (location_id) {
-      const loc = await db.get(`SELECT id FROM locations WHERE id = ? AND user_id = ?`, [location_id, req.user.id]);
-      if (!loc) {
-        throw new AddCardError(400, 'Invalid location ID');
-      }
-    }
-
-    const resolved = await resolveCompartmentAndPosition({
-      locationId: location_id,
-      userId: req.user.id,
-      cardId,
-      printing,
-      language
-    });
-
-    const targetLocationId = resolved.compartment_id ? (resolved.location_id ?? location_id) : null;
-
     let lastInsertedId = null;
     // A cert number names ONE physical slab, so a quantity above 1 is not a
     // request for more of them — it is a mistake that the per-user unique index on
@@ -674,12 +634,12 @@ async function addCardToCollection(user, body) {
       const result = await db.run(`
         INSERT INTO collection (
           card_id, user_id, quantity, condition, printing, language, purchase_price,
-          location_id, compartment_id, position, is_trade, list_type, game,
+          is_trade, list_type, game,
           grader, grade, cert_number
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         cardId, req.user.id, count, condition, printing, language, purchase_price || 0,
-        targetLocationId, resolved.compartment_id, resolved.position, is_trade ? 1 : 0, list_type, effectiveGame,
+        is_trade ? 1 : 0, list_type, effectiveGame,
         grader, gradeValue, certValue
       ]);
       lastInsertedId = result.lastID;
@@ -688,22 +648,15 @@ async function addCardToCollection(user, body) {
         const result = await db.run(`
           INSERT INTO collection (
             card_id, user_id, quantity, condition, printing, language, purchase_price,
-            location_id, compartment_id, position, is_trade, list_type, game,
+            is_trade, list_type, game,
             grader, grade, cert_number
-          ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
           cardId, req.user.id, condition, printing, language, purchase_price || 0,
-          targetLocationId, resolved.compartment_id, resolved.position + (i * 0.001), is_trade ? 1 : 0, list_type, effectiveGame,
+          is_trade ? 1 : 0, list_type, effectiveGame,
           grader, gradeValue, certValue
         ]);
         lastInsertedId = result.lastID;
-      }
-    }
-
-    if (resolved.compartment_id && targetLocationId) {
-      const loc = await db.get(`SELECT sort_order, foil_sorting FROM locations WHERE id = ? AND user_id = ?`, [targetLocationId, req.user.id]);
-      if (loc) {
-        await rebalanceCompartmentByScheme(db, resolved.compartment_id, loc.sort_order, loc.foil_sorting);
       }
     }
 
@@ -711,12 +664,7 @@ async function addCardToCollection(user, body) {
 
     return {
       message: 'Card added to collection',
-      id: lastInsertedId,
-      placement: resolved.compartment_id
-        ? await describePlacement(db, lastInsertedId, req.user.id)
-        : null,
-      container_full: !!resolved.full,
-      rule_rejected: !!resolved.rejected
+      id: lastInsertedId
     };
   }
 }
@@ -779,43 +727,13 @@ router.put('/collection/:id', async (req, res) => {
   const { id } = req.params;
   const {
     quantity, condition, printing, language, purchase_price,
-    location_id, compartment_id, list_type, is_trade, favorite, game, notes,
+    list_type, is_trade, favorite, game, notes,
     grader, grade, cert_number, market_value
   } = req.body;
 
   try {
     const entry = await db.get(`SELECT * FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (!entry) return res.status(404).json({ error: 'Collection entry not found' });
-
-    const isMoving = location_id !== undefined && location_id !== entry.location_id;
-    let finalCompartmentId = entry.compartment_id;
-    let finalLocationId = entry.location_id;
-    let finalPosition = entry.position;
-    let resolvedFull = false;
-    let resolvedRejected = false;
-
-    if (isMoving) {
-      if (location_id === null || location_id === '') {
-        finalLocationId = null;
-        finalCompartmentId = null;
-        finalPosition = 0;
-      } else {
-        const resolved = await resolveCompartmentAndPosition({
-          locationId: location_id,
-          userId: req.user.id,
-          cardId: entry.card_id,
-          printing: printing !== undefined ? printing : entry.printing,
-          language: language !== undefined ? language : entry.language
-        });
-        finalCompartmentId = resolved.compartment_id;
-        finalLocationId = resolved.compartment_id ? (resolved.location_id ?? location_id) : null;
-        finalPosition = resolved.position;
-        resolvedFull = !!resolved.full;
-        resolvedRejected = !!resolved.rejected;
-      }
-    } else if (compartment_id !== undefined) {
-      finalCompartmentId = compartment_id;
-    }
 
     const updates = [];
     const params = [];
@@ -828,10 +746,6 @@ router.put('/collection/:id', async (req, res) => {
     if (printing !== undefined) { updates.push('printing = ?'); params.push(printing); }
     if (language !== undefined) { updates.push('language = ?'); params.push(language); }
     if (purchase_price !== undefined) { updates.push('purchase_price = ?'); params.push(purchase_price); }
-    if (isMoving || compartment_id !== undefined) {
-      updates.push('location_id = ?', 'compartment_id = ?', 'position = ?');
-      params.push(finalLocationId, finalCompartmentId, finalPosition);
-    }
     if (list_type !== undefined) { updates.push('list_type = ?'); params.push(list_type); }
     if (is_trade !== undefined) { updates.push('is_trade = ?'); params.push(is_trade ? 1 : 0); }
     if (favorite !== undefined) { updates.push('favorite = ?'); params.push(favorite ? 1 : 0); }
@@ -878,15 +792,6 @@ router.put('/collection/:id', async (req, res) => {
       await db.run(`UPDATE collection SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params);
     }
 
-    if (isMoving && finalCompartmentId && finalLocationId) {
-      const loc = await db.get(`SELECT sort_order, foil_sorting FROM locations WHERE id = ? AND user_id = ?`, [finalLocationId, req.user.id]);
-      if (loc) await rebalanceCompartmentByScheme(db, finalCompartmentId, loc.sort_order, loc.foil_sorting);
-    }
-    if (isMoving && entry.compartment_id && entry.compartment_id !== finalCompartmentId) {
-      const oldLoc = await db.get(`SELECT sort_order, foil_sorting FROM locations WHERE id = ? AND user_id = ?`, [entry.location_id, req.user.id]);
-      if (oldLoc) await rebalanceCompartmentByScheme(db, entry.compartment_id, oldLoc.sort_order, oldLoc.foil_sorting);
-    }
-
     // Quantity is absolute — it is how many copies the user says they own, and
     // in the stacked collection view the number in the form is the total across
     // the identical rows, not this row alone. So reconcile the whole stack to
@@ -894,18 +799,10 @@ router.put('/collection/:id', async (req, res) => {
     // which made lowering the number a no-op and made every save duplicate the
     // entry instead of editing it.
     if (requestedQty !== null) {
-      const changed = await setStackQuantity(db, req.user.id, id, requestedQty);
-      if (changed !== 0) {
-        const row = await db.get(`SELECT compartment_id, location_id FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-        if (row && row.compartment_id && row.location_id) {
-          const loc = await db.get(`SELECT sort_order, foil_sorting FROM locations WHERE id = ? AND user_id = ?`, [row.location_id, req.user.id]);
-          if (loc) await rebalanceCompartmentByScheme(db, row.compartment_id, loc.sort_order, loc.foil_sorting);
-        }
-      }
+      await setStackQuantity(db, req.user.id, id, requestedQty);
     }
 
-    const finalPlacement = isMoving && finalCompartmentId ? await describePlacement(db, id, req.user.id) : null;
-    res.json({ message: 'Collection entry updated successfully', placement: finalPlacement, container_full: resolvedFull, rule_rejected: resolvedRejected });
+    res.json({ message: 'Collection entry updated successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to update entry' });
@@ -954,66 +851,6 @@ router.post('/collection/:id/market-value/fetch', searchLimiter, async (req, res
   }
 });
 
-// 4b. Manual tap-to-place (Custom order)
-router.post('/collection/:id/place', async (req, res) => {
-  const { id } = req.params;
-  const { compartment_id, slot, swap_with } = req.body;
-  try {
-    const entry = await db.get(`SELECT * FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-    if (!entry) return res.status(404).json({ error: 'Collection entry not found' });
-
-    const comp = await db.get(`
-      SELECT c.id, c.capacity, l.id AS loc_id, l.type AS loc_type, l.sort_order
-      FROM compartments c JOIN locations l ON c.location_id = l.id
-      WHERE c.id = ? AND l.user_id = ?`, [compartment_id, req.user.id]);
-    if (!comp) return res.status(400).json({ error: 'Invalid compartment' });
-    if (comp.sort_order !== 'custom') return res.status(400).json({ error: 'Manual placement is only available in Custom order' });
-
-    const isBinder = isBinderType(comp.loc_type);
-
-    if (swap_with) {
-      const other = await db.get(`SELECT * FROM collection WHERE id = ? AND user_id = ?`, [swap_with, req.user.id]);
-      if (!other) return res.status(400).json({ error: 'Swap target not found' });
-      await db.run(`UPDATE collection SET compartment_id = ?, location_id = ?, position = ? WHERE id = ? AND user_id = ?`,
-        [other.compartment_id, other.location_id, other.position, id, req.user.id]);
-      await db.run(`UPDATE collection SET compartment_id = ?, location_id = ?, position = ? WHERE id = ? AND user_id = ?`,
-        [entry.compartment_id, entry.location_id, entry.position, swap_with, req.user.id]);
-      const placement = await describePlacement(db, id, req.user.id);
-      return res.json({ message: 'Cards swapped', placement });
-    }
-
-    if (!Number.isInteger(slot) || slot < 1) return res.status(400).json({ error: 'Invalid slot' });
-
-    if (entry.compartment_id !== compartment_id) {
-      const cnt = await db.get(`SELECT COUNT(*) AS n FROM collection WHERE compartment_id = ? AND user_id = ?`, [compartment_id, req.user.id]);
-      if (cnt.n >= comp.capacity) return res.status(400).json({ error: 'COMPARTMENT_FULL' });
-    }
-
-    const sourceComp = entry.compartment_id;
-    if (isBinder) {
-      await db.run(`UPDATE collection SET compartment_id = ?, location_id = ?, position = ? WHERE id = ? AND user_id = ?`,
-        [compartment_id, comp.loc_id, slot * 1000, id, req.user.id]);
-    } else {
-      await db.run(`UPDATE collection SET compartment_id = ?, location_id = ?, position = ? WHERE id = ? AND user_id = ?`,
-        [compartment_id, comp.loc_id, slot * 1000 - 500, id, req.user.id]);
-      await rebalanceCompartmentByScheme(db, compartment_id, req.user.id, { sort_order: 'custom' });
-    }
-
-    if (sourceComp && sourceComp !== compartment_id) {
-      const src = await db.get(`SELECT l.type AS loc_type FROM compartments c JOIN locations l ON c.location_id = l.id WHERE c.id = ?`, [sourceComp]);
-      if (src && !isBinderType(src.loc_type)) {
-        await rebalanceCompartmentByScheme(db, sourceComp, req.user.id, { sort_order: 'custom' });
-      }
-    }
-
-    const placement = await describePlacement(db, id, req.user.id);
-    res.json({ message: 'Card placed', placement });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to place card' });
-  }
-});
-
 // 5. Delete Card from Collection
 router.delete('/collection/:id', async (req, res) => {
   const { id } = req.params;
@@ -1030,7 +867,7 @@ router.delete('/collection/:id', async (req, res) => {
 });
 
 // 5b. Bulk actions
-const BULK_ACTIONS = ['delete', 'move', 'trade', 'untrade', 'list_type', 'condition', 'printing', 'purchase_split', 'add_to_deck'];
+const BULK_ACTIONS = ['delete', 'trade', 'untrade', 'list_type', 'condition', 'printing', 'purchase_split', 'add_to_deck'];
 // Allowed field values mirror the collection table CHECK constraints in db.js.
 const BULK_CONDITIONS = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged'];
 const BULK_PRINTINGS = ['Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo'];
@@ -1130,34 +967,7 @@ router.post('/collection/bulk', async (req, res) => {
       return res.json({ message: `Split $${total.toFixed(2)} across ${rows.length} card(s) (${weighted ? 'by value' : 'evenly'})`, affected: rows.length });
     }
 
-    const locationId = value ? parseInt(value, 10) : null;
-    if (locationId) {
-      const loc = await db.get(`SELECT id FROM locations WHERE id = ? AND user_id = ?`, [locationId, req.user.id]);
-      if (!loc) return res.status(400).json({ error: 'Invalid location ID' });
-    }
-    let moved = 0;
-    const touched = new Map();
-    for (const id of ids) {
-      const entry = await db.get(`SELECT * FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-      if (!entry) continue;
-      if (!locationId) {
-        await db.run(`UPDATE collection SET location_id = NULL, compartment_id = NULL, position = 0 WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-        moved++;
-        continue;
-      }
-      const resolved = await resolveCompartmentAndPosition({
-        locationId, userId: req.user.id, cardId: entry.card_id, printing: entry.printing, language: entry.language
-      });
-      const finalLoc = resolved.compartment_id ? (resolved.location_id ?? locationId) : null;
-      await db.run(`UPDATE collection SET location_id = ?, compartment_id = ?, position = ? WHERE id = ? AND user_id = ?`, [finalLoc, resolved.compartment_id, resolved.position, id, req.user.id]);
-      if (resolved.compartment_id) touched.set(resolved.compartment_id, finalLoc);
-      moved++;
-    }
-    for (const [compId, locId] of touched) {
-      const rbLoc = await db.get(`SELECT sort_order, foil_sorting FROM locations WHERE id = ? AND user_id = ?`, [locId, req.user.id]);
-      if (rbLoc) await rebalanceCompartmentByScheme(db, compId, rbLoc.sort_order, rbLoc.foil_sorting);
-    }
-    return res.json({ message: `Moved ${moved} card(s)`, affected: moved });
+    return res.status(400).json({ error: 'Unknown action' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Bulk action failed' });

@@ -99,8 +99,7 @@ async function runTests() {
           condition: 'Near Mint',
           printing: 'Normal',
           language: 'English',
-          purchase_price: 10000.0,
-          location_id: null
+          purchase_price: 10000.0
         })
       });
       assert.strictEqual(addRes.status, 200);
@@ -115,19 +114,9 @@ async function runTests() {
       throw err;
     }
 
-    // F5-TC3: Verify a set/number code triggers Scryfall search & auto-adds match to compartment
+    // F5-TC3: Verify a set/number code triggers Scryfall search & auto-adds match to the collection
     try {
-      // 1. Setup Location & Compartment
-      const locId = (await db.run(
-        `INSERT INTO locations (name, type, user_id) VALUES (?, ?, ?)`,
-        ['Scanner Binder', 'Binder', adminId]
-      )).lastID;
-      const compId = (await db.run(
-        `INSERT INTO compartments (location_id, idx, capacity) VALUES (?, ?, ?)`,
-        [locId, 1, 9]
-      )).lastID;
-
-      // 2. A parsed set and number triggering search
+      // 1. A parsed set and number triggering search
       const scanSet = 'LEA';
       const scanNumber = '232';
       const searchRes = await fetch(`http://localhost:${port}/api/search?game=mtg&set=${scanSet}&number=${scanNumber}`, { headers: authHeaders });
@@ -138,7 +127,7 @@ async function runTests() {
       const matchedCard = searchData[0];
       assert.strictEqual(matchedCard.id, 'mtg-lea-232');
 
-      // 3. Simulate auto-adding matching card to the location
+      // 2. Simulate auto-adding matching card to the collection
       const addRes = await fetch(`http://localhost:${port}/api/collection`, {
         method: 'POST',
         headers: authHeaders,
@@ -148,58 +137,19 @@ async function runTests() {
           condition: 'Near Mint',
           printing: 'Normal',
           language: 'English',
-          purchase_price: 10000.0,
-          location_id: locId
+          purchase_price: 10000.0
         })
       });
       assert.strictEqual(addRes.status, 200);
 
       const checkCollection = await db.get(
-        `SELECT * FROM collection WHERE card_id = ? AND location_id = ? AND compartment_id IS NOT NULL`,
-        [matchedCard.id, locId]
+        `SELECT * FROM collection WHERE card_id = ?`,
+        [matchedCard.id]
       );
-      assert.ok(checkCollection, 'Card must be filed under recommended compartment');
+      assert.ok(checkCollection, 'Card must be added to the collection');
       console.log('PASS: F5-TC3');
     } catch (err) {
       console.error('FAIL: F5-TC3 -', err.message);
-      throw err;
-    }
-
-    // F5-TC4: Verify that updating sorting rules to MTG WUBRG rebalances positions
-    try {
-      const { rebalanceCompartmentPositions } = require('../../src/utils/priceHelpers');
-      
-      const locId = (await db.run(
-        `INSERT INTO locations (name, type, user_id) VALUES (?, ?, ?)`,
-        ['Sort Binder', 'Binder', adminId]
-      )).lastID;
-      const compId = (await db.run(
-        `INSERT INTO compartments (location_id, idx, capacity) VALUES (?, ?, ?)`,
-        [locId, 1, 9]
-      )).lastID;
-
-      // Seed card_cache so the collection FK (card_id -> card_cache.id) holds.
-      await db.run(`INSERT OR IGNORE INTO card_cache (id, name, game) VALUES (?, ?, ?)`, ['mtg-c1', 'Card 1', 'mtg']);
-      await db.run(`INSERT OR IGNORE INTO card_cache (id, name, game) VALUES (?, ?, ?)`, ['mtg-c2', 'Card 2', 'mtg']);
-
-      // Add dummy cards with out-of-order positions
-      await db.run(
-        `INSERT INTO collection (card_id, quantity, location_id, compartment_id, position, user_id) VALUES (?, ?, ?, ?, ?, ?)`,
-        ['mtg-c1', 1, locId, compId, 2000, adminId]
-      );
-      await db.run(
-        `INSERT INTO collection (card_id, quantity, location_id, compartment_id, position, user_id) VALUES (?, ?, ?, ?, ?, ?)`,
-        ['mtg-c2', 1, locId, compId, 1000, adminId]
-      );
-
-      await rebalanceCompartmentPositions(db, compId);
-      const rows = await db.all(`SELECT position FROM collection WHERE compartment_id = ? ORDER BY position ASC`, [compId]);
-      if (rows.length > 1) {
-        assert.ok(rows[1].position > rows[0].position);
-      }
-      console.log('PASS: F5-TC4');
-    } catch (err) {
-      console.error('FAIL: F5-TC4 -', err.message);
       throw err;
     }
 

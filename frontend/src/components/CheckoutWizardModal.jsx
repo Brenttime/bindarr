@@ -1,230 +1,63 @@
-import { useState, useMemo, useEffect } from 'react';
-import { X, Check, Minus, MapPin, Package, AlertTriangle } from 'lucide-react';
-import CompartmentView from './CompartmentView';
-import { sortCardsByOrder } from '../utils/cardSort';
+import { X, Check, AlertTriangle } from 'lucide-react';
+import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useT } from '../utils/i18n';
 
-// Slot number a stored position encodes (positions are slot * 1000).
-const slotOf = (position) => (position ? Math.floor(position / 1000) : null);
-
-// Both modes say the same things about different directions of travel, and the
-// verb ("pulled" / "returned") is inflected into the middle of a sentence, so each
-// mode gets whole sentences rather than a verb glued into a shared template.
-const MODES = ['checkout', 'checkin'];
-
-// Post-checkout / return locator. A "where does each card go" checklist backed
-// by the locations payload the backend computed. Never mutates the collection
-// (checkout no longer unassigns, so a card's stored slot is both where you grab
-// it and where it returns). Located pages render their compartment layout with
-// the cards highlighted by entry_id. Select-all works per page, per container,
-// and globally.
+// Deck checkout / check-in coverage guide. Backed by the backend's
+// /api/decks/:id/locations payload, which reports for every card in the deck
+// how many copies are owned, how many are locked by other checked-out decks,
+// and how many are available. Nothing physical here — this answers "do I have
+// enough of everything for this deck?", not "where is each card in the
+// binder". Missing cards float to the top (the backend sorts them there).
 const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCancel }) => {
   const { t } = useT();
-  const kind = MODES.includes(mode) ? mode : 'checkout';
-  const cancel = onCancel || onClose; // X / overlay / back = cancel (revert the toggle)
-  const [done, setDone] = useState(new Set());
-  const [expanded, setExpanded] = useState({}); // container.key -> user forced open after auto-collapse
-  const [setsList, setSetsList] = useState([]);
-  const [grids, setGrids] = useState({}); // page.key -> { compartment, cards, locationType, sortOrder }
+  const kind = mode === 'checkin' ? 'checkin' : 'checkout';
+  const cancel = onCancel || onClose;
+
+  const cards = locationsData || [];
+  const coveredCount = cards.filter(c => c.covered).length;
+  const totalCards = cards.length;
+  const missingCards = cards.filter(c => c.missing > 0);
+  const coveredCards = cards.filter(c => c.missing === 0);
+  const allCovered = totalCards > 0 && coveredCount === totalCards;
 
   useBackGuard(true, cancel);
 
-  // Flatten to pulls, then build container -> page tree plus a flat page list.
-  const { containers, pagesFlat, missing, totalPulls, allEntryIds } = useMemo(() => {
-    const pulls = [];
-    const missing = [];
-    for (const card of locationsData || []) {
-      for (const loc of card.locations || []) pulls.push({ ...loc, card_id: card.card_id });
-      if (card.missing > 0) {
-        const name = card.locations?.[0]?.card_name || card.card_id;
-        missing.push({ card_id: card.card_id, name, qty: card.missing });
-      }
-    }
-
-    const containerMap = new Map();
-    for (const p of pulls) {
-      const cKey = p.location_id ? `loc-${p.location_id}` : 'unassigned';
-      if (!containerMap.has(cKey)) {
-        containerMap.set(cKey, {
-          key: cKey,
-          unassigned: !p.location_id,
-          location_name: p.location_name || t('bulk.unassignedPile'),
-          pageMap: new Map()
-        });
-      }
-      const c = containerMap.get(cKey);
-      const pKey = p.location_id ? `${p.location_id}-${p.compartment_id}` : 'unassigned';
-      if (!c.pageMap.has(pKey)) {
-        c.pageMap.set(pKey, {
-          key: pKey,
-          location_id: p.location_id || null,
-          compartment_id: p.compartment_id || null,
-          compartment_display: p.compartment_display,
-          pulls: []
-        });
-      }
-      c.pageMap.get(pKey).pulls.push(p);
-    }
-
-    const containers = Array.from(containerMap.values()).map(c => {
-      const pages = Array.from(c.pageMap.values()).sort((a, b) => (a.compartment_id || 0) - (b.compartment_id || 0));
-      for (const pg of pages) pg.pulls.sort((x, y) => (x.position || 0) - (y.position || 0));
-      return {
-        key: c.key,
-        unassigned: c.unassigned,
-        location_name: c.location_name,
-        pages,
-        entryIds: pages.flatMap(pg => pg.pulls.map(p => p.entry_id))
-      };
-    });
-    containers.sort((a, b) => {
-      if (a.unassigned !== b.unassigned) return a.unassigned ? 1 : -1;
-      return a.location_name.localeCompare(b.location_name);
-    });
-
-    const pagesFlat = containers.filter(c => !c.unassigned).flatMap(c => c.pages);
-    return { containers, pagesFlat, missing, totalPulls: pulls.length, allEntryIds: pulls.map(p => p.entry_id) };
-  }, [locationsData, t]);
-
-  useEffect(() => {
-    fetch('/api/sets').then(r => r.json()).then(setSetsList).catch(() => {});
-  }, []);
-
-  // Load each located page's compartment layout so pulled cards can be
-  // highlighted in their physical grid (by entry_id, order-independent).
-  useEffect(() => {
-    let active = true;
-    if (pagesFlat.length === 0) { setGrids({}); return; }
-
-    const locCache = new Map();
-    const fetchLocation = async (locationId) => {
-      if (!locCache.has(locationId)) {
-        locCache.set(locationId, Promise.all([
-          fetch(`/api/locations/${locationId}`).then(r => r.json()),
-          fetch(`/api/locations/${locationId}/compartments`).then(r => r.json())
-        ]).then(([loc, comps]) => ({ loc, comps })));
-      }
-      return locCache.get(locationId);
-    };
-
-    (async () => {
-      const next = {};
-      for (const pg of pagesFlat) {
-        try {
-          const { loc, comps } = await fetchLocation(pg.location_id);
-          const comp = comps.find(c => c.id === pg.compartment_id);
-          if (!comp) continue;
-          const cards = await fetch(`/api/collection?compartment_id=${pg.compartment_id}`).then(r => r.json());
-          const sortOrder = loc.sort_order || 'custom';
-          if (sortOrder === 'custom') cards.sort((a, b) => (a.position || 0) - (b.position || 0));
-          else sortCardsByOrder(cards, sortOrder, loc.foil_sorting, setsList);
-          next[pg.key] = { compartment: comp, cards, locationType: loc.type || 'Binder', sortOrder };
-        } catch (err) {
-          console.error('Failed to load compartment layout', err);
-        }
-      }
-      if (active) setGrids(next);
-    })();
-
-    return () => { active = false; };
-  }, [pagesFlat, setsList]);
-
-  const doneCount = done.size;
-  const allComplete = totalPulls > 0 && doneCount === totalPulls;
-  const pct = totalPulls ? Math.round((doneCount / totalPulls) * 100) : 0;
-
-  const setChecked = (ids, on) => setDone(prev => {
-    const next = new Set(prev);
-    ids.forEach(id => (on ? next.add(id) : next.delete(id)));
-    return next;
-  });
-  const toggleOne = (id) => setChecked([id], !done.has(id));
-
-  const SelectAll = ({ ids, label }) => {
-    const all = ids.length > 0 && ids.every(id => done.has(id));
-    const some = !all && ids.some(id => done.has(id));
+  const renderRow = (c) => {
+    const short = c.missing > 0;
     return (
-      <button
-        type="button"
-        onClick={() => setChecked(ids, !all)}
-        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 600, padding: '0.2rem', flexShrink: 0 }}
+      <div
+        key={c.card_id}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.55rem 0.65rem',
+          background: short ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.03)',
+          border: `1px solid ${short ? 'rgba(239,68,68,0.4)' : 'var(--border-glass)'}`,
+          borderRadius: 'var(--radius-sm)'
+        }}
       >
-        <span style={{ width: '16px', height: '16px', borderRadius: '4px', border: all || some ? 'none' : '2px solid var(--text-muted)', background: all ? 'var(--accent-green)' : some ? 'var(--accent-blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', color: all ? '#000' : '#fff' }}>
-          {all ? <Check size={11} strokeWidth={3} /> : some ? <Minus size={11} strokeWidth={3} /> : null}
-        </span>
-        {label ?? t('wizard.selectAll')}
-      </button>
-    );
-  };
-
-  const renderRows = (pulls) => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-      {pulls.map(pull => {
-        const isDone = done.has(pull.entry_id);
-        const slot = slotOf(pull.position);
-        return (
-          <button
-            key={pull.entry_id}
-            type="button"
-            onClick={() => toggleOne(pull.entry_id)}
-            style={{
-              textAlign: 'left', width: '100%', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.65rem 0.75rem',
-              background: isDone ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)',
-              border: isDone ? '1px solid var(--accent-green)' : '1px solid var(--border-glass)',
-              borderRadius: 'var(--radius-sm)', transition: 'background 0.15s, border-color 0.15s'
-            }}
-          >
-            <div style={{
-              width: '22px', height: '22px', flexShrink: 0, borderRadius: '50%',
-              border: isDone ? 'none' : '2px solid var(--text-muted)',
-              background: isDone ? 'var(--accent-green)' : 'transparent',
-              display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}>
-              {isDone && <Check size={14} color="#000" strokeWidth={3} />}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: 'var(--text-strong)', fontSize: '0.9rem', fontWeight: 600, textDecoration: isDone ? 'line-through' : 'none', opacity: isDone ? 0.6 : 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {pull.card_name}
-              </div>
-              <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
-                {pull.set_name} · #{pull.number}{slot ? ` · ${t('wizard.slot', { slot })}` : ''}
-              </div>
-            </div>
-            {pull.take > 1 && (
-              <span className="badge" style={{ flexShrink: 0, background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)', fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}>
-                ×{pull.take}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-
-  const renderGrid = (page) => {
-    const grid = grids[page.key];
-    if (!grid) return null;
-    // Still-to-pull cards stay highlighted; pulled ones drop the highlight and
-    // fade darker, in place. No forced focus so the view doesn't jump around.
-    const undoneIds = page.pulls.filter(p => !done.has(p.entry_id)).map(p => p.entry_id);
-    const doneIds = page.pulls.filter(p => done.has(p.entry_id)).map(p => p.entry_id);
-    return (
-      <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.85rem', marginBottom: '0.6rem', overflow: 'hidden' }}>
-        <CompartmentView
-          compartment={grid.compartment}
-          cards={grid.cards}
-          locationType={grid.locationType}
-          sortOrder={grid.sortOrder}
-          setsList={setsList}
-          highlightEntryIds={undoneIds}
-          pulledEntryIds={doneIds}
-          focusEntryId={undoneIds[0]}
-          pullMode
-          onCardClick={(card) => toggleOne(card.entry_id)}
-          hideFocusedCardInfo
-        />
+        <div style={{ width: '34px', height: '46px', flexShrink: 0, borderRadius: '4px', overflow: 'hidden', background: 'rgba(0,0,0,0.3)' }}>
+          {c.image_url && <CardImage card={{ image_url: c.image_url, name: c.name }} />}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: 'var(--text-strong)', fontSize: '0.9rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {c.card_name}
+          </div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>
+            {c.set_name}{c.number ? ` · #${c.number}` : ''}
+            {c.in_use > 0 && <span style={{ color: 'var(--text-muted)' }}> · {t('wizard.inUse', { count: c.in_use })}</span>}
+          </div>
+        </div>
+        <div style={{ flexShrink: 0, textAlign: 'right' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: short ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+            {short ? `×${c.required} / ${c.available}` : `×${c.required}`}
+          </div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+            {t('wizard.owned')}: {c.owned} · {t('wizard.available')}: {c.available}
+          </div>
+        </div>
+        <div style={{ width: '22px', height: '22px', flexShrink: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: short ? 'rgba(239,68,68,0.25)' : 'var(--accent-green)' }}>
+          {short ? <AlertTriangle size={13} color="#fecaca" /> : <Check size={14} color="#000" strokeWidth={3} />}
+        </div>
       </div>
     );
   };
@@ -252,88 +85,43 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
             </button>
           </div>
 
-          {totalPulls > 0 && (
+          {totalCards > 0 && (
             <div style={{ marginTop: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t(`wizard.${kind}.progress`, { done: doneCount, total: totalPulls })}</span>
-                <SelectAll ids={allEntryIds} label={t(allComplete ? 'wizard.clearAll' : 'wizard.selectAll')} />
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t('wizard.progress', { done: coveredCount, total: totalCards })}</span>
+                {allCovered && <span style={{ fontSize: '0.75rem', color: 'var(--accent-green)', fontWeight: 700 }}>{t('wizard.allCovered')}</span>}
               </div>
               <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
-                <div style={{ width: `${pct}%`, height: '100%', background: allComplete ? 'var(--accent-green)' : 'var(--accent-blue)', transition: 'width 0.3s ease' }} />
+                <div style={{ width: `${totalCards ? Math.round((coveredCount / totalCards) * 100) : 0}%`, height: '100%', background: allCovered ? 'var(--accent-green)' : 'var(--accent-blue)', transition: 'width 0.3s ease' }} />
               </div>
             </div>
           )}
         </div>
 
         {/* Body */}
-        <div style={{ padding: '1.25rem 1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {totalPulls === 0 && missing.length === 0 && (
-            <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '1.5rem 0', fontSize: '0.9rem' }}>{t('wizard.nothingToMove')}</div>
+        <div style={{ padding: '1.25rem 1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {totalCards === 0 && (
+            <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '1.5rem 0', fontSize: '0.9rem' }}>{t('wizard.empty')}</div>
           )}
 
-          {missing.length > 0 && (
-            <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 'var(--radius-md)', padding: '0.85rem 1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-red)', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                <AlertTriangle size={16} /> {t('wizard.notEnoughCopies')}
-              </div>
-              <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-                {missing.map(m => <div key={m.card_id}>{m.qty}× {m.name}</div>)}
-              </div>
+          {missingCards.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <div style={{ color: 'var(--accent-red)', fontWeight: 700, fontSize: '0.85rem' }}>{t('wizard.missingSection')}</div>
+              {missingCards.map(renderRow)}
             </div>
           )}
 
-          {containers.map(container => {
-            const singlePage = container.pages.length === 1;
-            const complete = container.entryIds.length > 0 && container.entryIds.every(id => done.has(id));
-            const collapsed = complete && !expanded[container.key];
-            const toggleExpand = () => setExpanded(prev => ({ ...prev, [container.key]: !prev[container.key] }));
-            return (
-              <div key={container.key} style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                {/* Container header (with container-level select-all) */}
-                <div
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: complete ? 'pointer' : 'default' }}
-                  onClick={complete ? toggleExpand : undefined}
-                >
-                  <div style={{ width: '32px', height: '32px', borderRadius: '8px', flexShrink: 0, background: complete ? 'var(--accent-green)' : container.unassigned ? 'rgba(148,163,184,0.15)' : 'rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: complete ? '#000' : container.unassigned ? 'var(--text-muted)' : 'var(--accent-blue)' }}>
-                    {complete ? <Check size={16} strokeWidth={3} /> : container.unassigned ? <Package size={16} /> : <MapPin size={16} />}
-                  </div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ color: 'var(--text-strong)', fontWeight: 700, fontSize: '0.95rem' }}>{container.location_name}</div>
-                    {collapsed ? (
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{t(`wizard.${kind}.collapsed`, { count: container.entryIds.length })}</div>
-                    ) : singlePage && container.pages[0].compartment_display && (
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{container.pages[0].compartment_display}</div>
-                    )}
-                  </div>
-                  {!collapsed && <SelectAll ids={container.entryIds} />}
-                </div>
-
-                {collapsed ? null : singlePage ? (
-                  <>
-                    {!container.unassigned && renderGrid(container.pages[0])}
-                    {renderRows(container.pages[0].pulls)}
-                  </>
-                ) : (
-                  // Multi-page container: each page gets its own select-all + grid
-                  container.pages.map(page => (
-                    <div key={page.key} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingLeft: '0.5rem', borderLeft: '2px solid var(--border-glass)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 600 }}>{page.compartment_display || t('wizard.page')}</span>
-                        <SelectAll ids={page.pulls.map(p => p.entry_id)} />
-                      </div>
-                      {renderGrid(page)}
-                      {renderRows(page.pulls)}
-                    </div>
-                  ))
-                )}
-              </div>
-            );
-          })}
+          {coveredCards.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <div style={{ color: 'var(--text-secondary)', fontWeight: 700, fontSize: '0.85rem' }}>{t('wizard.coveredSection')}</div>
+              {coveredCards.map(renderRow)}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
         <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid var(--border-glass)', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', flexShrink: 0 }}>
-          <button className="btn btn-primary" onClick={onClose} disabled={totalPulls > 0 && !allComplete}>{t('bulk.done')}</button>
+          <button className="btn btn-primary" onClick={onClose}>{t('bulk.done')}</button>
         </div>
       </div>
     </div>

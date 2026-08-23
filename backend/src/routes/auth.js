@@ -58,9 +58,8 @@ router.post('/bootstrap', authLimiter, async (req, res) => {
       VALUES (?, ?, ?, ?, ?)
     `, [OWNER_USERNAME, passwordHash, 'admin', shareToken, 0]);
 
-    // Both skipped by initDb, which found no account to hand them to.
+    // Orphan rows skipped by initDb, which found no account to hand them to.
     await db.adoptOrphanRows(result.lastID);
-    await db.seedStarterLocations(result.lastID);
 
     const token = await generateSession(result.lastID);
     res.status(201).json({
@@ -71,7 +70,6 @@ router.post('/bootstrap', authLimiter, async (req, res) => {
         role: 'admin',
         share_token: shareToken,
         share_enabled: 0,
-        share_locations: 0,
         tcg_api_key: '',
         psa_api_token: '',
         graded_price_api_key: '',
@@ -125,8 +123,7 @@ router.post('/register', authLimiter, async (req, res) => {
         username: cleanUsername,
         role: 'member',
         share_token: shareToken,
-        share_enabled: 0,
-        share_locations: 0
+        share_enabled: 0
       }
     });
   } catch (error) {
@@ -160,7 +157,6 @@ router.post('/login', authLimiter, async (req, res) => {
         role: user.role,
         share_token: user.share_token,
         share_enabled: user.share_enabled,
-        share_locations: user.share_locations,
         tcg_api_key: user.tcg_api_key || '',
         psa_api_token: user.psa_api_token || '',
         graded_price_api_key: user.graded_price_api_key || '',
@@ -229,7 +225,7 @@ router.delete('/api-key', authenticateToken, async (req, res) => {
 
 // Update settings (password, sharing)
 router.put('/settings', authenticateToken, async (req, res) => {
-  const { current_password, password, share_enabled, share_locations, regenerate_share_token, tcg_api_key, psa_api_token, graded_price_api_key } = req.body;
+  const { current_password, password, share_enabled, regenerate_share_token, tcg_api_key, psa_api_token, graded_price_api_key } = req.body;
 
   try {
     if (password !== undefined) {
@@ -246,10 +242,6 @@ router.put('/settings', authenticateToken, async (req, res) => {
 
     if (share_enabled !== undefined) {
       await db.run(`UPDATE users SET share_enabled = ? WHERE id = ?`, [share_enabled ? 1 : 0, req.user.id]);
-    }
-
-    if (share_locations !== undefined) {
-      await db.run(`UPDATE users SET share_locations = ? WHERE id = ?`, [share_locations ? 1 : 0, req.user.id]);
     }
 
     if (tcg_api_key !== undefined) {
@@ -271,7 +263,7 @@ router.put('/settings', authenticateToken, async (req, res) => {
     }
 
     // Retrieve updated info
-    const updatedUser = await db.get(`SELECT username, role, share_token, share_enabled, share_locations, tcg_api_key, psa_api_token, graded_price_api_key, api_key FROM users WHERE id = ?`, [req.user.id]);
+    const updatedUser = await db.get(`SELECT username, role, share_token, share_enabled, tcg_api_key, psa_api_token, graded_price_api_key, api_key FROM users WHERE id = ?`, [req.user.id]);
     res.json({
       message: 'Settings updated successfully',
       user: {
@@ -279,7 +271,6 @@ router.put('/settings', authenticateToken, async (req, res) => {
         role: updatedUser.role,
         share_token: updatedUser.share_token,
         share_enabled: updatedUser.share_enabled,
-        share_locations: updatedUser.share_locations,
         tcg_api_key: updatedUser.tcg_api_key || '',
         psa_api_token: updatedUser.psa_api_token || '',
         graded_price_api_key: updatedUser.graded_price_api_key || '',

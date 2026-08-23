@@ -4,7 +4,7 @@ import { useRef, useEffect } from 'react';
 // onLongPress(arg) after `delay` ms unless the pointer moves more than `moveTol`
 // px first (so it coexists with swipe/scroll). `fired` is a ref a follow-up
 // click reads to swallow the press. Single source of truth for hold-to-select,
-// shared by useMultiSelect and CompartmentView so every screen behaves the same.
+// shared by useMultiSelect so every screen behaves the same.
 // A null onLongPress disables arming (used where selection is optional).
 export function useLongPress(onLongPress, { delay = 450, moveTol = 10, vibrate = 25 } = {}) {
   const timer = useRef(null);

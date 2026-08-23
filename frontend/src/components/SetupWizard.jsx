@@ -1,19 +1,18 @@
 import { useEffect, useState } from 'react';
 import {
-  Cpu, Download, Check, X, Layers, KeyRound, MapPin, Trash2, Pencil,
+  Cpu, Download, Check, X, Layers, KeyRound,
   ArrowLeft, ArrowRight, Camera, Database, Swords, LayoutDashboard, Settings as SettingsIcon,
   Languages,
 } from 'lucide-react';
 import { GAMES, enabledGames, setGameEnabled, defaultGame, gameLabel } from '../utils/games';
-import { containerTypeKey } from '../utils/cardOptions';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 
 // First-run setup.
 //
 // A fresh install has an empty database, no models and no catalog, so the scanner
 // answers 503 and the only hint is a sentence in a server log. Everything needed
-// to fix that already existed — a download endpoint, a settings form, a storage
-// panel — spread across screens a new user has no reason to open. This walks the
+// to fix that already existed — a download endpoint and a settings form,
+// spread across screens a new user has no reason to open. This walks the
 // decisions once, in the order they depend on each other, and ends with a short
 // description of what each tab is for.
 //
@@ -24,17 +23,14 @@ import { LOCALES, localeName, useT } from '../utils/i18n';
 //
 // Deliberately not a second copy of Admin: the wizard offers the one-click paths
 // only, and points at Admin for anything with options (building a catalog from
-// chosen sets, compartment layouts, sorting rules).
+// chosen sets, sorting rules).
 //
 // Completion lives on the server (app_settings.setup_complete), not in
 // localStorage, so an admin who starts on a laptop and finishes on a phone is not
 // asked twice, and an admin who closes halfway is picked up where they left off
 // after the next login.
 
-// The three container types a first-run admin is most likely to own. The rest are
-// in Storage's own create form, which also asks about layout and sorting.
-const NEW_LOCATION_TYPES = ['Binder', 'Box', 'Deck Box'];
-const STEPS = ['language', 'cards', 'scanning', 'keys', 'storage', 'tour'];
+const STEPS = ['language', 'cards', 'scanning', 'keys', 'tour'];
 
 const markComplete = () => fetch('/api/settings', {
   method: 'PUT',
@@ -60,13 +56,6 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
   const [gradedKey, setGradedKey] = useState(user?.graded_price_api_key || '');
   const [savingKeys, setSavingKeys] = useState(false);
 
-  // Step 4: storage
-  const [locations, setLocations] = useState([]);
-  const [editingId, setEditingId] = useState(null);
-  const [editName, setEditName] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newType, setNewType] = useState('Binder');
-
   // Sizes and counts are locale-formatted, so they go through t() rather than
   // being glued into a sentence: "9.6 MB" is "9,6 MB" in half of Europe.
   const mb = (n) => t('setup.scan.megabytes', { size: Number((n / 1024 / 1024).toFixed(1)) });
@@ -82,12 +71,7 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     } catch { /* the wizard is not worth an error toast on a transient blip */ }
   };
 
-  const loadLocations = () => fetch('/api/locations')
-    .then(r => r.ok ? r.json() : [])
-    .then(rows => setLocations(Array.isArray(rows) ? rows : []))
-    .catch(() => { /* the storage step degrades to its create form */ });
-
-  useEffect(() => { load(); loadLocations(); }, []);
+  useEffect(() => { load(); }, []);
 
   // Poll while a download runs, from whatever step the user is on: these are tens
   // of megabytes, and a bar that stops moving is the only way to tell a stalled
@@ -134,54 +118,9 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     finally { setSavingKeys(false); }
   };
 
-  const addLocation = async () => {
-    const name = newName.trim();
-    if (!name) return;
-    try {
-      await post('/api/locations', { name, type: newType });
-      setNewName('');
-      await loadLocations();
-    } catch (e) { showToast?.(e.message); }
-  };
-
-  const renameLocation = async (id) => {
-    const name = editName.trim();
-    if (!name) return;
-    try {
-      const r = await fetch(`/api/locations/${id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || t('setup.storage.errRename'));
-      setEditingId(null);
-      await loadLocations();
-    } catch (e) { showToast?.(e.message); }
-  };
-
-  const deleteLocation = async (loc) => {
-    // Deleting a location unfiles its cards rather than deleting them, but that is
-    // not obvious from a trash icon, so say it before doing it.
-    const warn = loc.total_cards > 0
-      ? t('setup.storage.confirmDeleteCards', { name: loc.name, count: loc.total_cards })
-      : t('setup.storage.confirmDelete', { name: loc.name });
-    if (!window.confirm(warn)) return;
-    try {
-      const r = await fetch(`/api/locations/${loc.id}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || t('setup.storage.errDelete'));
-      await loadLocations();
-    } catch (e) { showToast?.(e.message); }
-  };
-
   const finish = async () => {
     try { await markComplete(); } catch { /* worst case, the wizard offers itself again */ }
     onClose();
-  };
-
-  // A type stored by an older install may have no locale key; it keeps its stored
-  // English name rather than being mislabelled.
-  const typeName = (type) => {
-    const key = containerTypeKey(type);
-    return key ? t(`container.type.${key}`) : type;
   };
 
   const label = { fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-strong)' };
@@ -446,81 +385,6 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     </>
   );
 
-  const storage = (
-    <>
-      <Heading
-        icon={<MapPin size={18} />}
-        title={t('setup.storage.title')}
-        sub={t('setup.storage.sub')}
-      />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-        {locations.length === 0 && <p style={{ ...body, fontSize: '0.76rem' }}>{t('setup.storage.none')}</p>}
-        {locations.map(l => (
-          <div key={l.id} style={row}>
-            {editingId === l.id ? (
-              <>
-                <input
-                  type="text" value={editName} autoFocus
-                  onChange={(e) => setEditName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') renameLocation(l.id);
-                    if (e.key === 'Escape') setEditingId(null);
-                  }}
-                  style={{ ...input, flex: 1 }}
-                />
-                <button className="btn btn-primary btn-sm" onClick={() => renameLocation(l.id)}>{t('common.save')}</button>
-                <button className="btn btn-secondary btn-sm" onClick={() => setEditingId(null)}>{t('common.cancel')}</button>
-              </>
-            ) : (
-              <>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-strong)', fontWeight: 600 }}>{l.name}</div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                    {t('setup.storage.meta', {
-                      type: typeName(l.type),
-                      compartments: t('setup.storage.compartments', { count: l.compartment_count }),
-                      cards: l.total_cards,
-                      capacity: l.total_capacity,
-                    })}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
-                  <button className="btn btn-secondary btn-sm" aria-label={t('setup.storage.rename', { name: l.name })}
-                    onClick={() => { setEditingId(l.id); setEditName(l.name); }}>
-                    <Pencil size={13} />
-                  </button>
-                  <button className="btn btn-secondary btn-sm" aria-label={t('setup.storage.delete', { name: l.name })}
-                    onClick={() => deleteLocation(l)}>
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-      <div>
-        <div style={{ ...label, marginBottom: '0.3rem' }}>{t('setup.storage.addAnother')}</div>
-        <div style={{ display: 'flex', gap: '0.4rem' }}>
-          <input
-            type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') addLocation(); }}
-            placeholder={t('setup.storage.namePlaceholder')} style={{ ...input, flex: 1 }}
-          />
-          <select className="select-control" style={{ ...input, width: 'auto' }} value={newType} onChange={(e) => setNewType(e.target.value)}>
-            {NEW_LOCATION_TYPES.map(type => (
-              <option key={type} value={type}>{typeName(type)}</option>
-            ))}
-          </select>
-          <button className="btn btn-secondary btn-sm" onClick={addLocation} disabled={!newName.trim()}>{t('setup.storage.add')}</button>
-        </div>
-        <p style={{ ...body, fontSize: '0.74rem', marginTop: '0.35rem' }}>
-          {t('setup.storage.addHint')}
-        </p>
-      </div>
-    </>
-  );
-
   const tour = (
     <>
       <Heading icon={<LayoutDashboard size={18} />} title={t('setup.tour.title')} />
@@ -530,9 +394,6 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
         </Tip>
         <Tip icon={<Database size={15} />} title={t('nav.collection')}>
           {t('setup.tour.collection')}
-        </Tip>
-        <Tip icon={<MapPin size={15} />} title={t('nav.storage')}>
-          {t('setup.tour.storage')}
         </Tip>
         <Tip icon={<Swords size={15} />} title={t('nav.deckBuilder')}>
           {t('setup.tour.decks')}
@@ -547,7 +408,7 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     </>
   );
 
-  const content = [language, cardsStep, scanning, keys, storage, tour][step];
+  const content = [language, cardsStep, scanning, keys, tour][step];
   const last = step === STEPS.length - 1;
 
   return (

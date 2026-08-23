@@ -6,9 +6,8 @@ built and why**.
 
 Bindarr is a self-hosted trading-card collection manager for **Pokémon** and
 **Magic: The Gathering**. It identifies cards from a phone photo (no typing),
-tracks their real-world physical location (which binder page / box row slot),
-values the collection over time, and helps you pull and re-file the cards for a
-deck.
+values the collection over time, and helps you pull the cards for a deck back
+out again.
 
 - **Backend**: Node.js + Express, SQLite (single file), served together with the built frontend from one container.
 - **Frontend**: React + Vite SPA.
@@ -33,8 +32,8 @@ backend/
     middleware/auth.js     authenticateToken (session lookup), requireAdmin, rate limiters
     routes/
       auth.js              register / login / logout / me / per-user settings
-      collection.js        collection CRUD, locations & compartments, sorting, scan-match, stats, import/export
-      decks.js             deck CRUD, deck cards, checkout / return, /:id/locations locator payload
+      collection.js        collection CRUD, card ordering, scan-match, stats, import/export
+      decks.js             deck CRUD, deck cards, checkout / return, /:id/locations coverage payload
       sets.js              set catalog lookup
       settings.js          app-wide settings (admin)
       shared.js            public read-only shared collection by share_token
@@ -50,7 +49,7 @@ backend/
     cardSets.js            Set discovery per game/language, and fetching a set's cards into card_cache
     cardArt.js             Per-card art overrides (user-supplied images)
     utils/
-      compartmentSort.js   Placement engine: which compartment/slot a card files into; sort comparators
+      cardSort.js          Card ordering: sort-scheme comparators shared with the frontend
       priceHelpers.js      Price resolution across printings; vintage-set detection; UTC parsing
       authHelpers.js       Auth-related helpers
       npz.js               Minimal .npz reader, for the published (not locally built) catalogs
@@ -117,15 +116,15 @@ Authentication is DB-backed session tokens, not JWTs:
 - Rate limiters (`authLimiter`, `searchLimiter`, `importLimiter`) protect login and expensive endpoints.
 
 `collection.js` applies `router.use(authenticateToken)` up front, so every
-collection/location/deck-adjacent route requires a valid session.
+collection/deck-adjacent route requires a valid session.
 
 ### Route map
 
 | Mount | File | Responsibility |
 |-------|------|----------------|
 | `/api/auth` | auth.js | `register`, `login`, `logout`, `me`, `PUT /settings` (per-user, e.g. `tcg_api_key`), `POST/DELETE /api-key` (read-only external key) |
-| `/api` | collection.js | Card `search`, `scan-match`, `collection/cert/:certNumber`; `collection` CRUD + `bulk` + `:id/market-value/fetch`; `locations` & `compartments` CRUD; `recommend(-batch)`, `apply-all`, `resort`; `stats`, `stats/history`, `stats/networth`, `export`, `import`; `cards/:id/price-history` |
-| `/api/decks` | decks.js | Deck CRUD, `:id/cards`, `:id/checkout`, `:id/return`, `:id/locations` (checkout/check-in locator payload) |
+| `/api` | collection.js | Card `search`, `scan-match`, `collection/cert/:certNumber`; `collection` CRUD + `bulk` + `:id/market-value/fetch`; `stats`, `stats/history`, `stats/networth`, `export`, `import`; `cards/:id/price-history` |
+| `/api/decks` | decks.js | Deck CRUD, `:id/cards`, `:id/checkout`, `:id/return`, `:id/locations` (checkout/check-in coverage payload) |
 | `/api/sets` | sets.js | Set catalog for dividers and scan scoping; non-English Pokémon set lists come from TCGdex, whose ids differ per language |
 | `/api/settings` | settings.js | App-wide settings (read any; write requires admin) |
 | `/api/shared` | shared.js | Public, read-only collection view by `share_token` (no auth) |
@@ -403,14 +402,13 @@ slabs. It is per-request and never swept: the only free provider meters at 100
 lookups a day. `frontend/src/utils/resolveCardPrice.js` mirrors the same order
 for cards not yet saved.
 
-### Storage & sorting engine
+### Card ordering
 
-`utils/compartmentSort.js` decides where a card physically files:
+`utils/cardSort.js` is the pure "how do I order cards" half of the old filing
+engine (the storage half — compartments, capacity, slot recommendation,
+location rules — was removed with the physical-location feature):
 
-- A **location** (binder/box/etc.) contains ordered **compartments** (binder pages / box rows).
-- `recommendSlot()` picks the compartment + slot for a card based on the location's `sort_order` scheme and per-compartment `rule_config` filters.
-- **Slot encoding**: a card's `position` is `slot * 1000` (slot 1 → 1000, slot 2 → 2000). `Math.floor(position / 1000)` recovers the human slot number. The gaps leave room for manual reordering.
-- Sort schemes are either `custom` (manual order, honored via stored `position`) or structured (name / set-number / price / type-color / language), optionally foil-aware (`foil_sorting`). Structured schemes also drive the visual set/category **dividers** in the binder view.
+- Sort schemes are structured (name / set-number / price / type-color / language), optionally foil-aware. The scheme list and category orderings live in `shared/sortSchemes.json` and `shared/cardOrder.json`; the frontend mirrors the same logic in `frontend/src/utils/cardSort.js` so list order never drifts between server and client.
 
 ---
 
@@ -421,10 +419,7 @@ for cards not yet saved.
 | `users` | `id`, `username`, `password_hash` (PBKDF2, iterations embedded), `role`, `share_token`, `share_enabled`, `tcg_api_key`, `psa_api_token`, `graded_price_api_key`, `api_key` (read-only external credential) |
 | `sessions` | `user_id`, `token`, `expires_at` — Bearer-token auth |
 | `card_cache` | Normalized card metadata keyed by provider `id`: `name` (searchable) and `printed_name` (as printed), `language`, `set_id`/`set_name`, `number`, `image_url`, `types`/`subtypes`/`supertype`, `rarity`, `cmc`, `color_identity`, `price_*` with `price_source`/`price_currency`, `tcgplayer_product_id`, `tcgplayer_url`/`cardmarket_url`, `game`, `last_updated`. Written only through `utils/cardCache.cacheNormalizedCards`, which upserts — `INSERT OR REPLACE` re-created the row and reset every column outside the provider's own list |
-| `collection` | One row per owned stack: `id` (entry_id), `user_id`, `card_id`→card_cache, `quantity`, `condition`, `printing`, `language`, `purchase_price`, `location_id`, `compartment_id`, `position`, `list_type` (`collection`/`trade`), `is_trade`, `game`, `added_at`; per-copy grading (`grader`, `grade`, `cert_number`) and per-copy value (`market_value`, `market_value_source`, `market_value_at`) |
-| `locations` | Physical containers: `user_id`, `name`, `type`, `sort_order`, `foil_sorting`, `rule_type`, `rule_config`, `game` |
-| `compartments` | Pages/rows within a location: `location_id`, `idx`, `label`, `capacity`, `rule_config` |
-| `compartment_assignments` | Maps sort categories to specific compartments (category→page filing) |
+| `collection` | One row per owned stack: `id` (entry_id), `user_id`, `card_id`→card_cache, `quantity`, `condition`, `printing`, `language`, `purchase_price`, `list_type` (`collection`/`trade`), `is_trade`, `game`, `added_at`; per-copy grading (`grader`, `grade`, `cert_number`) and per-copy value (`market_value`, `market_value_source`, `market_value_at`) |
 | `decks` | `user_id`, `name`, `description`, `checked_out`, `checked_out_at`, `created_at` |
 | `deck_cards` | Deck contents: `deck_id`, `card_id`, `quantity` |
 | `price_history` | Per-card price points over time, powering trend charts |
@@ -432,9 +427,8 @@ for cards not yet saved.
 | `app_settings` | App-wide key/value settings (e.g. registration toggle) |
 
 **Entry identity**: a `collection.id` (`entry_id`) uniquely identifies one
-physical stack. Features that track individual copies (checkout locator, storage
-highlighting) key on `entry_id`, never on `card_id + position` (which can collide
-across compartments).
+owned stack. Features that track individual copies (deck checkout coverage) key
+on `entry_id`, never on `card_id` alone.
 
 ---
 
@@ -452,14 +446,10 @@ code-split view components. `/share/:token` renders the public view without auth
 | `AddCards` | Wrapper toggling **CameraScanner** vs **CardSearch** |
 | `CameraScanner` | Camera capture, in-browser corner detection + dewarp, POST `/api/scan-match`, confidence gate + manual pick |
 | `CardSearch` | Name/number text search against the card APIs |
-| `CardInspectorModal` | Card detail: pricing, types, printing/rarity, location |
+| `CardInspectorModal` | Card detail: pricing, types, printing/rarity |
 | `CollectionList` | Browse/filter/sort the collection; bulk actions |
-| `LocationManager` | Manage containers; binder/box views; filing mode; storage select |
-| `CompartmentView` | Renders one compartment (binder pocket grid or box coverflow); highlights cards by `entry_id`; greys checked-out cards |
-| `CreateContainerModal` | New-container wizard |
 | `DeckBuilder` | Deck CRUD, composition charts, draw simulator, checkout/return |
-| `CheckoutWizardModal` | Checkout **and** check-in locator (mode prop): grouped by container→page, grid highlight, select-all per page/container/all |
-| `SortFilterBuilder` | Drag-and-drop sort scheme + filter rule builders |
+| `CheckoutWizardModal` | Checkout **and** check-in coverage checklist (mode prop): owned vs required vs in-use-elsewhere, with a missing count |
 | `CatalogPanel` | Scan catalogs: what is built per game/language, coverage against the provider's own totals, build/stop with live progress |
 | `Settings`, `AdminPanel`, `SharedCollection`, `PriceHistoryChart` | Preferences, user admin, public view, price charts |
 
@@ -477,14 +467,14 @@ in `shared/cardDetectPure.mjs`.
 
 ## Deck checkout / check-in
 
-Reserving a deck's physical cards. **Checkout and check-in never move cards in
-the DB** — a card's stored slot is both where you grab it and where it returns;
-only `decks.checked_out` changes.
+Reserving a deck's cards. **Checkout and check-in never move cards in the DB** —
+only `decks.checked_out` changes; "available" means owned minus copies already
+locked by other checked-out decks.
 
-- `PUT /api/decks/:id/checkout` validates availability (owned minus copies locked by other checked-out decks) and sets the flag.
-- `GET /api/decks/:id/locations` returns, per card, the specific stored copies to pull (`entry_id`, container, compartment display, slot from `position`) plus any `missing` count.
-- `GET /api/collection` annotates each entry with `checked_out_qty` (`checkedOutAllocation` greedily allocates checked-out decks' requirements onto owned entries), so `CompartmentView` greys those copies with an "In Play" badge.
-- `CheckoutWizardModal` renders that payload as a grouped checklist with the compartment grid highlighting the pulled cards; `PUT /api/decks/:id/return` flips the flag and reopens the same modal in reverse (`mode="checkin"`).
+- `PUT /api/decks/:id/checkout` validates availability and sets the flag.
+- `GET /api/decks/:id/locations` returns, per card, `owned_qty`, `required_qty`, `available` (owned minus copies locked elsewhere) and `missing`.
+- `GET /api/collection` annotates each entry with `checked_out_qty` (`checkedOutAllocation` greedily allocates checked-out decks' requirements onto owned entries), so the collection marks those copies with an "In Play" badge.
+- `CheckoutWizardModal` renders that payload as a per-card coverage checklist; `PUT /api/decks/:id/return` flips the flag and reopens the same modal in reverse (`mode="checkin"`).
 
 ---
 
@@ -493,7 +483,6 @@ only `decks.checked_out` changes.
 - **Backend has no auto-reload** in production/local `node src/server.js`; restart it after backend changes so new routes/data load. Frontend uses Vite HMR.
 - **SQLite runs in WAL mode** — checkpoint/stop before file-level backups so `-wal`/`-shm` are flushed.
 - **Everything is game-scoped** (`pokemon` | `mtg`); new card fields must be threaded through both `tcgApi.js` and `scryfallApi.js` normalization.
-- **`position = slot * 1000`** is the single source of truth for slot order; never assume packed array index equals slot.
 - **Scanning needs a catalog**: the two ONNX models identify nothing on their own, and there is no second matcher to fall back to. `/api/scan-match` answers `503 notBuilt` with the fix in the message rather than an empty candidate list, which reads to the user as "your card could not be identified". A catalog is per (game, language) and only as complete as the provider's data for that language.
 - **Frontend lint is strict**: CI runs `eslint --max-warnings 0`, so unused vars/imports and empty blocks fail the Docker build.
 

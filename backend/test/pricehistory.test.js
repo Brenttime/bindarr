@@ -31,6 +31,10 @@ async function main() {
   assert.strictEqual(await count(), 2);
 
   // 4. Returning to an earlier price is still a movement worth recording.
+  // Wait out the current millisecond: recorded_at is part of the primary key at
+  // millisecond resolution, and two movements in the same ms would collide and
+  // be silently dropped by OR IGNORE (a pre-existing timing flake, not a logic bug).
+  await new Promise(r => setTimeout(r, 5));
   assert.strictEqual(await recordPrice(CARD, 1.5), true, 'a move back down is still a move');
   assert.strictEqual(await count(), 3);
 

@@ -32,6 +32,27 @@ release also carries fuller notes on its
   (`shared/cardListText.js`) feeds the UI and the endpoint, and a test asserts
   the two copies never drift apart.
 
+### Removed
+- **Physical location tracking (the "Storage" tab).** Binders, boxes and other
+  containers, their pages/rows/slots, and the placement engine
+  (`compartmentSort.js`, `/api/locations`, `/api/compartments`, the
+  `locations` / `compartments` / `compartment_assignments` tables, and the
+  `location_id` / `compartment_id` / `position` columns on `collection`) are
+  gone. An upgrade rebuilds the `collection` table in place — every card, its
+  quantity, condition, price and grading data is preserved; only the
+  where-does-it-physically-live columns and the storage tables are dropped.
+  With it: the Storage tab and its UI (LocationManager, CompartmentView,
+  CreateContainerModal, the binder/box views and the SortFilterBuilder), the
+  setup wizard's storage step, the collection's location filter, the CSV's
+  location columns, the dashboard's location breakdown and unsorted count, the
+  card inspector's location picker, the shared-collection's location display,
+  and the settings' "show locations on shared links" toggle. **Deck checkout
+  is kept** and now works by coverage instead of physical location: the
+  checklist shows per card how many copies you own, how many other checked-out
+  decks have locked, and how many are still missing. Card *ordering*
+  (sort schemes) survives in `backend/src/utils/cardSort.js` /
+  `frontend/src/utils/cardSort.js`, shared with `shared/sortSchemes.json`.
+
 ## [1.8.1] - 2026-08-19
 
 ### Fixed

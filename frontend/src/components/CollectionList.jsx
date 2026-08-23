@@ -46,10 +46,9 @@ function Field({ label, children }) {
   );
 }
 
-function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter, setSelectedCardFilter, onNavigate, setSelectedLocationId, setFocusEntryId }) {
+function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter, setSelectedCardFilter }) {
   const { t } = useT();
   const [collection, setCollection] = useState([]);
-  const [locations, setLocations] = useState([]);
   const [setsList, setSetsList] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -74,7 +73,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // '' | 'pokemon' | 'mtg'. Falls back to a visible game if the Settings default
   // has since been hidden.
   const [gameFilter, setGameFilter] = useState(() => (isGameEnabled(localStorage.getItem('default_game')) ? localStorage.getItem('default_game') : defaultGameFilter()));
-  const [locationFilter, setLocationFilter] = useState('');
   const [rarityFilter, setRarityFilter] = useState('');
   const [conditionFilter, setConditionFilter] = useState('');
   const [graderFilter, setGraderFilter] = useState('');
@@ -98,12 +96,11 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // Multi-select / bulk actions — shared long-press + /api/collection/bulk logic.
   const {
     selectMode, setSelectMode, selectedIds, setSelectedIds, toggleSelect, selectAt, clearSelection, exitSelectMode,
-    bulkMoveTarget, setBulkMoveTarget, pressHandlers, longPressFired, runBulk,
+    pressHandlers, longPressFired, runBulk,
   } = useMultiSelect({ showToast, onChanged: () => { onUpdate(); fetchCollection(); } });
 
   useEffect(() => {
     fetchCollection();
-    fetchLocations();
     fetchSets();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statsTrigger, subTab, tradeOnly]);
@@ -129,18 +126,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       showToast(t('collection.errLoad'));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchLocations = async () => {
-    try {
-      const response = await fetch('/api/locations');
-      if (response.ok) {
-        const data = await response.json();
-        setLocations(data);
-      }
-    } catch (err) {
-      console.error('Error fetching locations:', err);
     }
   };
 
@@ -207,19 +192,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     else { setInspectorCard(item); setInspectorStartEdit(false); }
   };
 
-  const handleViewStorage = (card) => {
-    setInspectorCard(null);
-    if (setSelectedLocationId) {
-      setSelectedLocationId(card.location_id || 'unsorted');
-    }
-    if (setFocusEntryId) {
-      setFocusEntryId(card.entry_id || card.id);
-    }
-    if (onNavigate) {
-      onNavigate('storage');
-    }
-  };
-
   // Extract unique filter values from the loaded collection.
   const uniqueRarities = useMemo(
     () => Array.from(new Set(collection.map(item => item.rarity).filter(Boolean))).sort(),
@@ -247,14 +219,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   );
 
   const activeFilterCount = [
-    gameFilter, locationFilter, rarityFilter, conditionFilter, printingFilter,
+    gameFilter, rarityFilter, conditionFilter, printingFilter,
     setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, graderFilter,
     minPriceFilter, maxPriceFilter
   ].filter(v => v !== '').length + (tradeOnly ? 1 : 0) + (favoriteOnly ? 1 : 0);
 
   const clearAllFilters = () => {
     setSearchFilter('');
-    setGameFilter(''); setLocationFilter(''); setRarityFilter(''); setConditionFilter('');
+    setGameFilter(''); setRarityFilter(''); setConditionFilter('');
     setPrintingFilter(''); setSetFilter(''); setTypeFilter(''); setSupertypeFilter('');
     setCmcFilter(''); setLanguageFilter(''); setGraderFilter(''); setMinPriceFilter('');
     setMaxPriceFilter(''); setTradeOnly(false); setFavoriteOnly(false);
@@ -272,9 +244,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                             (item.printed_name || '').toLowerCase().includes(rawSearch) ||
                             (item.set_name || '').toLowerCase().includes(translatedSearch) ||
                             (item.number || '').includes(searchFilter);
-      const matchesLocation = locationFilter === '' ? true :
-                              locationFilter === 'unassigned' ? !item.location_id :
-                              item.location_id == locationFilter;
       // "All games" still means only the games the user has chosen to see: a hidden
       // game's cards stay in the collection (and in exports) but are out of view.
       const itemGame = item.game || 'pokemon';
@@ -299,7 +268,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       const matchesMinPrice = minPriceFilter === '' ? true : price >= parseFloat(minPriceFilter);
       const matchesMaxPrice = maxPriceFilter === '' ? true : price <= parseFloat(maxPriceFilter);
 
-      return matchesSearch && matchesGame && matchesLocation && matchesRarity && matchesCondition &&
+      return matchesSearch && matchesGame && matchesRarity && matchesCondition &&
              matchesPrinting && matchesSet && matchesType && matchesSupertype &&
              matchesCmc && matchesLanguage && matchesFavorite && matchesGrader && matchesMinPrice && matchesMaxPrice;
     });
@@ -310,7 +279,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       sortCardsByOrder(result, SORT_CRITERIA[sortBy] || SORT_CRITERIA['added-newest'], undefined, setsList);
     }
     return result;
-  }, [collection, searchFilter, gameFilter, locationFilter, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, graderFilter, minPriceFilter, maxPriceFilter, sortBy, setsList]);
+  }, [collection, searchFilter, gameFilter, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, graderFilter, minPriceFilter, maxPriceFilter, sortBy, setsList]);
 
   // Group duplicate cards if stack option is active
   const processedCollection = useMemo(() => {
@@ -479,16 +448,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                 </Field>
               )}
 
-              <Field label={t('collection.fLocation')}>
-                <select className="select-control" value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)}>
-                  <option value="">{t('collection.allLocations')}</option>
-                  <option value="unassigned">{t('bulk.unassignedPile')}</option>
-                  {locations.map(loc => (
-                    <option key={loc.id} value={loc.id}>{loc.name}</option>
-                  ))}
-                </select>
-              </Field>
-
               <Field label={t('collection.fSet')}>
                 <select className="select-control" value={setFilter} onChange={(e) => setSetFilter(e.target.value)}>
                   <option value="">{t('collection.allSets')}</option>
@@ -656,12 +615,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             showToast={showToast}
             onApplied={() => { clearSelection(); onUpdate(); fetchCollection(); }}
           />
-          <select className="select-control" value={bulkMoveTarget} onChange={(e) => setBulkMoveTarget(e.target.value)} style={{ fontSize: '0.72rem', maxWidth: '170px', padding: '0.3rem 0.4rem' }}>
-            <option value="">{t('bulk.moveToContainer')}</option>
-            <option value="unassign">{t('bulk.unassignedPile')}</option>
-            {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
-          <button className="btn btn-primary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!bulkMoveTarget || !selectedIds.size} onClick={() => runBulk('move', bulkMoveTarget === 'unassign' ? null : bulkMoveTarget)}>{t('bulk.applyMove')}</button>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <AddToDeckSelect
             onAdd={(id) => runBulk('add_to_deck', id)}
@@ -880,7 +833,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         onClose={() => { setInspectorCard(null); setInspectorStartEdit(false); }}
         onUpdate={onUpdate}
         showToast={showToast}
-        onViewStorage={handleViewStorage}
       />
     </div>
   );

@@ -907,30 +907,22 @@ function CameraScanner({ onAddSuccess, showToast }) {
           // price_trend is whichever finish the TCG API returned first (usually
           // Normal), not necessarily the Holofoil finish just chosen above —
           // resolve against the printing actually being recorded.
-          purchase_price: resolveCardPrice(card, autoPrinting),
-          location_id: null
+          purchase_price: resolveCardPrice(card, autoPrinting)
         })
       });
 
       if (response.ok) {
         const data = await response.json();
         const qtyLabel = qty > 1 ? `${qty}× ` : '';
-        const placementLabel = data.placement?.label || null;
-        if (placementLabel) {
-          showToast(t('scan.addedTo', { qty: qtyLabel, name: displayName(card), place: placementLabel }));
-        } else if (data.container_full) {
-          showToast(t('scan.addedFull', { qty: qtyLabel, name: displayName(card) }));
-        } else {
-          showToast(t('scan.autoAdded', { qty: qtyLabel, name: displayName(card), set: card.set_name }));
-        }
+        showToast(t('scan.autoAdded', { qty: qtyLabel, name: displayName(card), set: card.set_name }));
 
         // Append to recent scans history log. entry_id (the last inserted row)
         // lets the recent-scans price splitter target these exact entries and the
         // inspector edit/delete the entry. Carry the entry fields it was saved with.
         setRecentScans(prev => [{
-          ...card, card_id: card.id, placementLabel, entry_id: data.id,
+          ...card, card_id: card.id, entry_id: data.id,
           quantity: qty, condition: autoCondition, printing: autoPrinting,
-          language: autoLanguage, purchase_price: resolveCardPrice(card, autoPrinting), location_id: null,
+          language: autoLanguage, purchase_price: resolveCardPrice(card, autoPrinting),
         }, ...prev].slice(0, 10));
 
         // Brief confetti blast for ultra-rares
@@ -1449,28 +1441,20 @@ function CameraScanner({ onAddSuccess, showToast }) {
           condition,
           printing,
           language,
-          purchase_price: parseFloat(purchasePrice) || 0,
-          location_id: null
+          purchase_price: parseFloat(purchasePrice) || 0
         })
       });
 
       if (response.ok) {
         const data = await response.json();
-        const placementLabel = data.placement?.label || null;
-        if (placementLabel) {
-          showToast(t('scan.addedToPlain', { name: displayName(selectedCard), place: placementLabel }));
-        } else if (data.container_full) {
-          showToast(t('scan.addedFullPlain', { name: displayName(selectedCard) }));
-        } else {
-          showToast(t('search.addedToCollection', { name: displayName(selectedCard) }));
-        }
+        showToast(t('search.addedToCollection', { name: displayName(selectedCard) }));
 
         // Append to recent scans history. Carry entry_id + saved fields so the
         // strip supports tap-to-edit / long-press-delete like the auto-add path.
         setRecentScans(prev => [{
-          ...selectedCard, card_id: selectedCard.id, placementLabel, entry_id: data.id,
+          ...selectedCard, card_id: selectedCard.id, entry_id: data.id,
           quantity: parseInt(quantity, 10), condition, printing, language,
-          purchase_price: parseFloat(purchasePrice) || 0, location_id: null,
+          purchase_price: parseFloat(purchasePrice) || 0,
         }, ...prev].slice(0, 10));
 
         const rarity = (selectedCard.rarity || '').toLowerCase();

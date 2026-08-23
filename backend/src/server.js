@@ -28,7 +28,6 @@ const authRoutes = require('./routes/auth');
 const sharedRoutes = require('./routes/shared');
 const adminRoutes = require('./routes/admin');
 const collectionRoutes = require('./routes/collection');
-const storageRoutes = require('./routes/storage');
 const statsRoutes = require('./routes/stats');
 const importExportRoutes = require('./routes/importExport');
 const setsRoutes = require('./routes/sets');
@@ -238,8 +237,8 @@ db.initDb()
   .then(async () => {
     console.log('Database tables verified/created successfully.');
 
-    // Un-stack legacy multi-quantity entries so every copy is its own row (one
-    // physical card = one storage slot). No-op once migrated.
+    // Un-stack legacy multi-quantity entries so every copy is its own row.
+    // No-op once migrated.
     const { splitStackedEntries } = require('./utils/collectionHelpers');
     const splitCount = await splitStackedEntries(db);
     if (splitCount > 0) console.log(`Split ${splitCount} stacked collection copies into individual rows.`);
@@ -250,10 +249,6 @@ db.initDb()
     // provider none of its cards came from.
     await (await pokemonSetSource()).fetchAndCacheSets();
     await scryfallApi.fetchAndCacheSets();
-
-    // Load sets into compartmentSort memory cache
-    const { loadSetsCache } = require('./utils/compartmentSort');
-    await loadSetsCache(db);
 
     // Warm the scan models and catalogs. Two ONNX sessions plus an embedding table
     // take ~400 ms to load; paying that on the first scan instead would make the
@@ -382,14 +377,13 @@ app.use('/api/card-art', cardArtRoutes);
 // inside an async handler, which Express 4 does not catch: unhandled rejection,
 // and launch.js turns that into a process exit.
 //
-// The cost: /api/notes passed through the collection, storage and stats routers
+// The cost: /api/notes passed through the collection and stats routers
 // on its way to notes, so it ran authenticateToken — and its sessions⋈users
 // SELECT — four times per request.
 app.use('/api', authenticateToken);
 
 // --- AUTHENTICATED API ROUTES ---
 app.use('/api', collectionRoutes);
-app.use('/api', storageRoutes);
 app.use('/api', statsRoutes);
 app.use('/api', importExportRoutes);
 app.use('/api', notesRoutes);

@@ -2,7 +2,6 @@ const express = require('express');
 const db = require('../db');
 const cardApi = require('../utils/cardApi');
 const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
-const { compartmentLabel } = require('../utils/compartmentSort');
 const { validateDeckAddition } = require('../utils/deckRules');
 
 const router = express.Router();
@@ -135,80 +134,54 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Get physical locations for cards in a deck
+// Checkout coverage for a deck: how many of each card are available.
+// "Available" = owned minus copies already locked by other checked-out decks
+// (the same math PUT /:id/checkout validates against). The wizard turns this
+// into an in-collection vs. missing checklist.
 router.get('/:id/locations', async (req, res) => {
   const { id } = req.params;
   try {
     const deck = await db.get(`SELECT id FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (!deck) return res.status(404).json({ error: 'Deck not found' });
 
-    // Find how many of each card are in the deck
-    const requiredCards = await db.all(`SELECT card_id, quantity FROM deck_cards WHERE deck_id = ?`, [id]);
-    const requiredMap = new Map(requiredCards.map(r => [r.card_id, r.quantity]));
+    const cards = await db.all(`
+      SELECT
+        dc.card_id,
+        cc.name, cc.printed_name, cc.set_name, cc.number, cc.image_url,
+        dc.quantity AS required_qty,
+        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ? AND list_type = 'collection') AS owned_qty,
+        (SELECT COALESCE(SUM(dc2.quantity), 0) FROM deck_cards dc2 JOIN decks d2 ON dc2.deck_id = d2.id WHERE d2.checked_out = 1 AND d2.user_id = ? AND d2.id != ? AND dc2.card_id = dc.card_id) AS locked_qty
+      FROM deck_cards dc
+      JOIN card_cache cc ON dc.card_id = cc.id
+      WHERE dc.deck_id = ?
+    `, [req.user.id, req.user.id, id, id]);
 
-    // Find all owned instances of those cards
-    const query = `
-      SELECT 
-        c.id as entry_id, c.card_id, c.quantity as owned_qty, c.position, c.location_id, c.compartment_id,
-        cc.name as card_name, cc.printed_name, cc.set_name, cc.number,
-        l.name as location_name, l.type as location_type,
-        cp.label as compartment_label, cp.idx as compartment_idx
-      FROM collection c
-      JOIN card_cache cc ON c.card_id = cc.id
-      LEFT JOIN locations l ON c.location_id = l.id
-      LEFT JOIN compartments cp ON c.compartment_id = cp.id
-      WHERE c.user_id = ? AND c.list_type = 'collection' AND c.card_id IN (SELECT card_id FROM deck_cards WHERE deck_id = ?)
-      ORDER BY (c.location_id IS NOT NULL) DESC, cc.name ASC, c.added_at DESC
-    `;
-    const instances = await db.all(query, [req.user.id, id]);
-    
-    // Group them and figure out what to tell the user
-    // We only need to tell them where to find \`required\` amount.
-    const results = [];
-    for (const [cardId, requiredQty] of requiredMap.entries()) {
-      let needed = requiredQty;
-      const cardInstances = instances.filter(i => i.card_id === cardId);
-      
-      const foundLocations = [];
-      for (const inst of cardInstances) {
-        if (needed <= 0) break;
-        const take = Math.min(inst.owned_qty, needed);
-        needed -= take;
-        
-        const compDisplay = inst.compartment_idx !== null
-          ? compartmentLabel({ label: inst.compartment_label, idx: inst.compartment_idx }, inst.location_type)
-          : inst.compartment_label;
+    const results = cards.map(card => {
+      const available = card.owned_qty - card.locked_qty;
+      const missing = Math.max(0, card.required_qty - available);
+      return {
+        card_id: card.card_id,
+        name: card.name,
+        card_name: card.printed_name || card.name,
+        set_name: card.set_name,
+        number: card.number,
+        image_url: card.image_url,
+        required: card.required_qty,
+        owned: card.owned_qty,
+        in_use: card.locked_qty,
+        available: Math.max(0, available),
+        missing,
+        covered: missing === 0
+      };
+    });
 
-        foundLocations.push({
-          take,
-          // A pull list is display-only, so the name is the one printed on the card
-          // — nothing downstream keys off it.
-          card_name: inst.printed_name || inst.card_name,
-          set_name: inst.set_name,
-          number: inst.number,
-          location_name: inst.location_name || 'Unassigned Pile',
-          location_type: inst.location_type,
-          compartment_display: compDisplay,
-          position: inst.location_name ? inst.position : null,
-          location_id: inst.location_id,
-          compartment_id: inst.compartment_id,
-          entry_id: inst.entry_id
-        });
-      }
-      
-      results.push({
-        card_id: cardId,
-        required: requiredQty,
-        found: requiredQty - needed,
-        missing: needed,
-        locations: foundLocations
-      });
-    }
+    // Missing cards first (most missing on top), then alphabetical.
+    results.sort((a, b) => (b.missing - a.missing) || a.name.localeCompare(b.name));
 
     res.json(results);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Failed to retrieve card locations' });
+    res.status(500).json({ error: 'Failed to retrieve checkout coverage' });
   }
 });
 
@@ -378,7 +351,7 @@ router.put('/:id/checkout', async (req, res) => {
   }
 });
 
-// Return Deck (mark as returned to storage)
+// Return Deck (mark as back in the collection)
 router.put('/:id/return', async (req, res) => {
   const { id } = req.params;
   try {
@@ -390,7 +363,7 @@ router.put('/:id/return', async (req, res) => {
       `UPDATE decks SET checked_out = 0, checked_out_at = NULL WHERE id = ?`,
       [id]
     );
-    res.json({ message: 'Deck returned to storage successfully' });
+    res.json({ message: 'Deck returned to collection successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to return deck' });
