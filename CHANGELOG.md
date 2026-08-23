@@ -116,7 +116,7 @@ marketplace quoted, and a price standing in from the English printing says so.
   catalogue always came from pokemontcg.io, so an install switched by hand browsed a
   set list numbered by a provider none of its cards came from. The setting now drives
   the set sync too (218 English sets with release dates and series, against
-  pokemontcg.io's 174), and there is a selector in Admin → Instance Settings that
+  pokemontcg.io's 174), and there is a selector in Settings → Instance Settings that
   re-syncs the set list and rebuilds the TCGplayer product map behind it. Measured
   per card lookup: 57-206 ms via TCGdex against 971-1963 ms via pokemontcg.io, which
   also answers 5xx often enough to need a retry policy. TCGdex needs no API key and
@@ -150,7 +150,7 @@ marketplace quoted, and a price standing in from the English printing says so.
   Every install is offered it once, upgrades included — the wizard is where
   catalogs, games and the provider keys are explained, and an install that predates
   it has never seen that tour. "Skip setup" dismisses it permanently.
-- **Catalogs replace scan indexes** (Admin → Catalogs). A catalog is one game and
+- **Catalogs replace scan indexes** (Settings → Scan catalogs). A catalog is one game and
   language, and building it does two things: walk every set the provider lists and
   pull its cards into `card_cache`, then embed each one's artwork. Those were never
   one job before, and the first half was the half nobody ran — card caching used to

@@ -235,7 +235,7 @@ router.post('/scan-match', searchLimiter, async (req, res) => {
       // "your card could not be identified".
       return res.status(503).json({
         game, lang: langName, candidates: [], verified: false, notBuilt: true,
-        error: 'No scan catalog is built for this game and language yet. An admin can build one from Admin → Catalogs.',
+        error: 'No scan catalog is built for this game and language yet. An admin can build one from Settings → Scan catalogs.',
       });
     }
 
@@ -402,7 +402,7 @@ router.post('/scan-match', searchLimiter, async (req, res) => {
           ? 'The TCGplayer product map is still building — the ready-made Pokémon catalog cannot name'
             + ' its matches until it finishes.'
           : 'The ready-made Pokémon catalog recognises cards by TCGplayer product id, and this install'
-            + ' has no product map to look them up in. An admin can build it in Admin → Scan catalogs.',
+            + ' has no product map to look them up in. An admin can build it in Settings → Scan catalogs.',
       });
     }
 

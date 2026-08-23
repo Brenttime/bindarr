@@ -262,7 +262,7 @@ db.initDb()
       }
       // There is no second matcher to fall back to, so say what is missing. The
       // models alone identify nothing.
-      if (!warm.length) console.warn('cvScan: no catalogs present — scanning is disabled until one is built (Admin → Catalogs)');
+      if (!warm.length) console.warn('cvScan: no catalogs present — scanning is disabled until one is built (Settings → Scan catalogs)');
     } catch (err) {
       console.warn('cvScan unavailable:', err.message);
     }

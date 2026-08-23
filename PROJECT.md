@@ -314,7 +314,7 @@ no data in the chosen language raises an *absent* error rather than a failure �
 per-language provider coverage is patchy enough that counting gaps as failures
 would abort every non-English build partway through.
 
-Admin → Catalogs drives it (`/api/admin/catalogs`, admin-only) and lists what
+Settings → Scan catalogs drives it (`/api/admin/catalogs`, admin-only) and lists what
 exists **with a denominator**, because "built, 3,297 cards" reads as complete and
 is not. English is counted against the `sets` table; a non-English total comes
 from the provider's own set list for that language, so Japanese Pokémon reads
