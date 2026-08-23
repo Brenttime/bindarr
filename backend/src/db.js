@@ -620,61 +620,73 @@ async function initDb() {
   {
     const migCols = await all(`PRAGMA table_info(collection)`);
     const hasPlacement = migCols.some(c => ['location_id', 'compartment_id', 'position'].includes(c.name));
-    const locationsTable = await get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'locations'`);
-    if (hasPlacement || locationsTable) {
-    console.log('Removing storage schema (locations, compartments, placement columns)...');
-    const keepList = migCols
-      .filter(c => !['location_id', 'compartment_id', 'position'].includes(c.name))
-      .map(c => c.name)
-      .join(', ');
-    if (locationsTable) {
-      // The storage tables drop OUTSIDE any transaction: PRAGMA foreign_keys
-      // only takes effect when no transaction is open, and the drops need it
-      // off (compartment_assignments -> compartments -> locations).
-      await run(`PRAGMA foreign_keys = OFF`);
-      await run(`DROP TABLE IF EXISTS compartment_assignments`);
-      await run(`DROP TABLE IF EXISTS compartments`);
-      await run(`DROP TABLE IF EXISTS locations`);
-      await run(`PRAGMA foreign_keys = ON`);
+    const storageTables = await all(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('locations', 'compartments', 'compartment_assignments')
+    `);
+    if (hasPlacement || storageTables.length > 0) {
+      console.log('Removing storage schema (locations, compartments, placement columns)...');
+      const keepList = migCols
+        .filter(c => !['location_id', 'compartment_id', 'position'].includes(c.name))
+        .map(c => c.name)
+        .join(', ');
+
+      if (storageTables.length > 0) {
+        // The storage tables drop OUTSIDE any transaction: PRAGMA foreign_keys
+        // only takes effect when no transaction is open, and the drops need it
+        // off (compartment_assignments -> compartments -> locations). Always turn
+        // enforcement back on, including when a malformed legacy table fails to
+        // drop, so the process never continues with referential checks disabled.
+        await run(`PRAGMA foreign_keys = OFF`);
+        try {
+          await run(`DROP TABLE IF EXISTS compartment_assignments`);
+          await run(`DROP TABLE IF EXISTS compartments`);
+          await run(`DROP TABLE IF EXISTS locations`);
+        } finally {
+          await run(`PRAGMA foreign_keys = ON`);
+        }
+      }
       await run(`DROP INDEX IF EXISTS idx_collection_comp_user_qty`);
       await run(`DROP INDEX IF EXISTS idx_collection_loc_pos`);
-    }
-    if (hasPlacement) {
-      // Rebuild collection without the placement columns. keepList is built
-      // from the LIVE column list, so an old database missing some newer
-      // columns still copies over cleanly; the new table's defaults fill in.
-      await withTransaction(async () => {
-        await run(`DROP TABLE IF EXISTS collection_new`);
-        await run(`
-          CREATE TABLE collection_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            card_id TEXT NOT NULL,
-            quantity INTEGER DEFAULT 1,
-            condition TEXT CHECK(condition IN ('Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged')) DEFAULT 'Near Mint',
-            printing TEXT CHECK(printing IN ('Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo')) DEFAULT 'Normal',
-            language TEXT DEFAULT 'English',
-            purchase_price REAL,
-            favorite INTEGER DEFAULT 0,
-            is_trade INTEGER DEFAULT 0,
-            list_type TEXT DEFAULT 'collection',
-            game TEXT DEFAULT 'pokemon',
-            added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            notes TEXT DEFAULT '',
-            grader TEXT CHECK(grader IN ('Raw','PSA','BGS','CGC','SGC','TAG')) DEFAULT 'Raw',
-            grade REAL,
-            cert_number TEXT,
-            market_value REAL,
-            market_value_source TEXT,
-            market_value_at DATETIME,
-            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(card_id) REFERENCES card_cache(id)
-          )
-        `);
-        await run(`INSERT INTO collection_new (${keepList}) SELECT ${keepList} FROM collection`);
-        await run(`DROP TABLE collection`);
-        await run(`ALTER TABLE collection_new RENAME TO collection`);
-      });
-    }
+
+      if (hasPlacement) {
+        // Rebuild collection without the placement columns. keepList is built
+        // from the LIVE column list, so an old database missing some newer
+        // columns still copies over cleanly; the new table's defaults fill in.
+        await withTransaction(async () => {
+          await run(`DROP TABLE IF EXISTS collection_new`);
+          await run(`
+            CREATE TABLE collection_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              card_id TEXT NOT NULL,
+              quantity INTEGER DEFAULT 1,
+              condition TEXT CHECK(condition IN ('Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged')) DEFAULT 'Near Mint',
+              printing TEXT CHECK(printing IN ('Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo')) DEFAULT 'Normal',
+              language TEXT DEFAULT 'English',
+              purchase_price REAL,
+              favorite INTEGER DEFAULT 0,
+              is_trade INTEGER DEFAULT 0,
+              list_type TEXT DEFAULT 'collection',
+              game TEXT DEFAULT 'pokemon',
+              added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              notes TEXT DEFAULT '',
+              grader TEXT CHECK(grader IN ('Raw','PSA','BGS','CGC','SGC','TAG')) DEFAULT 'Raw',
+              grade REAL,
+              cert_number TEXT,
+              market_value REAL,
+              market_value_source TEXT,
+              market_value_at DATETIME,
+              user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+              FOREIGN KEY(card_id) REFERENCES card_cache(id)
+            )
+          `);
+          await run(`INSERT INTO collection_new (${keepList}) SELECT ${keepList} FROM collection`);
+          await run(`DROP TABLE collection`);
+          await run(`ALTER TABLE collection_new RENAME TO collection`);
+        });
+      }
+
       // The rebuild dropped collection's indexes with the old table; recreate
       // the two that outlived storage.
       await run(`CREATE INDEX IF NOT EXISTS idx_collection_user_game ON collection(user_id, game)`);

@@ -122,6 +122,67 @@ async function runTests() {
     console.error('FAIL: F2-TC10 -', err.message);
     throw err;
   }
+
+  // F2-TC11: Upgrade a legacy storage/notes schema without losing card data.
+  try {
+    await db.run(`CREATE TABLE locations (id INTEGER PRIMARY KEY, name TEXT)`);
+    await db.run(`CREATE TABLE compartments (id INTEGER PRIMARY KEY, location_id INTEGER)`);
+    await db.run(`CREATE TABLE compartment_assignments (compartment_id INTEGER, filter_value TEXT)`);
+    await db.run(`CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)`);
+    await db.run(`ALTER TABLE collection ADD COLUMN location_id INTEGER`);
+    await db.run(`ALTER TABLE collection ADD COLUMN compartment_id INTEGER`);
+    await db.run(`ALTER TABLE collection ADD COLUMN position REAL DEFAULT 0`);
+    await db.run(`INSERT INTO locations (id, name) VALUES (7, 'Legacy binder')`);
+    await db.run(`INSERT INTO compartments (id, location_id) VALUES (9, 7)`);
+    await db.run(`
+      INSERT INTO collection (
+        card_id, quantity, condition, printing, language, purchase_price,
+        favorite, is_trade, list_type, game, notes, grader, grade,
+        cert_number, market_value, market_value_source,
+        location_id, compartment_id, position
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'mtg-c3', 2, 'Lightly Played', 'Holofoil', 'English', 12.5,
+      1, 1, 'collection', 'mtg', 'keep this per-card note', 'PSA', 9,
+      'legacy-cert', 42, 'manual',
+      7, 9, 3
+    ]);
+
+    await db.initDb();
+
+    const migratedCols = await db.all(`PRAGMA table_info(collection)`);
+    for (const removed of ['location_id', 'compartment_id', 'position']) {
+      assert.ok(!migratedCols.some(c => c.name === removed), `${removed} should be removed`);
+    }
+    const remainingStorage = await db.all(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('locations', 'compartments', 'compartment_assignments', 'notes')
+    `);
+    assert.deepStrictEqual(remainingStorage, [], 'retired storage and notes tables should be removed');
+
+    const migrated = await db.get(`SELECT * FROM collection WHERE cert_number = ?`, ['legacy-cert']);
+    assert.ok(migrated, 'legacy collection row should survive migration');
+    assert.strictEqual(migrated.quantity, 2);
+    assert.strictEqual(migrated.condition, 'Lightly Played');
+    assert.strictEqual(migrated.printing, 'Holofoil');
+    assert.strictEqual(migrated.purchase_price, 12.5);
+    assert.strictEqual(migrated.notes, 'keep this per-card note');
+    assert.strictEqual(migrated.grade, 9);
+    assert.strictEqual(migrated.market_value, 42);
+    assert.strictEqual((await db.get(`PRAGMA foreign_keys`)).foreign_keys, 1);
+
+    // A partially removed legacy schema must also be cleaned up. Earlier code
+    // only looked for `locations`, leaving orphan compartment tables behind.
+    await db.run(`CREATE TABLE compartments (id INTEGER PRIMARY KEY)`);
+    await db.initDb();
+    const orphan = await db.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'compartments'`);
+    assert.strictEqual(orphan, undefined);
+    console.log('PASS: F2-TC11');
+  } catch (err) {
+    console.error('FAIL: F2-TC11 -', err.message);
+    throw err;
+  }
 }
 
 runTests()
