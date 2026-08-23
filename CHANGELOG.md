@@ -58,6 +58,9 @@ release also carries fuller notes on its
   (collection `notes` column, shown/edited in the card inspector) is a
   different thing and is kept; the card inspector's note label now uses its
   own `inspector.notes` key.
+- **Moxfield shortcut on the deck list.** The deck vault banner now has a
+  *Moxfield Sync* button next to *Create Deck* that jumps to Settings and
+  smooth-scrolls straight to the Moxfield Sync panel.
 
 ## [1.8.1] - 2026-08-19
 
