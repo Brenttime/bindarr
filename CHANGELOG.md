@@ -7,6 +7,20 @@ release also carries fuller notes on its
 ## [Unreleased]
 
 ### Added
+- **Card lists.** A new **Lists** tab for ManaBox-style wishlists, buylists and
+  missing-card lists — cards you track without owning. Each list is its own
+  named, colored, per-game set of cards with a *wanted* quantity (no deck
+  rules, no ownership ceiling). A list detail view shows how many copies of each
+  card you already own and the gap ("still missing N of M"), and a filter flips
+  between All / Missing-only / Owned. Create a list from a pasted card list in
+  the ManaBox/MTG Arena shape (`4 Lightning Bolt` or
+  `4 Lightning Bolt (JUD) 124` — unmatched lines are reported back), or grow it
+  by card search. Each list exports the same two text shapes the collection
+  uses — `qty Name` (vanilla) and `qty Name (SET) num` (detailed) — from the
+  detail view and at `GET /api/lists/:id/cardlist?style=plain|detailed`, so a
+  list pastes into ManaBox, Moxfield or TCGplayer Mass Entry exactly like the
+  collection export. Backend routes at `/api/lists` (list + card CRUD); data in
+  the new `card_lists` / `list_cards` tables.
 - **Card list export.** The collection now copies itself as a plain text card
   list — `4 Lightning Bolt` or, with set code and collector number,
   `4 Lightning Bolt (JUD) 124` — the shape ManaBox, Moxfield and TCGplayer

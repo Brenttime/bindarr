@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { LayoutDashboard, Database, MapPin, Sparkles, Settings as SettingsIcon, LogOut, ShieldAlert, Plus, Swords, StickyNote } from 'lucide-react';
+import { LayoutDashboard, Database, MapPin, Sparkles, Settings as SettingsIcon, LogOut, ShieldAlert, Plus, Swords, StickyNote, ListChecks } from 'lucide-react';
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
@@ -16,6 +16,7 @@ const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const SetupWizard = lazy(() => import('./components/SetupWizard'));
 const SharedCollection = lazy(() => import('./components/SharedCollection'));
 const DeckBuilder = lazy(() => import('./components/DeckBuilder'));
+const Lists = lazy(() => import('./components/Lists'));
 const Notes = lazy(() => import('./components/Notes'));
 
 class ErrorBoundary extends React.Component {
@@ -269,6 +270,8 @@ function App() {
         );
       case 'deckbuilder':
         return <DeckBuilder showToast={showToast} />;
+      case 'lists':
+        return <Lists showToast={showToast} />;
       case 'notes':
         return <Notes showToast={showToast} />;
       case 'settings':
@@ -332,6 +335,14 @@ function App() {
           >
             <Swords size={18} />
             <span>{t('nav.deckBuilder')}</span>
+          </button>
+
+          <button
+            className={`nav-tab ${activeTab === 'lists' ? 'active' : ''}`}
+            onClick={() => goTab('lists')}
+          >
+            <ListChecks size={18} />
+            <span>{t('nav.lists')}</span>
           </button>
 
           <button

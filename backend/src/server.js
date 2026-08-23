@@ -33,6 +33,7 @@ const statsRoutes = require('./routes/stats');
 const importExportRoutes = require('./routes/importExport');
 const setsRoutes = require('./routes/sets');
 const decksRoutes = require('./routes/decks');
+const listsRoutes = require('./routes/lists');
 const settingsRoutes = require('./routes/settings');
 const notesRoutes = require('./routes/notes');
 const cardArtRoutes = require('./routes/cardArt');
@@ -394,6 +395,7 @@ app.use('/api', importExportRoutes);
 app.use('/api', notesRoutes);
 app.use('/api/sets', setsRoutes);
 app.use('/api/decks', decksRoutes);
+app.use('/api/lists', listsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/moxfield', moxfieldRoutes);
 

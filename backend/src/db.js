@@ -378,6 +378,35 @@ async function initDb() {
     )
   `);
 
+  // Card lists: ManaBox-style wishlists / buylists / missing-card lists — cards
+  // the user tracks but does not necessarily own. Deliberately NOT the
+  // collection table (no location, condition or price bookkeeping) and NOT a
+  // deck (no format, 4-copy rule or checkout): a list is a plain quantity-per-
+  // card set. Quantities are "wanted" amounts with no ownership ceiling — a
+  // buylist wants the card regardless of what is already owned.
+  await run(`
+    CREATE TABLE IF NOT EXISTS card_lists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      accent_color TEXT DEFAULT '#10b981',
+      game TEXT DEFAULT 'pokemon',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS list_cards (
+      list_id INTEGER NOT NULL,
+      card_id TEXT NOT NULL,
+      quantity INTEGER DEFAULT 1,
+      PRIMARY KEY(list_id, card_id),
+      FOREIGN KEY(list_id) REFERENCES card_lists(id) ON DELETE CASCADE
+    )
+  `);
+
   await run(`
     CREATE TABLE IF NOT EXISTS notes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

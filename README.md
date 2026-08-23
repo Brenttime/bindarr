@@ -31,6 +31,7 @@ Try it without installing anything at **[thenotoriousjeremy.github.io/bindarr](h
 - **Camera scanning** — photograph a card and the server identifies it from the image alone. Works for Magic and Pokémon.
 - **Physical location tracking** — binders by page and slot (1–9), boxes by row and divider, with a page-flip binder view. Drag cards between pockets to arrange a binder, or file them by tapping on a phone.
 - **Deck checkout** — reserve a deck's cards and get a checklist of exactly which slot each one sits in, then the same list in reverse when you put them back.
+- **Card lists** — ManaBox-style wishlists, buylists and missing-card lists: named lists of cards you track without owning, with per-card wanted quantities, an owned-vs-missing readout, and the same text export the collection uses (`qty Name` / `qty Name (SET) num`). Create one from a pasted list or grow it by searching.
 - **Search and bulk add** — search or browse a whole set with multi-select; pin a set and add by collector number one keystroke at a time.
 - **Dashboard** — collection value, 7/30-day trends, rarity and type breakdowns, set completion.
 - **Graded slabs** — record grader, grade and cert number per copy (PSA cert lookup fills them in), and give a slab its own value instead of the raw card's price.
