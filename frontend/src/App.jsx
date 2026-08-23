@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, ShieldAlert, Plus, Swords, ListChecks } from 'lucide-react';
+import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, Plus, Swords, ListChecks } from 'lucide-react';
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
@@ -11,7 +11,6 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const AddCards = lazy(() => import('./components/AddCards'));
 const CollectionList = lazy(() => import('./components/CollectionList'));
 const Settings = lazy(() => import('./components/Settings'));
-const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const SetupWizard = lazy(() => import('./components/SetupWizard'));
 const SharedCollection = lazy(() => import('./components/SharedCollection'));
 const DeckBuilder = lazy(() => import('./components/DeckBuilder'));
@@ -260,8 +259,6 @@ function App() {
         return <Lists showToast={showToast} />;
       case 'settings':
         return <Settings user={user} onUpdateUser={handleUpdateUser} showToast={showToast} target={settingsTarget} />;
-      case 'admin':
-        return <AdminPanel showToast={showToast} />;
       default:
         return <Dashboard statsTrigger={statsTrigger} onNavigate={goTab} onUpdate={triggerRefresh} showToast={showToast} />;
     }
@@ -329,15 +326,6 @@ function App() {
             <SettingsIcon size={18} />
             <span>{t('nav.settings')}</span>
           </button>
-          {user.role === 'admin' && (
-            <button 
-              className={`nav-tab ${activeTab === 'admin' ? 'active' : ''}`}
-              onClick={() => goTab('admin')}
-            >
-              <ShieldAlert size={18} style={{ color: 'var(--accent-red)' }} />
-              <span>{t('nav.admin')}</span>
-            </button>
-          )}
         </nav>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>

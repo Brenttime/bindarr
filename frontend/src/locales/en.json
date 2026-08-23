@@ -73,7 +73,6 @@
   "mfx.errAdd": "Could not add that Moxfield author.",
   "mfx.errGeneric": "Something went wrong talking to the Moxfield sync.",
   "nav.settings": "Settings",
-  "nav.admin": "Admin",
   "header.greeting": "Hello,",
   "header.logOut": "Log Out",
   "role.admin": "admin",
