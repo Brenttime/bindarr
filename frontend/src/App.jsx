@@ -99,6 +99,10 @@ function App() {
   const [selectedCardFilter, setSelectedCardFilter] = useState('');
   const [toast, setToast] = useState(null);
   const [statsTrigger, setStatsTrigger] = useState(0);
+  // Deep-link into a Settings panel when another tab jumps us there
+  // (e.g. the deck list's "Moxfield Sync" button). Consumed on the next
+  // Settings mount, then cleared.
+  const [settingsTarget, setSettingsTarget] = useState(null);
 
   const tabGuardRef = useRef(null);
 
@@ -108,7 +112,7 @@ function App() {
   // switch pushes a fresh entry so the back button walks through tab history.
   // Disposing with history.back() would race during rapid switches and navigate
   // the browser past the app origin into about:blank.
-  const goTab = (tab) => {
+  const goTab = (tab, target) => {
     if (tab === activeTab) return;
     const prev = activeTab;
     tabGuardRef.current = pushBackGuard(() => {
@@ -116,6 +120,7 @@ function App() {
       setActiveTab(prev);
     });
     setActiveTab(tab);
+    setSettingsTarget(tab === 'settings' ? target : null);
   };
 
   // Detect public share route on load
@@ -250,11 +255,11 @@ function App() {
           />
         );
       case 'deckbuilder':
-        return <DeckBuilder showToast={showToast} />;
+        return <DeckBuilder showToast={showToast} onNavigate={goTab} />;
       case 'lists':
         return <Lists showToast={showToast} />;
       case 'settings':
-        return <Settings user={user} onUpdateUser={handleUpdateUser} showToast={showToast} />;
+        return <Settings user={user} onUpdateUser={handleUpdateUser} showToast={showToast} target={settingsTarget} />;
       case 'admin':
         return <AdminPanel showToast={showToast} />;
       default:

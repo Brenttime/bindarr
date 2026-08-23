@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Zap, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Zap, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { translateJapaneseName } from '../utils/langHelper';
@@ -33,7 +33,7 @@ const newDeckDefaults = (game) => (game === 'mtg'
   ? { format: 'Commander / EDH', targetSize: 100 }
   : { format: 'Standard', targetSize: 60 });
 
-function DeckBuilder({ showToast }) {
+function DeckBuilder({ showToast, onNavigate }) {
   const { t } = useT();
   const [decks, setDecks] = useState([]);
   const [activeDeck, setActiveDeck] = useState(null);
@@ -789,13 +789,22 @@ function DeckBuilder({ showToast }) {
                 {t('deck.vaultSubtitle')}
               </p>
             </div>
-            <button 
-              className="btn btn-primary" 
-              onClick={() => setShowCreateModal(true)}
-              style={{ padding: '0.6rem 1.25rem', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 14px rgba(234, 179, 8, 0.25)' }}
-            >
-              <Plus size={18} /> {t('deck.createDeck')}
-            </button>
+            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => onNavigate?.('settings', { panel: 'moxfield' })}
+                style={{ padding: '0.6rem 1.1rem', fontSize: '0.9rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <Globe size={18} /> {t('deck.moxfieldSync')}
+              </button>
+              <button 
+                className="btn btn-primary" 
+                onClick={() => setShowCreateModal(true)}
+                style={{ padding: '0.6rem 1.25rem', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 14px rgba(234, 179, 8, 0.25)' }}
+              >
+                <Plus size={18} /> {t('deck.createDeck')}
+              </button>
+            </div>
           </div>
 
           {/* Search, Filters, Sorting & View Toolbar */}

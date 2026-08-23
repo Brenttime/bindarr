@@ -49,7 +49,7 @@ function KeyField({ id, label, hint, link, linkLabel, value, onChange, disabled,
   );
 }
 
-function Settings({ user, onUpdateUser, showToast }) {
+function Settings({ user, onUpdateUser, showToast, target }) {
   const { locale, setLocale, t } = useT();
   const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
@@ -76,6 +76,18 @@ function Settings({ user, onUpdateUser, showToast }) {
   const [versionInfo, setVersionInfo] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [backendReachable, setBackendReachable] = useState(true);
+
+  // Deep link: a jump from another tab (e.g. the deck list's Moxfield Sync
+  // button) asks us to scroll to a panel once we have rendered.
+  useEffect(() => {
+    if (!target) return;
+    const id = target === 'moxfield' ? 'moxfield-panel' : null;
+    if (!id) return;
+    const timer = setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [target]);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -755,7 +767,7 @@ function Settings({ user, onUpdateUser, showToast }) {
         </div>
 
         {/* Moxfield Sync Panel */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        <div id="moxfield-panel" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', scrollMarginTop: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
             <Globe size={20} style={{ color: 'var(--type-grass, #4ade80)' }} />
             <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('mfx.title')}</h3>
