@@ -456,7 +456,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
               </div>
 
               <div className="form-group">
-                <label>{t('nav.notes')}</label>
+                <label>{t('inspector.notes')}</label>
                 <textarea
                   className="input-control"
                   value={notes}

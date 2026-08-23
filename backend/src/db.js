@@ -359,19 +359,6 @@ async function initDb() {
     )
   `);
 
-  await run(`
-    CREATE TABLE IF NOT EXISTS notes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      title TEXT DEFAULT '',
-      body TEXT DEFAULT '',
-      pinned INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
   // --- MIGRATIONS ---
   // When each game's price sweep last ran. Scryfall updates prices once a day,
   // so a sweep more often than that cannot return anything new — and the boot
@@ -698,6 +685,17 @@ async function initDb() {
       `);
       console.log('Storage schema removed; collection rows preserved.');
     }
+  }
+
+  // --- Notes removal (2026-08) ---
+  // The standalone scratchpad Notes feature (its own `notes` table) is gone.
+  // Databases created before removal still hold the table. It is not referenced
+  // by any foreign key, so it drops cleanly with foreign_keys on. Idempotent.
+  const notesTable = await get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'notes'`);
+  if (notesTable) {
+    console.log('Removing notes table...');
+    await run(`DROP TABLE IF EXISTS notes`);
+    console.log('Notes table removed.');
   }
 
   const usersCols = await all(`PRAGMA table_info(users)`);

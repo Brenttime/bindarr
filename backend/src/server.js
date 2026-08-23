@@ -34,7 +34,6 @@ const setsRoutes = require('./routes/sets');
 const decksRoutes = require('./routes/decks');
 const listsRoutes = require('./routes/lists');
 const settingsRoutes = require('./routes/settings');
-const notesRoutes = require('./routes/notes');
 const cardArtRoutes = require('./routes/cardArt');
 const { authenticateToken } = require('./middleware/auth');
 const moxfieldRoutes = require('./routes/moxfield');
@@ -377,16 +376,14 @@ app.use('/api/card-art', cardArtRoutes);
 // inside an async handler, which Express 4 does not catch: unhandled rejection,
 // and launch.js turns that into a process exit.
 //
-// The cost: /api/notes passed through the collection and stats routers
-// on its way to notes, so it ran authenticateToken — and its sessions⋈users
-// SELECT — four times per request.
+// The cost: bare '/api' mounts stack up, so a late handler re-runs the earlier
+// routers' authenticateToken (and its sessions⋈users SELECT) on its way past.
 app.use('/api', authenticateToken);
 
 // --- AUTHENTICATED API ROUTES ---
 app.use('/api', collectionRoutes);
 app.use('/api', statsRoutes);
 app.use('/api', importExportRoutes);
-app.use('/api', notesRoutes);
 app.use('/api/sets', setsRoutes);
 app.use('/api/decks', decksRoutes);
 app.use('/api/lists', listsRoutes);

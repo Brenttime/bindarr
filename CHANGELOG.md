@@ -52,6 +52,12 @@ release also carries fuller notes on its
   decks have locked, and how many are still missing. Card *ordering*
   (sort schemes) survives in `backend/src/utils/cardSort.js` /
   `frontend/src/utils/cardSort.js`, shared with `shared/sortSchemes.json`.
+- **The Notes tab.** The standalone scratchpad notebook (`/api/notes`, the
+  `notes` table, `Notes.jsx`) is gone — with it the `notes` tab, its demo
+  fixtures/mocks, and its i18n keys. The separate **per-card note field**
+  (collection `notes` column, shown/edited in the card inspector) is a
+  different thing and is kept; the card inspector's note label now uses its
+  own `inspector.notes` key.
 
 ## [1.8.1] - 2026-08-19
 
