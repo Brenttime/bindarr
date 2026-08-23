@@ -401,7 +401,7 @@ async function initDb() {
   // catalog and every collection row was built against one of those numberings.
   // Flipping an existing install underneath its own data is how the set list ends
   // up describing sets none of its cards belong to. An upgrade keeps what it was
-  // built with; the admin can switch deliberately in Admin → Instance Settings,
+  // built with; the admin can switch deliberately in Settings → Instance Settings,
   // which re-syncs the set table and rebuilds the product map behind it.
   //
   // "Already has data" is read off the Pokémon set catalogue and card cache, not

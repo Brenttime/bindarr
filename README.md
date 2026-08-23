@@ -169,7 +169,7 @@ docker exec bindarr node scripts/fetch-models.mjs
 startup and scanning returns a clear error instead of guesses.
 
 **2. A catalog.** The fingerprint has to be compared against something. Build one
-per game and language from **Admin → Catalogs**: it downloads that game's card
+per game and language from **Settings → Scan catalogs**: it downloads that game's card
 list and fingerprints every card's artwork — hours for a full English game, and
 about 5 MB of output per 10,000 cards. Progress is live, stopping keeps what it
 has, and resuming reuses it. `--catalogs` on the fetch command above grabs

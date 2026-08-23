@@ -1,10 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Layers, Languages, Globe } from 'lucide-react';
 import { GAMES, enabledGames, setGameEnabled, gameOptions, defaultGame } from '../utils/games';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 import { buildCardListText } from '../utils/cardList';
 import { REPO_URL } from '../utils/repo';
 import MoxfieldPanel from './MoxfieldPanel';
+
+// Admin-only surface, code-split like the view components so its heavy deps
+// (catalog management, backups) only load for admins on the Settings tab.
+const AdminPanel = lazy(() => import('./AdminPanel'));
 
 // One secret: what it is called, what it buys you, and where to get one. Three of
 // these replaced three near-identical panels, so a fourth provider is a few lines
@@ -1096,6 +1100,14 @@ function Settings({ user, onUpdateUser, showToast, target }) {
             </a>
           </div>
         </div>
+
+        {/* Admin section: lives inside Settings (no separate tab). Rendered only
+            for admin users; the panel itself is code-split behind Suspense. */}
+        {user?.role === 'admin' && (
+          <Suspense fallback={null}>
+            <AdminPanel showToast={showToast} />
+          </Suspense>
+        )}
       </div>
     </div>
   );
