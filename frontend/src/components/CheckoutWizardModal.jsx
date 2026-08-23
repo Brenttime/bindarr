@@ -14,7 +14,7 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
   const kind = mode === 'checkin' ? 'checkin' : 'checkout';
   const cancel = onCancel || onClose;
 
-  const cards = locationsData || [];
+  const cards = Array.isArray(locationsData) ? locationsData : (locationsData?.cards || []);
   const coveredCount = cards.filter(c => c.covered).length;
   const totalCards = cards.length;
   const missingCards = cards.filter(c => c.missing > 0);
