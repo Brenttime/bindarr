@@ -290,11 +290,11 @@ function DeckBuilder({ showToast, onNavigate }) {
         showToast(t('deck.cardRemoved'));
         loadDeckDetails(activeDeck.id);
       } else {
-        showToast(t('loc.errRemoveCard'));
+        showToast(t('deck.errRemoveCard'));
       }
     } catch (err) {
       console.error(err);
-      showToast(t('loc.errRemoveCard'));
+      showToast(t('deck.errRemoveCard'));
     }
   };
 
@@ -792,7 +792,7 @@ function DeckBuilder({ showToast, onNavigate }) {
             <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
               <button
                 className="btn btn-secondary"
-                onClick={() => onNavigate?.('settings', { panel: 'moxfield' })}
+                onClick={() => onNavigate?.('settings', 'moxfield')}
                 style={{ padding: '0.6rem 1.1rem', fontSize: '0.9rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
                 <Globe size={18} /> {t('deck.moxfieldSync')}
@@ -1370,7 +1370,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                   disabled={checkingOut}
                   style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', border: '1px solid rgba(234,179,8,0.4)', color: '#eab308' }}
                 >
-                  <PackageCheck size={14} /> Return to Storage
+                  <PackageCheck size={14} /> {t('deck.return')}
                 </button>
               ) : (
                 <button

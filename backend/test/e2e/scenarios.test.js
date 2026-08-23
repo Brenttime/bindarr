@@ -124,7 +124,7 @@ async function runTests() {
       throw err;
     }
 
-    // F6-TC4: set/number code -> API Search -> Add -> Compartment recommendation
+    // F6-TC4: set/number code -> API search result
     try {
       const scanText = 'ELD/171';
       // Parse a set code + collector number

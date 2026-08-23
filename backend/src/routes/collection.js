@@ -518,8 +518,8 @@ router.get('/collection', async (req, res) => {
 });
 
 // Shared by the single add below and the bulk add after it, so one card and two
-// hundred cards travel exactly the same path (cache lookup, compartment
-// resolution, rebalance, price history). Throws AddCardError for caller-visible
+// hundred cards travel exactly the same path (cache lookup, localization,
+// insertion, price history). Throws AddCardError for caller-visible
 // failures; anything else is a genuine 500.
 class AddCardError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -699,8 +699,8 @@ router.post('/collection/bulk-add', async (req, res) => {
   if (shared.cert_number) {
     return res.status(400).json({ error: 'A certification number applies to a single card. Add graded cards one at a time.' });
   }
-  // Sequential on purpose: placement resolves against the rows already inserted,
-  // so adds must not race each other for the same compartment slot.
+  // Sequential on purpose: preserve input order and avoid overlapping cache
+  // hydration/insertion work for duplicate cards in the same request.
   const added = [];
   const failed = [];
   for (const card_id of card_ids) {

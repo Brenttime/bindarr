@@ -26,7 +26,7 @@ router.get('/:share_token', async (req, res) => {
       filterSql += ` AND c.list_type = 'collection'`;
     }
 
-    // Retrieve their collection without private fields (locations, purchase price, ROI)
+    // Retrieve their collection without private fields (purchase price, ROI)
     const query = `
       SELECT
         c.id as entry_id,

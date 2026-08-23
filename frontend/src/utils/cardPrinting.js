@@ -1,5 +1,5 @@
 // Single source of truth for how a card's printing/finish is displayed across
-// every view (Collection gallery/list, Storage visualizers, inspectors).
+// every view (Collection gallery/list, deck views, inspectors).
 //
 // Previously each view invented its own badge text ("HOLO" vs "Holo"), colors
 // (amber/blue vs amber/gray), and foil overlay treatment, so the same card

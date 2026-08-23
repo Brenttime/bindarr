@@ -548,7 +548,6 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
         onClose={() => setInspectorCard(null)}
         onUpdate={onUpdate}
         showToast={showToast}
-        onViewStorage={undefined}
       />
     </div>
   );

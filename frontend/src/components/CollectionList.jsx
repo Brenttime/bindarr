@@ -17,8 +17,8 @@ import CardImage from './CardImage';
 
 const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' };
 
-// Maps each Sort By option to sortCardsByOrder criteria so ordering matches the
-// storage engine (set = chronological via setsList, type = POKEMON_TYPE_ORDER).
+// Maps each Sort By option to sortCardsByOrder criteria so ordering remains
+// consistent (set = chronological via setsList, type = POKEMON_TYPE_ORDER).
 // 'qty-desc' isn't a card-order scheme, handled separately.
 const SORT_CRITERIA = {
   'added-newest': [{ by: 'added_at', dir: 'desc' }, { by: 'entry_id', dir: 'desc' }],
@@ -658,7 +658,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                     <div className="tcg-card-quantity-tag">x{item.quantity}</div>
                   )}
 
-                  {/* Rarity badge (shared tier system, matches Storage view) */}
+                  {/* Rarity badge (shared tier system) */}
                   <span style={{
                     position: 'absolute',
                     top: '6px',

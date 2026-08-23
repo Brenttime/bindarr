@@ -101,7 +101,7 @@ function App() {
   const [statsTrigger, setStatsTrigger] = useState(0);
   // Deep-link into a Settings panel when another tab jumps us there
   // (e.g. the deck list's "Moxfield Sync" button). Consumed on the next
-  // Settings mount, then cleared.
+  // Settings mount. Navigating anywhere else clears it.
   const [settingsTarget, setSettingsTarget] = useState(null);
 
   const tabGuardRef = useRef(null);
