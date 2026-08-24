@@ -1210,7 +1210,7 @@ function DeckBuilder({ showToast, onNavigate }) {
               <div>
                 <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   {activeDeck.name}
-                  <span style={{ fontSize: '0.8rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--type-grass)' : 'var(--accent-yellow)', fontWeight: 600 }}>
+                  <span style={{ fontSize: '0.8rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--accent-yellow)', fontWeight: 600 }}>
                     ({totalDeckCardsCount}/{targetDeckCardsCount} cards)
                   </span>
                   {activeDeck.checked_out ? (
@@ -1493,7 +1493,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   <h3 style={{ fontSize: '0.95rem', color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
                     {totalDeckCardsCount === targetDeckCardsCount ? (
-                      <CheckCircle size={15} style={{ color: 'var(--type-grass)' }} />
+                      <CheckCircle size={15} style={{ color: 'var(--success)' }} />
                     ) : (
                       <AlertTriangle size={15} style={{ color: 'var(--accent-yellow)' }} />
                     )}
@@ -1503,7 +1503,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.8rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                       <span>{t('deck.targetDeckSize')}</span>
-                      <strong style={{ color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--type-grass)' : 'var(--text-strong)' }}>{totalDeckCardsCount}/{targetDeckCardsCount} {t('deck.cardCapacity')}</strong>
+                      <strong style={{ color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--text-strong)' }}>{totalDeckCardsCount}/{targetDeckCardsCount} {t('deck.cardCapacity')}</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                       <span>{t('deck.uniqueCards')}</span>
@@ -1950,7 +1950,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   <span>{t('deck.availabilityBreakdown')}</span>
                   <span style={{ color: 'var(--accent-yellow)', fontWeight: 700 }}>
-                    {t('deck.fullyOwnedSpecies', { owned: importComparison.filter(i => i.status === 'full').length, total: importComparison.length })}
+                    {t('deck.fullyOwnedCards', { owned: importComparison.filter(i => i.status === 'full').length, total: importComparison.length })}
                   </span>
                 </div>
                 <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-sm)', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '180px', overflowY: 'auto' }}>
@@ -1965,7 +1965,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                           fontWeight: 700,
                           fontSize: '0.65rem',
                           background: item.status === 'full' ? 'rgba(74, 222, 128, 0.15)' : item.status === 'partial' ? 'rgba(234, 179, 8, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                          color: item.status === 'full' ? 'var(--type-grass)' : item.status === 'partial' ? 'var(--accent-yellow)' : 'var(--accent-red)',
+                          color: item.status === 'full' ? 'var(--success)' : item.status === 'partial' ? 'var(--accent-yellow)' : 'var(--accent-red)',
                           border: item.status === 'full' ? '1px solid rgba(74, 222, 128, 0.3)' : item.status === 'partial' ? '1px solid rgba(234, 179, 8, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)'
                         }}>
                           {item.status === 'full' ? `Owned (${item.ownedQty})` : item.status === 'partial' ? `Partial (${item.ownedQty}/${item.requestedQty})` : `Missing (0)`}

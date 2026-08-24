@@ -2,7 +2,6 @@
   "id": 4,
   "name": "Demo Deck",
   "description": "Sample deck for the demo",
-  "game": "mtg",
   "format": "Standard",
   "category": "Showcase",
   "accent_color": "#eab308",

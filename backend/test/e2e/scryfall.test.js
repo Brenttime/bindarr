@@ -98,18 +98,26 @@ async function runTests() {
 
   try {
     await waitForServer(port);
-    const adminId = await waitForDatabase();
+    await waitForDatabase();
 
-    // Insert a valid session token for authentication
-    const token = 'test-token-123';
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 1);
-    await db.run(
-      `INSERT OR REPLACE INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`,
-      [token, adminId, expiresAt.toISOString()]
-    );
-
-    const authHeaders = { 'Authorization': `Bearer ${token}` };
+    // Each case force-kills and restarts the server against the same WAL-mode
+    // database. Log in through the process under test after every restart so the
+    // auth fixture is committed by that live connection; cross-process session
+    // inserts were the root of F3-TC5's repeatable 401 masquerading as a mapping
+    // failure.
+    let authHeaders = null;
+    const refreshSession = async () => {
+      const login = await fetch(`http://localhost:${port}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'test-admin-password' })
+      });
+      const raw = await login.text();
+      assert.strictEqual(login.status, 200, `test login returned ${login.status}: ${raw}`);
+      const token = JSON.parse(raw).token;
+      authHeaders = { 'Authorization': `Bearer ${token}` };
+    };
+    await refreshSession();
 
     // F3-TC1: Verify search proxy to Scryfall API by name
     try {
@@ -151,6 +159,7 @@ async function runTests() {
       });
 
       await waitForServer(port);
+      await refreshSession();
 
       // Search Lightning Bolt which is already cached in F3-TC2? No, Black Lotus was cached.
       const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lotus`, { headers: authHeaders });
@@ -177,6 +186,7 @@ async function runTests() {
         }
       });
       await waitForServer(port);
+      await refreshSession();
 
       let rateLimited = false;
       for (let i = 0; i < 350; i++) {
@@ -207,11 +217,15 @@ async function runTests() {
         }
       });
       await waitForServer(port);
+      await refreshSession();
 
       const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lightning`, { headers: authHeaders });
-      const data = await res.json();
+      const raw = await res.text();
+      assert.strictEqual(res.status, 200, `mapped-field search returned ${res.status}: ${raw}`);
+      const data = JSON.parse(raw);
+      assert.ok(data.length > 0, `mapped-field search returned no cards: ${raw}`);
       const card = data[0];
-      
+
       assert.strictEqual(card.id, 'mtg-54321');
       assert.strictEqual(card.supertype, 'MTG');
       assert.ok(card.subtypes.includes('Instant'));
@@ -237,6 +251,7 @@ async function runTests() {
         }
       });
       await waitForServer(port);
+      await refreshSession();
 
       const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=NonExistentCardName`, { headers: authHeaders });
       assert.strictEqual(res.status, 200);
@@ -261,6 +276,7 @@ async function runTests() {
         }
       });
       await waitForServer(port);
+      await refreshSession();
 
       const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lightning`, { headers: authHeaders });
       assert.ok(res.status === 504 || res.status === 200);
@@ -282,6 +298,7 @@ async function runTests() {
         }
       });
       await waitForServer(port);
+      await refreshSession();
 
       // Insert lightning bolt to cache first
       await db.run(
@@ -324,6 +341,7 @@ async function runTests() {
         }
       });
       await waitForServer(port);
+      await refreshSession();
 
       const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lotus&lang=ja&scope=internet`, { headers: authHeaders });
       const data = await res.json();
@@ -358,6 +376,7 @@ async function runTests() {
         }
       });
       await waitForServer(port);
+      await refreshSession();
 
       const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Delver`, { headers: authHeaders });
       const data = await res.json();
@@ -381,6 +400,7 @@ async function runTests() {
         env: { ...process.env, PORT: port, DB_PATH: tmpDb }
       });
       await waitForServer(port);
+      await refreshSession();
 
       // Total match count is surfaced as a header, body stays a bare array.
       // Needs scope=internet: a cache hit has no upstream total to report.

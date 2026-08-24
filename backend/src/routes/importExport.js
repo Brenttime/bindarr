@@ -4,6 +4,7 @@ const db = require('../db');
 const { parseThirdPartyCSV } = require('../utils/csvMappers');
 const { generateExportCSV } = require('../utils/csvExporters');
 const { resolveCardPrice } = require('../utils/priceHelpers');
+const { bulkFetchByIdentifier, cacheCards } = require('../scryfallApi');
 
 // Export endpoint
 router.get('/export', async (req, res) => {
@@ -133,6 +134,8 @@ router.post('/import', async (req, res) => {
     // Reject the offending rows up front with a clear message instead.
     const allowedPrintings = ['Normal', 'Holofoil'];
     const rejected = [];
+    const prepared = [];
+    const authoritativeCards = new Map();
     for (let i = 0; i < rawItems.length; i++) {
       const item = rawItems[i];
       const game = String(item.game ?? '').toLowerCase();
@@ -143,11 +146,49 @@ router.post('/import', async (req, res) => {
       if (item.printing !== undefined && item.printing !== '' &&
           !allowedPrintings.includes(item.printing)) {
         rejected.push({ index: i, reason: `printing '${item.printing}' is not supported` });
+        continue;
       }
+
+      // A cached id has already crossed the Scryfall boundary. An uncached row
+      // has not: legacy exports often omit `game`, and client-supplied names,
+      // sets, types and rarity are not evidence that a card is Magic. Resolve
+      // every such row through Scryfall and use its canonical id instead of
+      // synthesizing a cache row from the import payload.
+      const suppliedId = item.card_id || item.id || null;
+      const cached = suppliedId
+        ? await db.get(`SELECT id FROM card_cache WHERE id = ?`, [suppliedId])
+        : null;
+      if (cached && String(cached.id).startsWith('mtg-')) {
+        prepared.push({ item, cardId: cached.id });
+        continue;
+      }
+      if (cached) {
+        rejected.push({ index: i, reason: 'cached card id is not an MTG printing' });
+        continue;
+      }
+
+      const lookup = {
+        id: suppliedId,
+        set_id: item.set_code || item.set_id || '',
+        number: item.collector_number || item.number || '',
+        name: item.name || ''
+      };
+      if (!lookup.id && !(lookup.set_id && lookup.number) && !lookup.name) {
+        rejected.push({ index: i, reason: 'card has no MTG identifier Scryfall can validate' });
+        continue;
+      }
+      const result = await bulkFetchByIdentifier([lookup]);
+      const match = result.pairs[0]?.card;
+      if (!match || !String(match.id).startsWith('mtg-')) {
+        rejected.push({ index: i, reason: 'card was not recognized by Scryfall as an MTG printing' });
+        continue;
+      }
+      authoritativeCards.set(match.id, match);
+      prepared.push({ item, cardId: match.id });
     }
     if (rejected.length > 0) {
       return res.status(400).json({
-        error: `Imported ${rawItems.length - rejected.length} of ${rawItems.length}; ${rejected.length} rejected.`,
+        error: `Import rejected: ${rejected.length} of ${rawItems.length} row(s) are not valid MTG printings. No rows were imported.`,
         rejected
       });
     }
@@ -155,38 +196,8 @@ router.post('/import', async (req, res) => {
     let importedCount = 0;
 
     await db.withTransaction(async () => {
-      for (const item of rawItems) {
-        let cardId = item.card_id || item.id;
-        if (!cardId && item.set_code && item.collector_number) {
-          cardId = `${item.set_code.toLowerCase()}-${item.collector_number}`;
-        }
-        if (!cardId && item.name) {
-          cardId = item.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-        }
-
-        if (!cardId) continue;
-
-        let cached = await db.get(`SELECT id FROM card_cache WHERE id = ?`, [cardId]);
-        if (!cached) {
-          await db.run(
-            `INSERT OR IGNORE INTO card_cache 
-             (id, name, supertype, subtypes, types, rarity, set_id, set_name, number, image_url, price_trend)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              cardId,
-              item.name || 'Imported Card',
-              item.supertype || 'Card',
-              '[]',
-              JSON.stringify(item.types || []),
-              item.rarity || 'Common',
-              item.set_code || item.set_id || '',
-              item.set_name || item.set_code || 'Imported Set',
-              item.collector_number || item.number || '',
-              item.image_url || '',
-              item.market_price || item.purchase_price || 0
-            ]
-          );
-        }
+      if (authoritativeCards.size) await cacheCards([...authoritativeCards.values()]);
+      for (const { item, cardId } of prepared) {
 
         await db.run(
           `INSERT INTO collection 

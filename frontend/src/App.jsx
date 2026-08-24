@@ -170,8 +170,8 @@ function App() {
   }, [t]);
 
   // Pointer-reactive foil: one delegated listener drives --px/--py (0-100%) on
-  // whichever card the pointer is over, so the holo/reverse-holo rainbow tracks
-  // the cursor (MTG-style). CSS custom props inherit down to the overlay div.
+  // whichever card the pointer is over, so the foil rainbow tracks the cursor.
+  // CSS custom props inherit down to the overlay div.
   useEffect(() => {
     const onMove = (e) => {
       const card = e.target.closest && e.target.closest('.tilt-card-wrapper');

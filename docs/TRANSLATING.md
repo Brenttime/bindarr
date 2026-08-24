@@ -90,8 +90,8 @@ show English while others show your language, which looks broken.
 Card and set names come from Scryfall in the language the card was
 printed in, so they are never in these files to begin with.
 
-The same goes for anything a placeholder injects. `{theme}`, `{game}` and
-`{set}` are filled at runtime with values that are already correct - and a few
+The same goes for anything a placeholder injects. `{theme}` and `{set}` are
+filled at runtime with values that are already correct - and a few
 placeholders carry literal code, like the `?theme=lcars` in
 `settings.themeTip`. Move a placeholder wherever your grammar needs it, but
 never translate what it stands for.

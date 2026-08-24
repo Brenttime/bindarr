@@ -370,7 +370,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
                 position: 'absolute',
                 cursor: 'pointer',
                 top: 0, left: 0, right: 0, bottom: 0,
-                backgroundColor: shareEnabled ? 'var(--type-grass)' : '#334155',
+                backgroundColor: shareEnabled ? 'var(--success)' : '#334155',
                 transition: '0.3s',
                 borderRadius: '24px'
               }}>
@@ -402,7 +402,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
                     style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)', cursor: 'default' }}
                   />
                   <button className="btn btn-secondary" onClick={() => copyToClipboard(shareUrl, 'collection')} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
-                    {copiedType === 'collection' ? <Check size={14} style={{ color: 'var(--type-grass)' }} /> : <Clipboard size={14} />}
+                    {copiedType === 'collection' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
                     <span>{t('settings.copy')}</span>
                   </button>
                 </div>
@@ -419,7 +419,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
                     style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)', cursor: 'default' }}
                   />
                   <button className="btn btn-secondary" onClick={() => copyToClipboard(tradeUrl, 'trade')} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
-                    {copiedType === 'trade' ? <Check size={14} style={{ color: 'var(--type-grass)' }} /> : <Clipboard size={14} />}
+                    {copiedType === 'trade' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
                     <span>{t('settings.copy')}</span>
                   </button>
                 </div>
@@ -436,7 +436,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
                     style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)', cursor: 'default' }}
                   />
                   <button className="btn btn-secondary" onClick={() => copyToClipboard(wishlistUrl, 'wishlist')} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
-                    {copiedType === 'wishlist' ? <Check size={14} style={{ color: 'var(--type-grass)' }} /> : <Clipboard size={14} />}
+                    {copiedType === 'wishlist' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
                     <span>{t('settings.copy')}</span>
                   </button>
                 </div>
@@ -548,7 +548,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
         {/* Moxfield Sync Panel */}
         <div id="moxfield-panel" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', scrollMarginTop: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <Globe size={20} style={{ color: 'var(--type-grass, #4ade80)' }} />
+            <Globe size={20} style={{ color: 'var(--success, #4ade80)' }} />
             <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('mfx.title')}</h3>
           </div>
 
@@ -802,7 +802,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
             {t('settings.updateChecksNote')}{' '}
             <a href={versionInfo?.releases_url || `${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)' }}>
-              thenotoriousJeremy/bindarr
+              Brenttime/bindarr
             </a>
           </div>
         </div>

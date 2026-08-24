@@ -58,17 +58,19 @@ function getColorCategory(card) {
   return names[ci[0]] || ci[0] || 'Colorless';
 }
 
-const RARITY_RANK = [
-  ['classic collection', 16], ['hyper', 15], ['special illustration', 14],
-  ['illustration', 13], ['secret', 12], ['ultra', 11], ['radiant', 10],
-  ['amazing', 9], ['shiny', 8], ['double rare', 7], ['mythic', 6],
-  ['rare holo', 5], ['holo rare', 5], ['promo', 4], ['rare', 3],
-  ['uncommon', 2], ['common', 1],
-];
+// Scryfall's complete rarity vocabulary. Exact matching avoids treating card
+// names or unrelated provider labels as rarities.
+const RARITY_RANK = Object.freeze({
+  common: 1,
+  uncommon: 2,
+  rare: 3,
+  mythic: 4,
+  special: 5,
+  bonus: 6,
+});
 function rarityRank(rarity) {
-  const r = (rarity || '').toLowerCase();
-  for (const [kw, rank] of RARITY_RANK) if (r.includes(kw)) return rank;
-  return 0;
+  const value = String(rarity || '').trim().toLowerCase();
+  return RARITY_RANK[value] || 0;
 }
 
 function sortCards(cards, sortOrder, foilSorting) {

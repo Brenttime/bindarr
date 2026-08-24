@@ -156,7 +156,7 @@ export default function SetupWizard({ user, onClose, showToast }) {
   ) : null);
 
   const Status = ({ present }) => (
-    <span style={{ fontSize: '0.74rem', color: present ? 'var(--type-grass)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
+    <span style={{ fontSize: '0.74rem', color: present ? 'var(--success)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
       {present ? <><Check size={13} /> {t('setup.scan.installed')}</> : t('setup.scan.notInstalled')}
     </span>
   );
@@ -308,7 +308,7 @@ export default function SetupWizard({ user, onClose, showToast }) {
             {STEPS.map((s, i) => (
               <div key={s} title={t(`setup.step.${s}`)} style={{
                 width: i === step ? 20 : 8, height: 8, borderRadius: 4,
-                background: i === step ? 'var(--accent-red)' : i < step ? 'var(--type-grass)' : 'var(--surface-3)',
+                background: i === step ? 'var(--accent-red)' : i < step ? 'var(--success)' : 'var(--surface-3)',
                 transition: 'width 0.15s',
               }} />
             ))}

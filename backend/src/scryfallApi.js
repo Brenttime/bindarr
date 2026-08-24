@@ -242,9 +242,6 @@ function normalizeCard(raw, lang) {
     price_trend: usd != null ? usd : (usdFoil != null ? usdFoil : 0),
     price_normal: usd,
     price_holofoil: usdFoil,
-    price_avg1: null,
-    price_avg7: null,
-    price_avg30: null,
     cmc: cmc,
     color_identity: colorIdentity.map(c => COLOR_NAMES[c] || c),
     // Which printing this row IS. The quick-add form defaults the copy's language
@@ -571,8 +568,8 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
   }
 }
 
-// Fetch a set's cards from Scryfall (dev seed helper). Mirrors
-// tcgApi.getCardsBySet: one request, normalized + cached like any lookup, so
+// Fetch a set's cards from Scryfall (dev seed helper): one request, normalized
+// and cached like any lookup, so
 // the seed route gets a varied MTG pool (all colors/rarities). Takes the first
 // page (~175 cards) — plenty for test data, so pagination is skipped.
 async function getCardsBySet(setCode) {
@@ -603,7 +600,7 @@ async function fetchAndCacheSets(force = false) {
     const sets = (resp.data && resp.data.data) || [];
     for (const s of sets) {
       await db.run(
-        `INSERT OR REPLACE INTO sets (id, name, series, printed_total, total, release_date, ptcgo_code, symbol_url, logo_url)
+        `INSERT OR REPLACE INTO sets (id, name, series, printed_total, total, release_date, set_code, symbol_url, logo_url)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           `mtg-${s.code}`, s.name, s.set_type || '', s.card_count || 0, s.card_count || 0,
@@ -707,6 +704,5 @@ async function getCardById(cardId) {
   return null;
 }
 
-// `client` and `fetchWindow` are exported for tests (stub the axios adapter),
-// mirroring how tcgApi exposes tcgClient.
+// `client` and `fetchWindow` are exported for tests that stub the axios adapter.
 module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow };

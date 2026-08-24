@@ -7,7 +7,7 @@ router.get('/', async (req, res) => {
     const { lang } = req.query;
     void lang;
     const sets = await db.all(`
-      SELECT id, name, series, printed_total, total, release_date, ptcgo_code, symbol_url, logo_url
+      SELECT id, name, series, printed_total, total, release_date, set_code, symbol_url, logo_url
       FROM sets
       ORDER BY release_date ASC
     `);
@@ -22,7 +22,7 @@ router.get('/', async (req, res) => {
       const { getMtgChildSetMap } = require('../cardSets');
       const childMap = await getMtgChildSetMap();
       const childCodes = new Set([...childMap.values()].flatMap(cs => cs.map(c => c.code)));
-      const code = (s) => s.ptcgo_code || String(s.id || '').replace(/^mtg-/, '');
+      const code = (s) => s.set_code || String(s.id || '').replace(/^mtg-/, '');
       return res.json(
         sets
           .filter(s => !childCodes.has(code(s)))

@@ -20,11 +20,9 @@ export const PRINTING_OPTIONS = [
   { value: 'Holofoil', label: 'Foil' },
 ];
 
-// Printing/finish {value,label} options. Value stays within the
-// collection.printing CHECK constraint. The `game` argument is kept for call
-// sites that still pass one; it no longer changes anything.
-export function getPrintings(game) {
-  void game;
+// Printing/finish options. Values stay within the collection.printing CHECK
+// constraint; this is the single MTG finish list.
+export function getPrintings() {
   return PRINTING_OPTIONS;
 }
 

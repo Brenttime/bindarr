@@ -152,6 +152,7 @@ function buildLegacy() {
         )`,
         `CREATE INDEX idx_collection_user_game ON collection(user_id, game)`,
         `CREATE INDEX idx_collection_cert ON collection(user_id, grader, cert_number)`,
+        `CREATE INDEX idx_collection_favorite ON collection(favorite)`,
         // The FK child that made the card_cache delete fail.
         `CREATE TABLE tcgplayer_product (
           card_id TEXT PRIMARY KEY,
@@ -210,9 +211,9 @@ function buildLegacy() {
           FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         )`,
         // Legacy data.
-        `INSERT INTO sets (id, name, game) VALUES
-          ('mtg-ald', 'Alpha', 'mtg'),
-          ('pkm-bas', 'Base', 'pokemon')`,
+        `INSERT INTO sets (id, name, ptcgo_code, game) VALUES
+          ('mtg-ald', 'Alpha', 'ald', 'mtg'),
+          ('pkm-bas', 'Base', 'bas', 'pokemon')`,
         `INSERT INTO card_cache (id, name, set_id, set_name, number, language, game,
           price_trend, price_normal, price_holofoil, price_reverse_holofoil, price_1st_edition)
          VALUES
@@ -230,11 +231,11 @@ function buildLegacy() {
           ('pokemon', 'English', 'me1', 'no cards')`,
         // One real price point, one orphan (its card is about to be deleted).
         `INSERT INTO price_history (card_id, price) VALUES ('mtg-keep-1', 5), ('pkm-orphan', 1)`,
-        `INSERT INTO collection (card_id, quantity, user_id, game, grader, cert_number, market_value)
+        `INSERT INTO collection (card_id, quantity, user_id, game, printing, grader, cert_number, market_value)
          VALUES
-          ('mtg-keep-1', 2, NULL, 'mtg', 'Raw', NULL, NULL),
-          ('mtg-keep-2', 1, NULL, 'mtg', 'PSA', '123456', 42000),
-          ('pkm-drop', 5, NULL, 'pokemon', 'PSA', '654321', 999)`,
+          ('mtg-keep-1', 2, NULL, 'mtg', 'Holofoil', 'Raw', NULL, NULL),
+          ('mtg-keep-2', 1, NULL, 'mtg', 'Reverse Holofoil', 'PSA', '123456', 42000),
+          ('pkm-drop', 5, NULL, 'pokemon', '1st Edition', 'PSA', '654321', 999)`,
       ];
       let i = 0;
       const next = (err) => {
@@ -276,18 +277,33 @@ async function main() {
     .filter(ix => ix.origin === 'c').map(ix => ix.name);
   assert.ok(!cIndexes.includes('idx_collection_user_game'), 'blocking index should be gone');
   assert.ok(!cIndexes.includes('idx_collection_cert'), 'blocking index should be gone');
+  assert.ok(cIndexes.includes('idx_collection_favorite'), 'unrelated collection index should survive rebuild');
   assert.deepStrictEqual(
-    await db.all(`SELECT card_id, quantity FROM collection ORDER BY card_id`),
-    [{ card_id: 'mtg-keep-1', quantity: 2 }, { card_id: 'mtg-keep-2', quantity: 1 }],
-    'Pokemon collection rows deleted, MTG rows preserved'
+    await db.all(`SELECT card_id, quantity, printing FROM collection ORDER BY card_id`),
+    [
+      { card_id: 'mtg-keep-1', quantity: 2, printing: 'Holofoil' },
+      { card_id: 'mtg-keep-2', quantity: 1, printing: 'Normal' }
+    ],
+    'Pokemon rows are deleted and retained MTG rows/finishes are normalized'
+  );
+  const collectionSql = (await db.get(
+    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collection'`
+  )).sql;
+  assert.match(collectionSql, /printing TEXT CHECK\(printing IN \('Normal', 'Holofoil'\)\)/,
+    'upgraded sqlite_master SQL must contain the MTG-only printing check');
+  await assert.rejects(
+    db.run(`INSERT INTO collection (card_id, printing) VALUES ('mtg-keep-1', 'Reverse Holofoil')`),
+    /CHECK constraint failed/,
+    'upgraded schema must reject retired finishes'
   );
 
   // --- card_cache: Pokemon finishes gone, MTG price data kept --------------
   const ccCols = await colsOf('card_cache');
-  for (const gone of ['game', 'price_reverse_holofoil', 'price_1st_edition']) {
+  for (const gone of ['game', 'price_reverse_holofoil', 'price_1st_edition',
+    'price_avg1', 'price_avg7', 'price_avg30']) {
     assert.ok(!ccCols.includes(gone), `card_cache.${gone} should have been dropped`);
   }
-  for (const kept of ['price_avg1', 'price_avg7', 'price_avg30', 'price_holofoil']) {
+  for (const kept of ['price_trend', 'price_normal', 'price_holofoil']) {
     assert.ok(ccCols.includes(kept), `card_cache.${kept} should be kept`);
   }
   assert.deepStrictEqual(
@@ -300,8 +316,12 @@ async function main() {
   for (const t of ['sets', 'decks', 'card_lists']) {
     assert.ok(!(await colsOf(t)).includes('game'), `${t}.game should be dropped`);
   }
-  assert.deepStrictEqual(await db.all(`SELECT id FROM sets`), [{ id: 'mtg-ald' }],
-    'Pokemon set deleted');
+  const setCols = await colsOf('sets');
+  assert.ok(!setCols.includes('ptcgo_code'), 'sets.ptcgo_code should be renamed');
+  assert.ok(setCols.includes('set_code'), 'sets.set_code should exist');
+  assert.deepStrictEqual(await db.all(`SELECT id, set_code FROM sets`),
+    [{ id: 'mtg-ald', set_code: 'ald' }],
+    'Pokemon set deleted and the MTG set code preserved');
 
   // --- the FK child table ---------------------------------------------------
   assert.ok(await tableGone('tcgplayer_product'), 'tcgplayer_product table should be dropped');
@@ -342,8 +362,11 @@ async function main() {
   // --- idempotency: a second initDb on the migrated DB must be a no-op ------
   await db.initDb();
   assert.deepStrictEqual(
-    await db.all(`SELECT card_id, quantity FROM collection ORDER BY card_id`),
-    [{ card_id: 'mtg-keep-1', quantity: 2 }, { card_id: 'mtg-keep-2', quantity: 1 }],
+    await db.all(`SELECT card_id, quantity, printing FROM collection ORDER BY card_id`),
+    [
+      { card_id: 'mtg-keep-1', quantity: 2, printing: 'Holofoil' },
+      { card_id: 'mtg-keep-2', quantity: 1, printing: 'Normal' }
+    ],
     'second initDb must not touch data'
   );
 }

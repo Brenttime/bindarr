@@ -11,8 +11,8 @@ router.get('/stats', async (req, res) => {
     const query = `
       SELECT
         c.quantity, c.purchase_price, c.added_at, c.printing, c.condition, c.card_id,
-        cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.set_name, cc.set_id, cc.price_trend, cc.price_normal, cc.price_holofoil,
-        cc.price_avg1, cc.price_avg7, cc.price_avg30
+        cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.set_name, cc.set_id,
+        cc.price_trend, cc.price_normal, cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ?
@@ -31,13 +31,29 @@ router.get('/stats', async (req, res) => {
     const sevenDaysMs = 7 * oneDayMs;
     const thirtyDaysMs = 30 * oneDayMs;
 
-    // Cardmarket's avg7/avg30 are the only genuine historical price data this
-    // app can get (nothing goes back further than 30 days from any source).
-    // Both the "now" and "then" totals below are summed over the SAME subset
-    // of cards that actually have that real data, so the percentage change
-    // isn't skewed by cards silently missing from one side of the comparison.
+    // Change metrics use only snapshots this installation actually stored. Both
+    // ends are summed over the same cards, and a card is omitted unless history
+    // reaches the requested cutoff; no provider rolling average or invented
+    // backfill is treated as a dated price.
     let value7dAgo = 0, valueNowFor7d = 0;
     let value30dAgo = 0, valueNowFor30d = 0;
+    const historyByCard = new Map();
+    const cardIds = [...new Set(rows.map(r => r.card_id))];
+    if (cardIds.length) {
+      const placeholders = cardIds.map(() => '?').join(',');
+      const historyRows = await db.all(
+        `SELECT card_id, price, recorded_at FROM price_history
+         WHERE card_id IN (${placeholders}) ORDER BY recorded_at ASC`,
+        cardIds
+      );
+      for (const point of historyRows) {
+        if (!historyByCard.has(point.card_id)) historyByCard.set(point.card_id, []);
+        historyByCard.get(point.card_id).push({
+          price: Number(point.price),
+          time: parseSqliteUtc(point.recorded_at).getTime()
+        });
+      }
+    }
 
     const typeCounts = {};
     const rarityCounts = {};
@@ -60,19 +76,23 @@ router.get('/stats', async (req, res) => {
         vintageCount += qty;
       }
 
-      // Only count a card toward the historical comparison if it was owned
-      // that long ago AND has real Cardmarket data for both ends of the
-      // window. Comparing avg7/avg30 against price_trend (usually TCGPlayer)
-      // would mix two different marketplaces' pricing and produce a "change"
-      // that's really just the static US/EU price gap, not real movement —
-      // avg1 keeps both sides of the comparison on Cardmarket.
-      if (addedTime <= now - sevenDaysMs && row.price_avg7 > 0 && row.price_avg1 > 0) {
-        value7dAgo += qty * row.price_avg7;
-        valueNowFor7d += qty * row.price_avg1;
+      const history = historyByCard.get(row.card_id) || [];
+      const currentPoint = history[history.length - 1];
+      const pointAt = (cutoff) => {
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (history[i].time <= cutoff) return history[i];
+        }
+        return null;
+      };
+      const sevenDayPoint = pointAt(now - sevenDaysMs);
+      const thirtyDayPoint = pointAt(now - thirtyDaysMs);
+      if (addedTime <= now - sevenDaysMs && sevenDayPoint && currentPoint) {
+        value7dAgo += qty * sevenDayPoint.price;
+        valueNowFor7d += qty * currentPoint.price;
       }
-      if (addedTime <= now - thirtyDaysMs && row.price_avg30 > 0 && row.price_avg1 > 0) {
-        value30dAgo += qty * row.price_avg30;
-        valueNowFor30d += qty * row.price_avg1;
+      if (addedTime <= now - thirtyDaysMs && thirtyDayPoint && currentPoint) {
+        value30dAgo += qty * thirtyDayPoint.price;
+        valueNowFor30d += qty * currentPoint.price;
       }
 
       // Parse types
@@ -136,7 +156,7 @@ router.get('/stats', async (req, res) => {
     // flat 150 for everything else, so every set
     // released after 151 was measured against a number nobody chose. printed_total
     // is the right column (the number printed on the card, which is what a player
-    // counts to); `total` includes secret rares and is the fallback when a provider
+    // counts to); `total` includes cards outside the base numbered set and is the fallback when a provider
     // gives no printed count.
     //
     // One query for the whole thing, rather than one per set inside a loop: this
@@ -212,11 +232,8 @@ router.get('/stats', async (req, res) => {
         duplicateCopies: Math.max(totalCards - uniqueCards, 0),
         mintRate,
         vintageRatio,
-        // change7d/change30d compare current vs. real Cardmarket avg7/avg30
-        // over the same subset of cards that have that data — never
-        // simulated. change1y/change5y have no real data source anywhere
-        // (no API here provides pricing history beyond 30 days), so they're
-        // marked unavailable instead of faked.
+        // change7d/change30d compare recorded snapshots over the same subset
+        // of cards. Longer windows stay unavailable until the API exposes them.
         change7d: value7dAgo > 0 ? {
           available: true,
           abs: parseFloat((valueNowFor7d - value7dAgo).toFixed(2)),
@@ -401,28 +418,8 @@ router.get('/stats/networth', async (req, res) => {
   }
 });
 
-// Two windows, because two is all anyone can actually fill:
-//   30d — Cardmarket publishes real rolling averages (avg30/avg7/avg1) that give
-//         a genuine month of trend for free, per request, with no storage.
-//   all — everything Bindarr has recorded itself.
-// 1y/5y are gone. No card API sells back-history: Scryfall returns only current
-// prices (usd/eur/tix, no historical field at all), so a 5-year MTG chart could
-// never be anything but the same line as the 30-day one.
+// Two windows: the last 30 days of snapshots, or everything Bindarr has recorded.
 const PRICE_HISTORY_RANGES = { '30d': 30 };
-
-// Cardmarket's rolling averages, as real dated points. avg30 is the mean of the
-// last 30 days, so it is plotted at the middle of that span, not its start —
-// plotting a 30-day MEAN at "30 days ago" would misread as the price on that
-// day. Same for avg7. avg1 is yesterday's average.
-function marketAnchors(card, now) {
-  const pts = [];
-  if (!card) return pts;
-  if (card.price_avg30 > 0) pts.push({ price: card.price_avg30, time: now - 15 * 86400000, source: 'market' });
-  if (card.price_avg7 > 0) pts.push({ price: card.price_avg7, time: now - 3.5 * 86400000, source: 'market' });
-  if (card.price_avg1 > 0) pts.push({ price: card.price_avg1, time: now - 86400000, source: 'market' });
-  if (card.price_trend > 0) pts.push({ price: card.price_trend, time: now, source: 'current' });
-  return pts;
-}
 
 // Get Card Price History
 router.get('/cards/:id/price-history', async (req, res) => {
@@ -444,23 +441,12 @@ router.get('/cards/:id/price-history', async (req, res) => {
           ORDER BY recorded_at ASC
         `, [id]);
 
-    const now = Date.now();
     const points = recorded.map(h => ({
       price: h.price,
       time: parseSqliteUtc(h.recorded_at).getTime(),
       source: 'recorded'
     }));
     const recordedCount = points.length;
-
-    // Market averages only describe the last 30 days, so they belong on the
-    // 30-day window; on 'all' they would crowd the left edge of a longer line.
-    const anchors = rangeKey === '30d'
-      ? marketAnchors(await db.get(
-        `SELECT price_trend, price_avg1, price_avg7, price_avg30 FROM card_cache WHERE id = ?`, [id]
-      ), now)
-      : [];
-    const marketCount = anchors.filter(a => a.source === 'market').length;
-    points.push(...anchors);
 
     points.sort((a, b) => a.time - b.time);
 
@@ -485,7 +471,7 @@ router.get('/cards/:id/price-history', async (req, res) => {
       data: data.map(p => ({ price: p.price, recorded_at: new Date(p.time).toISOString(), source: p.source })),
       // What the line is actually made of, so the UI can say so rather than
       // implying Bindarr knows more than it does.
-      marketCount,
+      marketCount: 0,
       recordedCount,
       insufficientHistory: data.length < 2,
       spanDays,

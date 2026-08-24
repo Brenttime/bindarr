@@ -8,21 +8,15 @@
 
 Identify cards with your phone camera, track prices, and pull decks back out of your collection again.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/thenotoriousJeremy/bindarr/docker-build.yml?branch=main&label=CI&logo=github)](https://github.com/thenotoriousJeremy/bindarr/actions/workflows/docker-build.yml)
-[![Docker image](https://img.shields.io/badge/ghcr.io-bindarr-2496ED?logo=docker&logoColor=white)](https://github.com/thenotoriousJeremy/bindarr/pkgs/container/bindarr)
-[![License: MIT](https://img.shields.io/github/license/thenotoriousJeremy/bindarr?color=blue)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/thenotoriousJeremy/bindarr?style=flat&logo=github)](https://github.com/thenotoriousJeremy/bindarr/stargazers)
-[![Issues](https://img.shields.io/github/issues/thenotoriousJeremy/bindarr)](https://github.com/thenotoriousJeremy/bindarr/issues)
+[![CI](https://img.shields.io/github/actions/workflow/status/Brenttime/bindarr/docker-build.yml?branch=main&label=CI&logo=github)](https://github.com/Brenttime/bindarr/actions/workflows/docker-build.yml)
+[![Docker image](https://img.shields.io/badge/ghcr.io-bindarr-2496ED?logo=docker&logoColor=white)](https://github.com/Brenttime/bindarr/pkgs/container/bindarr)
+[![License: MIT](https://img.shields.io/github/license/Brenttime/bindarr?color=blue)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Brenttime/bindarr?style=flat&logo=github)](https://github.com/Brenttime/bindarr/stargazers)
+[![Issues](https://img.shields.io/github/issues/Brenttime/bindarr)](https://github.com/Brenttime/bindarr/issues)
 
-[Live demo](https://thenotoriousjeremy.github.io/bindarr/) · [Install](#install) · [Features](#features) · [How it works](PROJECT.md) · [Report a bug](https://github.com/thenotoriousJeremy/bindarr/issues/new)
+[Install](#install) · [Features](#features) · [How it works](PROJECT.md) · [Report a bug](https://github.com/Brenttime/bindarr/issues/new)
 
 </div>
-
----
-
-https://github.com/user-attachments/assets/4ee6c23f-a024-499b-9fc3-3d144c42ba61
-
-Try it without installing anything at **[thenotoriousjeremy.github.io/bindarr](https://thenotoriousjeremy.github.io/bindarr/)**. The demo runs the real frontend against sample data, so edits aren't saved and scanning is off (it needs a server).
 
 ---
 
@@ -51,7 +45,7 @@ No clone, no build. Create a `docker-compose.yml`:
 ```yaml
 services:
   bindarr:
-    image: ghcr.io/thenotoriousjeremy/bindarr:latest
+    image: ghcr.io/brenttime/bindarr:edge
     container_name: bindarr
     restart: unless-stopped
     ports:
@@ -103,9 +97,8 @@ The HTTPS certificate is self-signed and generated on first start into the volum
 
 | Tag | Points at |
 | --- | --- |
-| `latest` | newest release — use this |
-| `1.8`, `1.8.1` | a specific release, if you want to control upgrades |
-| `edge` | newest `main` commit, including unreleased work |
+| `edge` | newest `main` commit — use this until the first MTG-only release |
+| `latest` | newest tagged release, once one has been published |
 | `sha-<short>` | one exact commit |
 
 #### Environment variables
@@ -132,7 +125,7 @@ All optional.
 
 ### Prebuilt server binary
 
-If you'd rather not run Docker, every release ships a self-contained server. Download it from the [latest release](https://github.com/thenotoriousJeremy/bindarr/releases/latest), unpack, run, then open `http://localhost:3001`.
+If you'd rather not run Docker, every release ships a self-contained server. Download it from the [latest release](https://github.com/Brenttime/bindarr/releases/latest), unpack, run, then open `http://localhost:3001`.
 
 | OS | File | Run |
 |----|------|-----|

@@ -21,7 +21,7 @@ import { artUrl, useCardArtIndex } from '../utils/cardArt';
 //
 // Step 3 is why onError chaining is used rather than a plain src: a URL that 404s
 // or a CDN that is unreachable has to degrade the same way an absent one does.
-export default function CardImage({ card, src, alt, game, ...imgProps }) {
+export default function CardImage({ card, src, alt, ...imgProps }) {
   const index = useCardArtIndex();
 
   // Collection rows carry the card's own id in card_id (id is the row's), while
@@ -30,7 +30,7 @@ export default function CardImage({ card, src, alt, game, ...imgProps }) {
   // `src` overrides rather than defaults, so passing src={null} explicitly still
   // means "no provider art" instead of falling through to card.image_url.
   const provider = src !== undefined ? src : card?.image_url;
-  const back = cardBackFor(game ?? card?.game);
+  const back = cardBackFor();
 
   const chain = [
     cardId && index.has(cardId) ? artUrl(cardId) : null,

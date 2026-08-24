@@ -4,6 +4,8 @@ import confetti from 'canvas-confetti';
 import { getCardDisplayName } from '../utils/langHelper';
 import { priceText } from '../utils/formatPrice';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
+import { isPremiumRarity } from '../utils/cardRarity';
+import { getPrintingLabel } from '../utils/cardPrinting';
 import { CONDITIONS, getPrintings } from '../utils/cardOptions';
 import CardEntryFields from './CardEntryFields';
 import CardInspectorModal from './CardInspectorModal';
@@ -242,7 +244,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const [onlyBuiltSets, setOnlyBuiltSets] = useState(true);
   // Code fed to the scanner: the bare Scryfall code (sets.id is stored
   // prefixed as "mtg-<code>").
-  const setScanCode = (s) => s.ptcgo_code || (s.id || '').replace(/^mtg-/, '');
+  const setScanCode = (s) => s.set_code || (s.id || '').replace(/^mtg-/, '');
   // The filter is a flat list of catalog set codes — parent codes and subset codes
   // sit side by side in it, because that is what card_cache.set_id holds and what
   // the scan route filters on. The tree is a VIEW of that list, not a second
@@ -283,7 +285,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
     .filter(([sid, v]) => v.embedded > 0
       && !setList.some(s => String(setScanCode(s)).toLowerCase() === sid
         || (s.children || []).some(c => String(c.code).toLowerCase() === sid)))
-    .map(([sid]) => ({ id: sid, name: sid.toUpperCase(), ptcgo_code: sid, children: [] }));
+    .map(([sid]) => ({ id: sid, name: sid.toUpperCase(), set_code: sid, children: [] }));
   // Newest first: a scanning run is nearly always a recent release, and the set
   // list arrives in release order. Searching and coverage filtering happen inside
   // SetTree, which the build picker and the wizard share.
@@ -601,7 +603,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
     nocard: { key: 'scan.autoNoCard', color: 'rgba(255,255,255,0.55)' },
     closer: { key: 'scan.autoCloser', color: '#fbbf24' },
     hold: { key: 'scan.autoHoldStill', color: '#fbbf24' },
-    ready: { key: 'scan.autoReady', color: 'var(--type-grass)' },
+    ready: { key: 'scan.autoReady', color: 'var(--success)' },
   };
 
   const refreshAutoState = () => {
@@ -874,7 +876,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
     // the duplicate path instead of auto-adding a second time.
     lastAddedIdRef.current = card.id;
     try {
-      const autoPrinting = overrides?.printing || ((card.rarity || '').toLowerCase().includes('holo') ? 'Holofoil' : 'Normal');
+      // Rarity and finish are independent in Magic. Auto-add must not invent a
+      // foil copy merely because the card is scarce.
+      const autoPrinting = overrides?.printing || 'Normal';
       const autoCondition = overrides?.condition || 'Near Mint';
       // See addLanguage: a localized printing files as itself, an English row files
       // as the language being scanned. Auto-add used to hard-code English, and then
@@ -890,8 +894,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
           condition: autoCondition,
           printing: autoPrinting,
           language: autoLanguage,
-          // price_trend is whichever finish the TCG API returned first (usually
-          // Normal), not necessarily the Holofoil finish just chosen above —
+          // price_trend is whichever finish the provider returned first, not
+          // necessarily the finish being recorded here —
           // resolve against the printing actually being recorded.
           purchase_price: resolveCardPrice(card, autoPrinting)
         })
@@ -911,9 +915,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
           language: autoLanguage, purchase_price: resolveCardPrice(card, autoPrinting),
         }, ...prev].slice(0, 10));
 
-        // Brief confetti blast for ultra-rares
+        // Brief confetti blast for premium Scryfall rarities.
         const rarity = (card.rarity || '').toLowerCase();
-        if (rarity.includes('secret') || rarity.includes('ultra') || (card.price_trend || 0) > 15) {
+        if (isPremiumRarity(rarity) || (card.price_trend || 0) > 15) {
           confetti({ particleCount: 50, spread: 40, origin: { y: 0.8 } });
         }
         
@@ -1378,12 +1382,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
     setScanMatches([]);
     setSelectedCard(card);
     setPurchasePrice(0);
-    const rarity = (card.rarity || '').toLowerCase();
-    if (rarity.includes('holo') || rarity.includes('secret') || rarity.includes('ultra') || rarity.includes('shining')) {
-      setPrinting('Holofoil');
-    } else {
-      setPrinting('Normal');
-    }
+    // The scan identifies a card, not whether this physical copy is foil.
+    setPrinting('Normal');
     setLanguage(addLanguage(card));
     setIsDrawerOpen(true);
   };
@@ -1444,7 +1444,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
 
         const rarity = (selectedCard.rarity || '').toLowerCase();
         const price = selectedCard.price_trend || 0;
-        if (rarity.includes('holo') || rarity.includes('secret') || rarity.includes('ultra') || price > 10) {
+        if (isPremiumRarity(rarity) || price > 10) {
           confetti({
             particleCount: 150,
             spread: 80,
@@ -1633,7 +1633,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 type="checkbox"
                 checked={autoAdd}
                 onChange={(e) => { setAutoAdd(e.target.checked); localStorage.setItem('scan_auto_add', e.target.checked ? '1' : '0'); }}
-                style={{ accentColor: 'var(--type-grass)', flexShrink: 0 }}
+                style={{ accentColor: 'var(--success)', flexShrink: 0 }}
               />
             </label>
 
@@ -1701,7 +1701,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                   </button>
                 )}
               </div>
-              <p style={{ fontSize: '0.7rem', color: scanSetCodes.length ? 'var(--type-grass)' : 'var(--text-secondary)', margin: 0 }}>
+              <p style={{ fontSize: '0.7rem', color: scanSetCodes.length ? 'var(--success)' : 'var(--text-secondary)', margin: 0 }}>
                 {scanSetCodes.length
                   ? t('scan.setsFiltered', { count: selectedSetCount, codes: scanSetCodes.length })
                   : t('scan.setsAllHint')}
@@ -1712,7 +1712,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 value={setInput}
                 onChange={(e) => setSetInput(e.target.value)}
                 placeholder={t('scan.setSearchMtg')}
-                style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem', background: 'rgba(255,255,255,0.06)', border: `1px solid ${scanSetCodes.length ? 'var(--type-grass)' : 'var(--border-glass)'}`, borderRadius: 'var(--radius-sm)', color: 'var(--text-strong)' }}
+                style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem', background: 'rgba(255,255,255,0.06)', border: `1px solid ${scanSetCodes.length ? 'var(--success)' : 'var(--border-glass)'}`, borderRadius: 'var(--radius-sm)', color: 'var(--text-strong)' }}
               />
               {/* Scoping to a set the catalog does not hold is worse than not
                   scoping at all: cvScan fails open and scans everything, so the
@@ -1723,7 +1723,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     type="checkbox"
                     checked={onlyBuiltSets}
                     onChange={(e) => setOnlyBuiltSets(e.target.checked)}
-                    style={{ accentColor: 'var(--type-grass)', flexShrink: 0 }}
+                    style={{ accentColor: 'var(--success)', flexShrink: 0 }}
                   />
                   {t('scan.onlyBuiltSets')}
                 </label>
@@ -1756,7 +1756,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 type="checkbox"
                 checked={showDetectOutline}
                 onChange={(e) => { setShowDetectOutline(e.target.checked); localStorage.setItem('scan_outline', e.target.checked ? '1' : '0'); }}
-                style={{ accentColor: 'var(--type-grass)' }}
+                style={{ accentColor: 'var(--success)' }}
               />
             </label>
 
@@ -1772,7 +1772,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 type="checkbox"
                 checked={showDebug}
                 onChange={(e) => { setShowDebug(e.target.checked); localStorage.setItem('scan_debug', e.target.checked ? '1' : '0'); }}
-                style={{ accentColor: 'var(--type-grass)', flexShrink: 0 }}
+                style={{ accentColor: 'var(--success)', flexShrink: 0 }}
               />
             </label>
 
@@ -1794,7 +1794,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{t('scan.autoFillGate')}</span>
-                  <span style={{ fontWeight: 700, color: detectStats && !detectStats.none && detectStats.fill >= minFill ? 'var(--type-grass)' : 'var(--accent-red)' }}>
+                  <span style={{ fontWeight: 700, color: detectStats && !detectStats.none && detectStats.fill >= minFill ? 'var(--success)' : 'var(--accent-red)' }}>
                     {detectStats && !detectStats.none ? detectStats.fill.toFixed(2) : '—'} / {minFill.toFixed(2)}
                   </span>
                 </div>
@@ -1806,7 +1806,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{t('scan.autoSteadyGate')}</span>
-                  <span style={{ fontWeight: 700, color: detectStats && detectStats.steady >= minSteady ? 'var(--type-grass)' : 'var(--accent-red)' }}>
+                  <span style={{ fontWeight: 700, color: detectStats && detectStats.steady >= minSteady ? 'var(--success)' : 'var(--accent-red)' }}>
                     {detectStats ? detectStats.steady : '—'} / {minSteady}
                   </span>
                 </div>
@@ -1906,7 +1906,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                   )}
                   <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                     {debugScoped !== null && (
-                      <span style={{ fontSize: '0.65rem', fontWeight: 700, color: debugScoped ? 'var(--type-grass)' : 'var(--accent-red)' }}>
+                      <span style={{ fontSize: '0.65rem', fontWeight: 700, color: debugScoped ? 'var(--success)' : 'var(--accent-red)' }}>
                         {debugScoped ? t('scan.debugScoped', { sets: debugScoped }) : t('scan.debugGlobal')}
                       </span>
                     )}
@@ -1918,7 +1918,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       const label = cd.verified ? `${cd.inliers} inl` : (cd.score != null ? cd.score.toFixed(2) : '?');
                       return (
                         <div key={i} style={{ fontSize: '0.7rem', color: i === 0 ? '#fff' : 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          <span style={{ color: pass ? 'var(--type-grass)' : 'var(--accent-red)', fontWeight: 700 }}>{label}</span>
+                          <span style={{ color: pass ? 'var(--success)' : 'var(--accent-red)', fontWeight: 700 }}>{label}</span>
                           {' '}{cd.card ? displayName(cd.card) : cd.name} <span style={{ color: 'var(--text-muted)' }}>({cd.set} #{cd.number})</span>
                         </div>
                       );
@@ -2042,7 +2042,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 if (autoAddEditing) return;
                 // Pause and open the editor with sensible defaults.
                 setAutoAddCond('Near Mint');
-                setAutoAddPrint((autoAddTargetCard.rarity || '').toLowerCase().includes('holo') ? 'Holofoil' : 'Normal');
+                setAutoAddPrint('Normal');
                 setAutoAddEditing(true);
               }}
               style={{ position: 'relative', width: '115px', aspectRatio: 0.718, margin: '0.5rem 0', cursor: autoAddEditing ? 'default' : 'pointer' }}
@@ -2543,7 +2543,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     className="quick-add-preview-img"
                   />
                   <div className="quick-add-preview-info">
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Market ({printing})</div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Market ({getPrintingLabel(printing)})</div>
                     <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-yellow)', margin: '0.1rem 0' }}>
                       {priceText(resolveCardPrice(selectedCard, printing), selectedCard.price_currency)}
                     </div>

@@ -2,14 +2,14 @@
 
 All notable changes to this project will be documented in this file. Each
 release also carries fuller notes on its
-[GitHub release](https://github.com/thenotoriousJeremy/bindarr/releases).
+[GitHub release](https://github.com/Brenttime/bindarr/releases).
 
 ## [Unreleased]
 
 ### Added
 - **Card lists.** A new **Lists** tab for ManaBox-style wishlists, buylists and
   missing-card lists — cards you track without owning. Each list is its own
-  named, colored, per-game set of cards with a *wanted* quantity (no deck
+  named, colored set of cards with a *wanted* quantity (no deck
   rules, no ownership ceiling). A list detail view shows how many copies of each
   card you already own and the gap ("still missing N of M"), and a filter flips
   between All / Missing-only / Owned. Create a list from a pasted card list in
@@ -38,9 +38,9 @@ release also carries fuller notes on its
   (`compartmentSort.js`, `/api/locations`, `/api/compartments`, the
   `locations` / `compartments` / `compartment_assignments` tables, and the
   `location_id` / `compartment_id` / `position` columns on `collection`) are
-  gone. An upgrade rebuilds the `collection` table in place — every card, its
-  quantity, condition, price and grading data is preserved; only the
-  where-does-it-physically-live columns and the storage tables are dropped.
+  gone. An upgrade rebuilds the `collection` table in place — every card and its
+  MTG collection data are preserved; only the where-does-it-physically-live
+  columns and the storage tables are dropped.
   With it: the Storage tab and its UI (LocationManager, CompartmentView,
   CreateContainerModal, the binder/box views and the SortFilterBuilder), the
   setup wizard's storage step, the collection's location filter, the CSV's
@@ -71,7 +71,10 @@ release also carries fuller notes on its
   with them the per-copy value, the cert lookup, TCGplayer/TCGCSV Pokémon pricing
   and the Pokémon scan catalogs. Prices now come from Scryfall alone, and card
   values resolve from the per-printing `price_*` columns instead of a per-copy
-  `market_value`.
+  `market_value`. Legacy imports cannot reintroduce deleted cards: known cached
+  IDs are accepted, while uncached rows must resolve to a real Scryfall printing.
+  Obsolete provider rolling-average columns and known persistent Pokémon scan/art
+  artifacts are removed during upgrade; value charts use recorded price history.
 
 ## [1.8.1] - 2026-08-19
 

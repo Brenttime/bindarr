@@ -10,8 +10,8 @@ const router = express.Router();
 // backend/package.json is what the release workflow bumps, so it is the running
 // build's version. The repo-root package.json is not bumped and would lie.
 const APP_VERSION = require('../../package.json').version;
-const RELEASES_API = 'https://api.github.com/repos/thenotoriousJeremy/bindarr/releases/latest';
-const RELEASES_PAGE = 'https://github.com/thenotoriousJeremy/bindarr/releases';
+const RELEASES_API = 'https://api.github.com/repos/Brenttime/bindarr/releases/latest';
+const RELEASES_PAGE = 'https://github.com/Brenttime/bindarr/releases';
 // GitHub allows 60 unauthenticated calls/hour per IP, shared by every user of
 // this instance. Cache hard: a new release is not urgent to the minute.
 const UPDATE_CACHE_MS = 1000 * 60 * 60 * 6;

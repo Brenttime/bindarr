@@ -156,7 +156,7 @@ async function initDb() {
       printed_total INTEGER,
       total INTEGER,
       release_date TEXT,
-      ptcgo_code TEXT,
+      set_code TEXT,
       symbol_url TEXT,
       logo_url TEXT
     )
@@ -177,9 +177,6 @@ async function initDb() {
       price_trend REAL,
       price_normal REAL,
       price_holofoil REAL,
-      price_avg1 REAL,
-      price_avg7 REAL,
-      price_avg30 REAL,
       price_currency TEXT DEFAULT 'USD',
       price_source TEXT,
       cmc REAL,
@@ -455,6 +452,18 @@ async function initDb() {
     };
 
     await withTransaction(async () => {
+      // Older schemas called the universal set-code field `ptcgo_code`, after
+      // the retired client that first supplied it. Preserve the values while
+      // giving the active MTG schema a provider-neutral name.
+      if (await colExists('sets', 'ptcgo_code')) {
+        if (await colExists('sets', 'set_code')) {
+          await run(`UPDATE sets SET set_code = COALESCE(NULLIF(set_code, ''), ptcgo_code)`);
+          await dropCol('sets', 'ptcgo_code');
+        } else {
+          await run(`ALTER TABLE sets RENAME COLUMN ptcgo_code TO set_code`);
+        }
+      }
+
       // 1. Rows, children FIRST. tcgplayer_product.card_id is a real FK to
       // card_cache without ON DELETE, so the table (not just its Pokemon rows)
       // must be gone before the card_cache delete — otherwise the delete dies
@@ -492,13 +501,62 @@ async function initDb() {
       }
       if (await hasTable('psa_cert')) await run(`DROP TABLE psa_cert`);
 
-      // card_cache prices for finishes that no longer exist in the app:
+      // card_cache prices for finishes that no longer exist in the app, plus
+      // rolling averages that belonged to the retired provider schema. Price
+      // history is now the price_history table exclusively.
       // reverse holo is a Pokemon finish and 1st Edition pricing was a
       // Pokemon-era feature. The MTG resolver reads price_normal/price_holofoil.
-      // (price_avg1/7/30 stay: they are the rolling averages behind the
-      // dashboard's value-change stats, and the price-history market anchors.)
-      for (const col of ['price_reverse_holofoil', 'price_1st_edition']) {
+      for (const col of ['price_reverse_holofoil', 'price_1st_edition',
+        'price_avg1', 'price_avg7', 'price_avg30']) {
         await dropCol('card_cache', col);
+      }
+
+      // DROP COLUMN leaves the table-level printing CHECK untouched. Rebuild an
+      // upgraded collection whose old CHECK still admits retired finishes, while
+      // preserving every current column, row and surviving user-created index.
+      // Rows are normalized before they meet the stricter constraint.
+      const collectionDef = await get(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collection'`
+      );
+      const mtgPrintingCheck = /CHECK\s*\(\s*printing\s+IN\s*\(\s*'Normal'\s*,\s*'Holofoil'\s*\)\s*\)/i;
+      if (!collectionDef || !mtgPrintingCheck.test(collectionDef.sql || '')) {
+        const indexSql = (await all(`
+          SELECT sql FROM sqlite_master
+          WHERE type = 'index' AND tbl_name = 'collection' AND sql IS NOT NULL
+          ORDER BY name
+        `)).map(r => r.sql);
+        await run(`DROP TABLE IF EXISTS collection_new`);
+        await run(`
+          CREATE TABLE collection_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id TEXT NOT NULL,
+            quantity INTEGER DEFAULT 1,
+            condition TEXT CHECK(condition IN ('Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged')) DEFAULT 'Near Mint',
+            printing TEXT CHECK(printing IN ('Normal', 'Holofoil')) DEFAULT 'Normal',
+            language TEXT DEFAULT 'English',
+            purchase_price REAL,
+            favorite INTEGER DEFAULT 0,
+            is_trade INTEGER DEFAULT 0,
+            list_type TEXT DEFAULT 'collection',
+            added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT DEFAULT '',
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(card_id) REFERENCES card_cache(id)
+          )
+        `);
+        await run(`
+          INSERT INTO collection_new
+            (id, card_id, quantity, condition, printing, language, purchase_price,
+             favorite, is_trade, list_type, added_at, notes, user_id)
+          SELECT id, card_id, quantity, condition,
+                 CASE WHEN printing = 'Holofoil' THEN 'Holofoil' ELSE 'Normal' END,
+                 language, purchase_price, favorite, is_trade, list_type,
+                 added_at, notes, user_id
+          FROM collection
+        `);
+        await run(`DROP TABLE collection`);
+        await run(`ALTER TABLE collection_new RENAME TO collection`);
+        for (const sql of indexSql) await run(sql);
       }
 
       await dropCol('users', 'psa_api_token');
@@ -549,7 +607,7 @@ async function initDb() {
         await run(`DROP TABLE tcgplayer_catalog`);
       }
     });
-    console.log('Pokemon and graded schema removed; MTG rows preserved.');
+    console.log('Legacy non-MTG and grading schema cleanup complete; MTG rows preserved.');
   }
 
   // --- Storage removal (2026-08) ---
@@ -812,6 +870,11 @@ async function initDb() {
   if (adminId) {
     await adoptOrphanRows(adminId);
   }
+
+  // Persisted files live outside SQLite, so schema cleanup cannot reach them.
+  // Run the bounded, idempotent sweep only after the retained cache/collection
+  // rows are final, so it has an authoritative keep-set for custom art.
+  await require('./cardArt').cleanupRetiredData();
 }
 
 // Cards from before multi-user carry `user_id IS NULL`. They belong to whoever

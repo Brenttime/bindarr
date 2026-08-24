@@ -318,7 +318,7 @@ async function embedPhase(job) {
   // Scryfall's image CDN rejects a request with no User-Agent — 400, not 403, which
   // reads like a bad URL. Version comes from package.json rather than a literal.
   const HEADERS = {
-    'User-Agent': `Bindarr/${require('../package.json').version} (+https://github.com/thenotoriousJeremy/bindarr)`,
+    'User-Agent': `Bindarr/${require('../package.json').version} (+https://github.com/Brenttime/bindarr)`,
     Accept: 'image/*',
   };
   const fetchOne = async (row) => {

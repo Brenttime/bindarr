@@ -151,8 +151,8 @@ Null means keep what was picked: a card never printed in that language.
 
 ### Image identification pipeline
 
-Image-only, no OCR. Two ONNX models, both game-independent — a card is a card to
-a corner detector and an embedder — so only the catalog differs per language.
+Image-only, no OCR. Two ONNX models find and embed the card; only the catalog
+differs per language.
 
 The browser does the first half. `utils/detectWorker.js` runs **cornelius**
 (384×384, ~4.2 MB, fetched once from `GET /models/cornelius.onnx`) through
@@ -164,7 +164,7 @@ pointing the camera at a card), and the outline on screen is now *by
 construction* the crop that gets matched. Detection is ~80 ms per frame on the
 wasm EP — name the EP explicitly, WebGPU measured 1075 ms for this model.
 
-Server side, `cvScan.match(buffer, game, topK, opts)`:
+Server side, `cvScan.match(buffer, 'mtg', topK, opts)`:
 
 1. **Dewarp.** An already-rectified upload (`cropped: true`) is only resized to
    448 — re-running cornelius on a crop that already *is* the card would find the
@@ -258,7 +258,7 @@ against CollectorVision on the same 100-card noisy MTG sample:
 | cornelius + milo | 76.0% | **90.0%** | 310 ms |
 
 Two points of exact printing for 3.8× the speed — and the reason to switch is
-what went with it. ~2.6 GB of per-set ORB indexes plus two whole-game rollups
+what went with it. ~2.6 GB of per-set ORB indexes plus two collection-wide rollups
 became two ONNX files and one catalog per language at ~5 MB per 10k
 cards. There is no index build in the scan path at all, so set-scoped scanning
 needs no preparation and a scan has no geometric verification stage to be slow in.
@@ -299,7 +299,7 @@ exists **with a denominator**, because "built, 9,604 cards" reads as complete an
 is not. The English total is counted against the `sets` table (Scryfall-derived,
 so it matches `card_cache`); a non-English catalog is only as complete as
 Scryfall's own data for that language. A catalog can be perfectly built and still
-cover a third of the game.
+cover only part of that language's available printings.
 
 The scanner matches card **art**, so a build embeds the image the provider
 serves (`card_cache.image_url`). Scryfall's urls are already full-size renders,

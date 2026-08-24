@@ -21,7 +21,7 @@
 // (downscale + JPEG + slight blur) is kinder than a phone in a card shop — so
 // prefer a floor near the impostor tail over one hugging the genuine tail.
 //
-// Run: node scripts/measure-scan-floor.js [game] [language] [sampleSize]
+// Run: node scripts/measure-scan-floor.js [language] [sampleSize]
 const sharp = require('sharp');
 const ort = require('onnxruntime-node');
 const db = require('../src/db');
@@ -101,7 +101,8 @@ function top2(emb, cat, n, dim, skip) {
 const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
 
 async function main() {
-  const [game = 'mtg', lang = 'English', sizeArg = '60'] = process.argv.slice(2);
+  const game = 'mtg';
+  const [lang = 'English', sizeArg = '60'] = process.argv.slice(2);
   const sample = Number(sizeArg);
   const s = await cvScan.load(game, lang);
   if (!s.local) throw new Error(`${game}/${lang} has no locally built catalog to measure`);

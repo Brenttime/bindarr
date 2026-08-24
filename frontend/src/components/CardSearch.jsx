@@ -3,6 +3,8 @@ import { Search, Plus, X, ShieldAlert, Check, MousePointerClick, Zap, Undo2, Max
 import confetti from 'canvas-confetti';
 import { priceText } from '../utils/formatPrice';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
+import { isPremiumRarity } from '../utils/cardRarity';
+import { getPrintingLabel } from '../utils/cardPrinting';
 import CardEntryFields from './CardEntryFields';
 import CardImageZoom from './CardImageZoom';
 import { useMultiSelect } from '../utils/useMultiSelect';
@@ -373,13 +375,9 @@ function CardSearch({ onAddSuccess, showToast }) {
     // The card itself knows which printing it is, so the copy is recorded in that
     // language rather than defaulting to English and needing a manual correction.
     setLanguage(card.language || langName(searchLang));
-    // Guess printing based on rarity
-    const rarity = (card.rarity || '').toLowerCase();
-    if (rarity.includes('foil') || rarity.includes('mythic') || rarity.includes('rare')) {
-      setPrinting('Holofoil');
-    } else {
-      setPrinting('Normal');
-    }
+    // Rarity does not imply finish; default to the nonfoil copy and let the
+    // collector choose Foil when the physical card is actually foil.
+    setPrinting('Normal');
 
     setIsDrawerOpen(true);
   };
@@ -421,7 +419,7 @@ function CardSearch({ onAddSuccess, showToast }) {
         // Trigger confetti for rare/valuable cards!
         const rarity = (selectedCard.rarity || '').toLowerCase();
         const price = selectedCard.price_trend || 0;
-        if (rarity.includes('holo') || rarity.includes('secret') || rarity.includes('ultra') || price > 10) {
+        if (isPremiumRarity(rarity) || price > 10) {
           confetti({
             particleCount: 150,
             spread: 80,
@@ -432,8 +430,7 @@ function CardSearch({ onAddSuccess, showToast }) {
         onAddSuccess(); // Update stats
         closeDrawer();
       } else {
-        // A rejected cert number (already in the collection) explains itself; the
-        // generic message would send the user back to re-type a correct number.
+        // Prefer the route's specific validation message to a generic save error.
         const body = await response.json().catch(() => null);
         showToast(body?.error || t('search.errAddDb'));
       }
@@ -858,7 +855,7 @@ function CardSearch({ onAddSuccess, showToast }) {
                 </div>
               </div>
               <div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('search.tcgMarketPrice', { printing })}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('search.tcgMarketPrice', { printing: getPrintingLabel(printing) })}</div>
                 <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--accent-yellow)' }}>{priceText(resolveCardPrice(selectedCard, printing), selectedCard.price_currency)}</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{t('search.rarityLabel')} <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{selectedCard.rarity}</span></div>
               </div>

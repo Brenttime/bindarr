@@ -4,7 +4,7 @@ import { Search, Trophy, Compass, Library, ShieldAlert, Sparkles, X, SlidersHori
 import Logo from './Logo';
 import { priceText } from '../utils/formatPrice';
 import { PRINTING_OPTIONS } from '../utils/cardOptions';
-import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
+import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle, getPrintingLabel } from '../utils/cardPrinting';
 import { useBackGuard } from '../utils/useBackGuard';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { displayName } from '../utils/languages';
@@ -395,35 +395,31 @@ function SharedCollection({ shareToken }) {
         </div>
       ) : (
         <div className="card-grid">
-          {processedCollection.map(card => {
-            const rarity = (card.rarity || '').toLowerCase();
-            const isUltra = rarity.includes('rare') || rarity.includes('secret') || rarity.includes('promo') || rarity.includes('ultra');
-            return (
-              <div key={card.entry_id} className="tcg-card tilt-card-wrapper" onClick={() => setActiveCard(card)}>
-                <div className={`tcg-card-inner ${isUltra ? 'rarity-glow-ultra' : ''}`}>
-                  <CardImage card={card} className="tcg-card-image" loading="lazy" />
-                  {getFoilOverlayClass(card.printing) && (
-                    <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: 'var(--radius-sm)' }} />
-                  )}
-                  {getPrintingBadgeLabel(card.printing) && (
-                    <span style={{ position: 'absolute', top: '6px', left: '6px', fontSize: '0.6rem', fontWeight: 800, padding: '2px 5px', borderRadius: '3px', zIndex: 6, ...getPrintingBadgeStyle(card.printing) }}>
-                      {getPrintingBadgeLabel(card.printing)}
-                    </span>
-                  )}
-                  {card.quantity > 1 && (
-                    <div className="tcg-card-quantity-tag">x{card.quantity}</div>
-                  )}
-                </div>
-                <div className="tcg-card-info">
-                  <div className="tcg-card-name">{displayName(card)}</div>
-                  <div className="tcg-card-meta">
-                    <span style={{ fontSize: '0.7rem' }}>{card.set_name} • #{card.number}</span>
-                    <span className="tcg-card-price">{priceText(card.price_trend, card.price_currency)}</span>
-                  </div>
+          {processedCollection.map(card => (
+            <div key={card.entry_id} className="tcg-card tilt-card-wrapper" onClick={() => setActiveCard(card)}>
+              <div className="tcg-card-inner">
+                <CardImage card={card} className="tcg-card-image" loading="lazy" />
+                {getFoilOverlayClass(card.printing) && (
+                  <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: 'var(--radius-sm)' }} />
+                )}
+                {getPrintingBadgeLabel(card.printing) && (
+                  <span style={{ position: 'absolute', top: '6px', left: '6px', fontSize: '0.6rem', fontWeight: 800, padding: '2px 5px', borderRadius: '3px', zIndex: 6, ...getPrintingBadgeStyle(card.printing) }}>
+                    {getPrintingBadgeLabel(card.printing)}
+                  </span>
+                )}
+                {card.quantity > 1 && (
+                  <div className="tcg-card-quantity-tag">x{card.quantity}</div>
+                )}
+              </div>
+              <div className="tcg-card-info">
+                <div className="tcg-card-name">{displayName(card)}</div>
+                <div className="tcg-card-meta">
+                  <span style={{ fontSize: '0.7rem' }}>{card.set_name} • #{card.number}</span>
+                  <span className="tcg-card-price">{priceText(card.price_trend, card.price_currency)}</span>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
 
@@ -468,7 +464,7 @@ function SharedCollection({ shareToken }) {
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', marginTop: '0.25rem' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.condition}</span>
-                  <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.printing}</span>
+                  <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)' }}>{getPrintingLabel(activeCard.printing)}</span>
                   <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.language}</span>
                 </div>
               </div>

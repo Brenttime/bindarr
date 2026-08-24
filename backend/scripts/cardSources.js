@@ -10,7 +10,7 @@ const { Readable } = require('stream');
 const { version } = require('../package.json');
 // Scryfall asks callers to identify themselves and rate-limits generic agents
 // harder, so send something traceable rather than a bare product name.
-const USER_AGENT = `Bindarr/${version} (+https://github.com/thenotoriousJeremy/bindarr)`;
+const USER_AGENT = `Bindarr/${version} (+https://github.com/Brenttime/bindarr)`;
 
 function makeHttp() {
   return axios.create({

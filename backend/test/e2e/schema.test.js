@@ -32,6 +32,16 @@ async function runTests() {
     const cols = await db.all(`PRAGMA table_info(collection)`);
     const hasGame = cols.some(c => c.name === 'game');
     assert.ok(!hasGame, 'collection table must NOT have a game column');
+    const sql = (await db.get(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collection'`
+    )).sql;
+    assert.match(sql, /printing TEXT CHECK\(printing IN \('Normal', 'Holofoil'\)\)/);
+    await db.run(`INSERT INTO card_cache (id, name) VALUES ('mtg-schema-check', 'Schema Check')`);
+    await assert.rejects(
+      db.run(`INSERT INTO collection (card_id, printing) VALUES ('mtg-schema-check', 'Reverse Holofoil')`),
+      /CHECK constraint failed/
+    );
+    await db.run(`DELETE FROM card_cache WHERE id = 'mtg-schema-check'`);
     console.log('PASS: F2-TC1');
   } catch (err) {
     console.error('FAIL: F2-TC1 -', err.message);
@@ -43,6 +53,9 @@ async function runTests() {
     const cols = await db.all(`PRAGMA table_info(card_cache)`);
     const hasGame = cols.some(c => c.name === 'game');
     assert.ok(!hasGame, 'card_cache table must NOT have a game column');
+    for (const retired of ['price_avg1', 'price_avg7', 'price_avg30']) {
+      assert.ok(!cols.some(c => c.name === retired), `card_cache.${retired} must not exist`);
+    }
     console.log('PASS: F2-TC2');
   } catch (err) {
     console.error('FAIL: F2-TC2 -', err.message);

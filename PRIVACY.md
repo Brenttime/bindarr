@@ -65,4 +65,4 @@ repository, and the effective date above is revised accordingly.
 
 ## Contact
 
-Questions or issues: <https://github.com/thenotoriousJeremy/bindarr/issues>
+Questions or issues: <https://github.com/Brenttime/bindarr/issues>

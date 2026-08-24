@@ -3,7 +3,7 @@ import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePoi
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
 import { CONDITIONS, PRINTING_OPTIONS } from '../utils/cardOptions';
-import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass } from '../utils/cardPrinting';
+import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass, getPrintingLabel } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { buildCardListText } from '../utils/cardList';
@@ -734,7 +734,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                             </span>
                           </div>
                           <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
-                            {item.printing} • {item.condition}
+                            {getPrintingLabel(item.printing)} • {item.condition}
                           </div>
                           {!selectMode && (
                             <div style={{ display: 'flex', gap: '0.35rem', marginTop: '2px' }}>

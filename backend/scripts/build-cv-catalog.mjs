@@ -6,16 +6,16 @@
 // rather than everything the provider ever listed.
 //
 // Output, beside the models:
-//   milo-<game>-local.bin    Float32 embeddings, n * dim, row-major
-//   milo-<game>-local.json   { dim, ids: [...], builtAt, model, views }
+//   milo-mtg-local.bin    Float32 embeddings, n * dim, row-major
+//   milo-mtg-local.json   { dim, ids: [...], builtAt, model, views }
 //
 // Resumable: re-running keeps every embedding already computed and only fetches
 // cards that are new or whose image_url changed. A full MTG build is ~106k
 // images and takes hours, which is exactly why it resumes.
 //
 // Usage, from backend/:
-//   node scripts/build-cv-catalog.mjs --game mtg --limit 2000
-//   node scripts/build-cv-catalog.mjs --game mtg --views 3   # augmented mean
+//   node scripts/build-cv-catalog.mjs --limit 2000
+//   node scripts/build-cv-catalog.mjs --views 3   # augmented mean
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,7 @@ const ort = require('onnxruntime-node');
 const db = require('../src/db');
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
-const game = arg('--game', 'mtg');
+const game = 'mtg';
 const lang = arg('--lang', 'English');
 const limit = parseInt(arg('--limit', '0'), 10);
 const views = Math.max(1, parseInt(arg('--views', '1'), 10));

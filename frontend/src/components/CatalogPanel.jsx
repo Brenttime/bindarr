@@ -6,9 +6,9 @@ import { useT } from '../utils/i18n';
 // Scan catalogs.
 //
 // This replaced a panel that asked the user to reason about per-set ORB indexes,
-// whole-game rollups, recall depth and set scoping in order to get a working
-// scanner. There is one thing to build now — a catalog, which is one game in one
-// language — and building it does both halves of the job:
+// catalog rollups, recall depth and set scoping in order to get a working
+// scanner. There is one thing to build now — a language catalog — and building
+// it does both halves of the job:
 //
 //   1. cache every set's cards, so the app knows the cards exist at all
 //   2. embed their artwork, so the scanner can recognise them
@@ -42,7 +42,7 @@ function pct(a, b) {
   return Math.min(100, Math.round((a / b) * 100));
 }
 
-function Bar({ value, tone = 'var(--type-grass)' }) {
+function Bar({ value, tone = 'var(--success)' }) {
   return (
     <div style={{ height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
       <div style={{ width: `${Math.max(0, Math.min(100, value))}%`, height: '100%', background: tone, transition: 'width 0.3s' }} />
@@ -86,7 +86,7 @@ function EngineCard({ engine, onDownload, busy }) {
       icon={<Cpu size={16} style={{ color: 'var(--accent-red)' }} />}
       title={t('catalog.scanEngine')}
       status={missing.length ? t('catalog.requiredNotInstalled') : t('catalog.installed')}
-      tone={missing.length ? 'var(--accent-yellow)' : 'var(--type-grass)'}
+      tone={missing.length ? 'var(--accent-yellow)' : 'var(--success)'}
     >
       <div style={ROW}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: '1 1 20rem' }}>
@@ -130,7 +130,7 @@ function ReadyMadeCard({ engine, onDownload, busy, enginePresent }) {
       icon={<Download size={16} style={{ color: 'var(--accent-red)' }} />}
       title={t('catalog.readyMadeTitle')}
       status={have ? t('catalog.nInstalled', { count: have }) : t('catalog.fastestWay')}
-      tone={have ? 'var(--type-grass)' : 'var(--accent-blue, #60a5fa)'}
+      tone={have ? 'var(--success)' : 'var(--accent-blue, #60a5fa)'}
     >
       <p style={HINT}>
         {t('catalog.readyMadeDesc')}
@@ -142,7 +142,7 @@ function ReadyMadeCard({ engine, onDownload, busy, enginePresent }) {
         <table className="collection-table">
           <thead>
             <tr>
-              <th>{t('catalog.thGame')}</th>
+              <th>{t('catalog.thLanguage')}</th>
               <th>{t('catalog.thSize')}</th>
               <th>{t('catalog.thSnapshot')}</th>
               <th style={{ textAlign: 'right' }}>{t('catalog.thStatus')}</th>
@@ -156,7 +156,7 @@ function ReadyMadeCard({ engine, onDownload, busy, enginePresent }) {
                 <td>{c.snapshot}</td>
                 <td style={{ textAlign: 'right' }}>
                   {c.present
-                    ? <span style={{ color: 'var(--type-grass)', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}><Check size={14} /> {t('catalog.installed')}</span>
+                    ? <span style={{ color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}><Check size={14} /> {t('catalog.installed')}</span>
                     : (
                       <button type="button" className="btn btn-primary btn-sm" disabled={busy}
                         onClick={() => onDownload(`catalog:${c.game}`)}
@@ -179,7 +179,7 @@ function ReadyMadeCard({ engine, onDownload, busy, enginePresent }) {
   );
 }
 
-// Pick the sets to build, instead of committing to a whole game.
+// Pick the sets to build instead of committing to every set at once.
 //
 // This is the difference between minutes and hours: a full MTG build is a ~10
 // minute set walk plus ~110k embeddings, while the two boxes actually in front of
@@ -194,7 +194,7 @@ function BuildPicker({ game, lang, disabled, onBuild, showToast, label }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const codeOf = (s) => s.ptcgo_code || (s.id || '').replace(/^mtg-/, '');
+  const codeOf = (s) => s.set_code || (s.id || '').replace(/^mtg-/, '');
 
   useEffect(() => {
     if (!open || sets.length) return;
@@ -336,7 +336,7 @@ function OtherLanguages({ disabled, onBuild, showToast }) {
                       {/* withArt, not cached: a card with no artwork can never be
                           embedded, so it is not a card we can index. */}
                       <td>{num(l.withArt)}{l.cached ? <span style={{ color: 'var(--text-muted)' }}> · {num(l.cached)} cached</span> : null}</td>
-                      <td style={{ color: l.built ? 'var(--type-grass)' : 'var(--text-secondary)' }}>
+                      <td style={{ color: l.built ? 'var(--success)' : 'var(--text-secondary)' }}>
                         {l.built ? t('catalog.nIndexed', { count: num(l.built.rows) }) : t('catalog.otherNotBuilt')}
                       </td>
                       <td style={{ textAlign: 'right' }}>
@@ -507,8 +507,8 @@ export default function CatalogPanel({ showToast }) {
             {GAME_LABEL[c.game] || c.game}
             <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}> · {c.lang}</span>
           </span>
-          <span style={{ fontSize: '0.8rem', color: c.built ? 'var(--type-grass)' : 'var(--text-secondary)' }}>
-            {c.built ? t('catalog.nIndexed', { count: num(indexed) }) : c.published ? t('catalog.readyMadeInUse') : t('catalog.productMapNotBuilt')}
+          <span style={{ fontSize: '0.8rem', color: c.built ? 'var(--success)' : 'var(--text-secondary)' }}>
+            {c.built ? t('catalog.nIndexed', { count: num(indexed) }) : c.published ? t('catalog.readyMadeInUse') : t('catalog.notBuilt')}
           </span>
           {warn && <AlertTriangle size={14} color="var(--accent-yellow)" />}
         </summary>
@@ -520,7 +520,7 @@ export default function CatalogPanel({ showToast }) {
               : t('catalog.nDownloaded', { cached: num(c.cached) })}
           </p>
           {coverage != null && <Bar value={coverage} />}
-          {/* Picking sets comes FIRST and is the primary button; the whole-game
+          {/* Picking sets comes FIRST and is the primary button; the all-sets
               build is the expensive fallback and now says so. The two used to be
               the other way round, with "Build all" the only visible action and the
               set picker hidden behind a secondary button below it — so the default
@@ -666,7 +666,7 @@ export default function CatalogPanel({ showToast }) {
           <p style={{ ...HINT, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             {last.phase === 'error'
               ? <><AlertTriangle size={15} color="var(--accent-red)" /> {t('catalog.lastBuildFailed', { message: last.message })}</>
-              : <><Check size={15} color="var(--type-grass)" /> {GAME_LABEL[last.game] || last.game} · {last.lang}: {last.message}</>}
+              : <><Check size={15} color="var(--success)" /> {GAME_LABEL[last.game] || last.game} · {last.lang}: {last.message}</>}
           </p>
         )}
 

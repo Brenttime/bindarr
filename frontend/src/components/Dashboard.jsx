@@ -150,7 +150,7 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
                     fontSize: '0.65rem',
                     border: 'none',
                     borderRadius: '3px',
-                    background: timePeriod === p ? 'var(--type-grass)' : 'transparent',
+                    background: timePeriod === p ? 'var(--success)' : 'transparent',
                     color: 'var(--text-strong)',
                     cursor: 'pointer',
                     fontWeight: 700,
@@ -252,8 +252,8 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
               <AreaChart data={historyData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--type-grass)" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="var(--type-grass)" stopOpacity={0.0}/>
+                    <stop offset="5%" stopColor="var(--success)" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="var(--success)" stopOpacity={0.0}/>
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="date" stroke="var(--text-secondary)" style={{ fontSize: '0.7rem' }} />
@@ -263,7 +263,7 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
                   labelStyle={{ color: 'var(--text-primary)' }}
                   formatter={(v) => [`$${v}`, t('dash.portfolioValue')]}
                 />
-                <Area type="monotone" dataKey="value" stroke="var(--type-grass)" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" />
+                <Area type="monotone" dataKey="value" stroke="var(--success)" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" />
               </AreaChart>
             </ResponsiveContainer>
           )}

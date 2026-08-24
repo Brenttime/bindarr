@@ -344,7 +344,7 @@ function AdminPanel({ showToast }) {
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', height: '34px' }}>
             <Users size={16} style={{ color: 'var(--accent-red)' }} />
-            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t('admin.totalTrainers', { count: users.length })}</span>
+            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t('admin.totalUsers', { count: users.length })}</span>
           </div>
         </div>
       </div>
@@ -430,8 +430,8 @@ function AdminPanel({ showToast }) {
           </form>
         </div>
 
-        {/* Scan catalogs. One build per game+language: download the cards, then index
-            their artwork. Replaced the per-set / whole-game ORB index panel. */}
+        {/* Scan catalogs. One build per language: download the cards, then index
+            their artwork. Replaced the older multi-step ORB index panel. */}
         <div className="glass-panel">
           <CatalogPanel showToast={showToast} />
         </div>
@@ -507,8 +507,8 @@ function AdminPanel({ showToast }) {
               <input
                 type="text"
                 className="input-control"
-                placeholder={t('admin.filterTrainers')}
-                aria-label={t('admin.filterTrainers')}
+                placeholder={t('admin.filterUsers')}
+                aria-label={t('admin.filterUsers')}
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
                 style={{ width: '100%', paddingLeft: '2rem', paddingVertical: '0.35rem', fontSize: '0.85rem' }}
@@ -521,7 +521,7 @@ function AdminPanel({ showToast }) {
             <div className="spinner"></div>
           ) : filteredUsers.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-              {t('admin.noTrainerMatch')}
+              {t('admin.noUserMatch')}
             </div>
           ) : (
             <div className="collection-table-wrapper" style={{ overflowX: 'auto' }}>

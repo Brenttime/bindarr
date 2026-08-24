@@ -1,15 +1,24 @@
 // Single source of truth for how a card's printing/finish is displayed across
 // every view (Collection gallery/list, deck views, inspectors).
 //
-// Previously each view invented its own badge text ("HOLO" vs "Holo"), colors
-// (amber/blue vs amber/gray), and foil overlay treatment, so the same card
-// looked different depending on where you saw it. Everything now routes here.
+// Every view routes badge text, colors, and foil treatment through this module so
+// the same finish looks identical throughout the app.
 
 // Short uppercase badge label shown on card thumbnails.
 export function getPrintingBadgeLabel(printing) {
   switch (printing) {
-    case 'Holofoil': return 'HOLO';
+    case 'Holofoil': return 'FOIL';
     default: return '';
+  }
+}
+
+// Full user-facing finish label. Stored values remain unchanged for database and
+// API compatibility, but should never be rendered directly.
+export function getPrintingLabel(printing) {
+  switch (printing) {
+    case 'Holofoil': return 'Foil';
+    case 'Normal': return 'Nonfoil';
+    default: return printing || '';
   }
 }
 
@@ -24,8 +33,8 @@ export function getPrintingBadgeStyle(printing) {
 }
 
 // Returns the CSS class for the animated foil overlay, or null for finishes
-// that get no shine. Holofoil -> rainbow prism.
+// that get no shine. The legacy Holofoil storage value gets a rainbow prism.
 export function getFoilOverlayClass(printing) {
-  if (printing === 'Holofoil') return 'holo-shine-overlay';
+  if (printing === 'Holofoil') return 'foil-shine-overlay';
   return null;
 }

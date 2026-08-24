@@ -4,6 +4,7 @@ import { getCardDisplayName } from '../utils/langHelper';
 import { translatedName, setCode, isEnglish } from '../utils/languages';
 import { formatPrice, priceText } from '../utils/formatPrice';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
+import { getPrintingLabel } from '../utils/cardPrinting';
 import { tcgplayerUrl, cardmarketUrl, searchUrl, priceSource, noLinkReason } from '../utils/marketplaceLinks';
 import CardImage from './CardImage';
 import CardImageZoom from './CardImageZoom';
@@ -208,7 +209,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
   // Resolved against the printing selected RIGHT NOW, not the one that was saved
   // when this row was fetched. `card.price_trend` arrives from the server already
   // resolved for the stored printing, so rendering it directly meant switching
-  // Normal to Reverse Holofoil in the form changed nothing on screen — the number
+  // from one finish to another in the form changed nothing on screen — the number
   // only caught up after a save and a refetch, which reads as "prices don't
   // respond to the foil type". Same resolution order as the server.
   const displayPrice = resolveCardPrice(card, printing);
@@ -298,7 +299,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
                 </span>
               )}
               {card.is_trade === 1 && (
-                <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(74, 222, 128, 0.15)', color: 'var(--type-grass)', border: '1px solid rgba(74, 222, 128, 0.3)' }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(74, 222, 128, 0.15)', color: 'var(--success)', border: '1px solid rgba(74, 222, 128, 0.3)' }}>
                   {t('inspector.forTrade')}
                 </span>
               )}
@@ -352,7 +353,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
               {listType === 'wishlist' ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(74,222,128,0.1)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(74,222,128,0.2)' }}>
                   <input type="checkbox" checked={listType === 'collection'} onChange={(e) => setListType(e.target.checked ? 'collection' : 'wishlist')} id="markOwned" style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
-                  <label htmlFor="markOwned" style={{ cursor: 'pointer', margin: 0, fontWeight: 700, color: 'var(--type-grass)', fontSize: '0.85rem' }}>
+                  <label htmlFor="markOwned" style={{ cursor: 'pointer', margin: 0, fontWeight: 700, color: 'var(--success)', fontSize: '0.85rem' }}>
                     {t('inspector.markObtained')}
                   </label>
                 </div>
@@ -473,7 +474,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
               {/* Specifications Details Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem 1rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem' }}>
                 <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.condition}</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.printing}</span></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{getPrintingLabel(card.printing)}</span></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.language}</span></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specSupertype')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.supertype}</span></div>
               </div>
@@ -497,9 +498,9 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
                 />
 
                 {card.list_type === 'wishlist' && (
-                  <button 
-                    className="btn btn-secondary" 
-                    style={{ backgroundColor: 'rgba(74,222,128,0.2)', color: 'var(--type-grass)', border: '1px solid rgba(74,222,128,0.3)', padding: '0 0.75rem', fontSize: '0.8rem' }} 
+                  <button
+                    className="btn btn-secondary"
+                    style={{ backgroundColor: 'rgba(74,222,128,0.2)', color: 'var(--success)', border: '1px solid rgba(74,222,128,0.3)', padding: '0 0.75rem', fontSize: '0.8rem' }}
                     onClick={() => handleQuickToggle('list_type', 'collection')}
                     title={t('bulk.moveToCollection')}
                   >
