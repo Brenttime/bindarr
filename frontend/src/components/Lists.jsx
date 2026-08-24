@@ -5,9 +5,7 @@ import {
 } from 'lucide-react';
 import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
-import { defaultGame, gameOptions, showGamePicker, gameLabel } from '../utils/games';
 import { displayName, setReference } from '../utils/languages';
-import { translateJapaneseName } from '../utils/langHelper';
 import { useT } from '../utils/i18n';
 
 const ACCENTS = [
@@ -32,13 +30,13 @@ function Lists({ showToast }) {
 
   // List filters
   const [searchTerm, setSearchTerm] = useState('');
-  const [gameFilter, setGameFilter] = useState(() => (showGamePicker() ? 'all' : defaultGame()));
+
 
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [newGame, setNewGame] = useState(() => defaultGame());
+
   const [newAccent, setNewAccent] = useState('#10b981');
   const [importText, setImportText] = useState('');
   const [creating, setCreating] = useState(false);
@@ -53,7 +51,7 @@ function Lists({ showToast }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [searchGame, setSearchGame] = useState(() => defaultGame());
+
   const searchDebounce = useRef(null);
 
   // Detail view card filter: 'all' | 'missing' | 'owned'
@@ -84,7 +82,6 @@ function Lists({ showToast }) {
   const openCreate = () => {
     setNewName('');
     setNewDesc('');
-    setNewGame(defaultGame());
     setNewAccent('#10b981');
     setImportText('');
     setShowCreate(true);
@@ -108,7 +105,6 @@ function Lists({ showToast }) {
         body: JSON.stringify({
           name: newName,
           description: newDesc,
-          game: newGame,
           accent_color: newAccent,
           list_text: importText,
         }),
@@ -200,16 +196,15 @@ function Lists({ showToast }) {
     setCardFilter('all');
     setSearchQuery('');
     setSearchResults([]);
-    setSearchGame(list.game || defaultGame());
     await loadList(list.id);
   };
 
   // --- Card search (debounced as the user types) ---
-  const doSearch = async (query, game) => {
+  const doSearch = async (query) => {
     try {
       setSearching(true);
-      const q = game === 'mtg' ? query : (translateJapaneseName(query) || query);
-      const res = await fetch(`/api/search?name=${encodeURIComponent(q)}&game=${game}&limit=24`);
+      const q = query;
+      const res = await fetch(`/api/search?name=${encodeURIComponent(q)}&limit=24`);
       if (res.ok) {
         setSearchResults(await res.json());
       } else if (res.status === 429) {
@@ -228,7 +223,7 @@ function Lists({ showToast }) {
     setSearchQuery(value);
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
     if (!value.trim()) { setSearchResults([]); return; }
-    searchDebounce.current = setTimeout(() => doSearch(value, searchGame), 350);
+    searchDebounce.current = setTimeout(() => doSearch(value), 350);
   };
 
   // --- Card quantity management inside the open list ---
@@ -302,7 +297,6 @@ function Lists({ showToast }) {
 
   // --- Derived data ---
   const filteredLists = lists.filter(l => {
-    if (gameFilter !== 'all' && l.game !== gameFilter) return false;
     if (searchTerm && !l.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
     return true;
   });
@@ -338,21 +332,6 @@ function Lists({ showToast }) {
               value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
               style={{ paddingLeft: '2.25rem', width: '100%', fontSize: '0.85rem' }} />
           </div>
-          {showGamePicker() && (
-            <div className="sub-nav-tabs" style={{ margin: 0, background: 'rgba(0,0,0,0.25)', padding: '3px', borderRadius: 'var(--radius-sm)' }}>
-              {[[ 'all', t('lists.gameAll'), lists.length],
-                ...gameOptions().map(g => [g.value, g.short, lists.filter(l => l.game === g.value).length])
-              ].map(([val, label, count]) => (
-                <button key={val} type="button"
-                  className={`sub-nav-tab ${gameFilter === val ? 'active' : ''}`}
-                  onClick={() => setGameFilter(val)}
-                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>{label}</span>
-                  <span style={{ fontSize: '0.65rem', background: gameFilter === val ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: '10px' }}>{count}</span>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         {loading ? (
@@ -397,7 +376,6 @@ function Lists({ showToast }) {
                       <Layers size={13} /> {t('lists.cards', { count: list.total_card_types || 0 })}
                     </span>
                     <span>{t('lists.total', { count: list.total_cards || 0 })}</span>
-                    <span style={{ marginLeft: 'auto', opacity: 0.7 }}>{gameLabel(list.game, true)}</span>
                   </div>
                 </div>
               );
@@ -424,12 +402,6 @@ function Lists({ showToast }) {
                     placeholder={t('lists.descPlaceholder')} style={{ width: '100%' }} />
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem' }}>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>{t('lists.game')}</label>
-                    <select className="select-control input-control" value={newGame} onChange={e => setNewGame(e.target.value)} style={{ width: '100%' }}>
-                      {gameOptions().map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-                    </select>
-                  </div>
                   <div className="form-group" style={{ flex: 1 }}>
                     <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>{t('deck.accentColor')}</label>
                     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', paddingTop: '0.2rem' }}>
@@ -502,22 +474,16 @@ function Lists({ showToast }) {
               style={{ paddingLeft: '2.25rem', width: '100%', fontSize: '0.85rem' }} />
             {searching && <Search size={14} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', animation: 'spin 1s linear infinite' }} />}
           </div>
-          {showGamePicker() && (
-            <select className="select-control input-control" value={searchGame} onChange={e => { setSearchGame(e.target.value); doSearch(searchQuery, e.target.value); }}
-              style={{ width: 'auto', minWidth: '140px' }}>
-              {gameOptions().map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-            </select>
-          )}
         </div>
         {searchResults.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '320px', overflowY: 'auto' }}>
             {searchResults.map(card => (
               <div key={card.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0.6rem', borderRadius: 'var(--radius-sm)', background: 'rgba(255,255,255,0.04)' }}>
-                <CardImage card={card} game={card.game || searchGame} alt={displayName(card)}
+                <CardImage card={card} alt={displayName(card)}
                   style={{ width: '34px', height: '48px', borderRadius: '4px', objectFit: 'cover', flexShrink: 0 }} />
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName(card)}</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{setReference(card) || gameLabel(card.game || searchGame, true)}</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{setReference(card) || ''}</div>
                 </div>
                 <button className="btn btn-primary" onClick={() => addCard(card)}
                   style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem', display: 'flex', alignItems: 'center', gap: '0.3rem', whiteSpace: 'nowrap' }}>
@@ -571,12 +537,12 @@ function Lists({ showToast }) {
                   <tr key={card.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                     <td style={{ padding: '0.5rem 1rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <CardImage card={card} game={card.game || activeList.game} alt={displayName(card)}
+                        <CardImage card={card} alt={displayName(card)}
                           style={{ width: '38px', height: '54px', borderRadius: '5px', objectFit: 'cover', flexShrink: 0 }} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 700, color: 'var(--text-strong)' }}>{displayName(card)}</div>
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                            {setReference(card) || gameLabel(card.game || activeList.game, true)}
+                            {setReference(card) || ''}
                             {card.price_trend > 0 && <span style={{ marginLeft: '0.5rem' }}>${card.price_trend.toFixed(2)}</span>}
                           </div>
                         </div>

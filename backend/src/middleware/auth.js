@@ -14,7 +14,7 @@ async function authenticateToken(req, res, next) {
 
   try {
     const columns = `u.username, u.role, u.share_token, u.share_enabled,
-                     u.tcg_api_key, u.psa_api_token, u.graded_price_api_key, u.api_key`;
+                     u.api_key`;
     let session = await db.get(`
       SELECT s.user_id, ${columns}
       FROM sessions s
@@ -46,9 +46,6 @@ async function authenticateToken(req, res, next) {
       role: session.role,
       share_token: session.share_token,
       share_enabled: session.share_enabled,
-      tcg_api_key: session.tcg_api_key || '',
-      psa_api_token: session.psa_api_token || '',
-      graded_price_api_key: session.graded_price_api_key || '',
       api_key: session.api_key || '',
       via_api_key: viaApiKey
     };
@@ -83,7 +80,7 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts. Please try again later.' }
 });
 
-// The card search proxies to the external Pokémon TCG API. Bulk scanning fires
+// The card search proxies to the external Scryfall API. Bulk scanning fires
 // one search per card, so the ceiling is generous — it exists to stop a logged-
 // in client from hammering the upstream API, not to throttle normal use.
 const searchLimiter = rateLimit({

@@ -3,7 +3,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
-const tcgApi = require('../tcgApi');
 const scryfallApi = require('../scryfallApi');
 const catalog = require('../catalog');
 const { parseCardRow } = require('../utils/priceHelpers');
@@ -17,16 +16,7 @@ router.use(authenticateToken, requireAdmin);
 
 router.post('/seed-cards', async (req, res) => {
   try {
-    const SEED_SETS = ['base1', 'sv1', 'swsh1'];
     const MOCK_POOL = [];
-    for (const setId of SEED_SETS) {
-      try {
-        MOCK_POOL.push(...await tcgApi.getCardsBySet(setId, req.user.tcg_api_key));
-        await new Promise(r => setTimeout(r, 500)); // Be gentle on the rate limits
-      } catch (err) {
-        console.error(`Seed: skipping Pokémon set ${setId}:`, err.message);
-      }
-    }
     const MTG_SEED_SETS = ['lea', 'mh3'];
     for (const setCode of MTG_SEED_SETS) {
       try {
@@ -251,7 +241,7 @@ router.delete('/users/:id', async (req, res) => {
 
 // --- Set-index build management ---
 
-const isGame = (g) => g === 'mtg' || g === 'pokemon';
+const isGame = (g) => g === 'mtg';
 
 // List persisted builds plus any in-flight/recent build progress.
 // --- Catalogs -------------------------------------------------------------
@@ -281,7 +271,7 @@ router.get('/catalogs', async (req, res) => {
 // when the user opens the language section.
 router.get('/catalogs/languages', async (req, res) => {
   try {
-    res.json({ languages: await catalog.listLanguages(String(req.query.game || 'pokemon')) });
+    res.json({ languages: await catalog.listLanguages(String(req.query.game || 'mtg')) });
   } catch (e) {
     console.error('listLanguages failed:', e.message);
     res.status(500).json({ error: 'Could not list languages' });
@@ -307,29 +297,10 @@ router.post('/catalogs/build', (req, res) => {
 // and the licence the models carry. See utils/modelAssets for why the models are
 // a deliberate download rather than part of the image.
 router.get('/models', async (req, res) => {
-  // The product map ships with the ready-made Pokémon catalog's state because it is
-  // that catalog's other half: product ids with nothing to look them up in name no
-  // cards at all.
-  res.json({
-    ...require('../utils/modelAssets').status(),
-    productMap: await require('../tcgplayerCatalog').summary(),
-  });
+  res.json(require('../utils/modelAssets').status());
 });
 
-// Build (or refresh) the TCGplayer product map. A download of the ready-made
-// Pokémon catalog starts this on its own — this is the button for refreshing it
-// after a set release, or recovering from a run that failed halfway.
-router.post('/models/product-map', (req, res) => {
-  const productMap = require('../tcgplayerCatalog');
-  try {
-    if (req.body && req.body.stop) return res.json({ stopped: productMap.stop() });
-    res.json({ progress: productMap.start() });
-  } catch (e) {
-    res.status(409).json({ error: e.message, progress: productMap.state() });
-  }
-});
-
-// `what`: 'models' or 'catalog:mtg' / 'catalog:pokemon'. Downloading is the
+// `what`: 'models' or 'catalog:mtg'. Downloading is the
 // operator's own act on their own install — which is precisely why it is a button
 // they press rather than something that happens on startup.
 router.post('/models/download', (req, res) => {

@@ -62,12 +62,12 @@ async function runTests() {
 
     // Seed card cache + a couple of owned copies (so the missing/owned math
     // in the detail response is testable).
-    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number, game) VALUES (?, ?, ?, ?, ?)`,
-      ['ls-c1', 'Lightning Bolt', 'jud', '124', 'mtg']);
-    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number, game) VALUES (?, ?, ?, ?, ?)`,
-      ['ls-c2', "Gaea's Cradle", 'jup', '431', 'mtg']);
-    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number, game) VALUES (?, ?, ?, ?, ?)`,
-      ['ls-c3', 'Mox Diamond', 'alpha', '101', 'mtg']);
+    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
+      ['ls-c1', 'Lightning Bolt', 'jud', '124']);
+    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
+      ['ls-c2', "Gaea's Cradle", 'jup', '431']);
+    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
+      ['ls-c3', 'Mox Diamond', 'alpha', '101']);
     await db.run(`INSERT INTO collection (card_id, quantity, user_id, list_type) VALUES (?, ?, ?, ?)`,
       ['ls-c1', 2, adminId, 'collection']);
 

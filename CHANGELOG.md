@@ -61,6 +61,17 @@ release also carries fuller notes on its
 - **Moxfield shortcut on the deck list.** The deck vault banner now has a
   *Moxfield Sync* button next to *Create Deck* that jumps to Settings and
   smooth-scrolls straight to the Moxfield Sync panel.
+- **Pokémon and graded slabs.** Bindarr is now Magic: The Gathering only: the
+  Pokémon game, its providers (`tcgApi.js`/pokemontcg.io, `tcgdexApi.js`,
+  `tcgcsvApi.js`, `pokemonProvider.js`), and the graded-slab feature (`psaApi.js`,
+  `gradedPrices.js`, the per-copy grader/grade/cert and value fields) are gone. An
+  upgrade drops the `game` column, the per-copy grading columns on `collection`,
+  the `psa_cert` table, and the user-level `psa_api_token` /
+  `graded_price_api_key` / `tcg_api_key` columns while keeping every MTG row, and
+  with them the per-copy value, the cert lookup, TCGplayer/TCGCSV Pokémon pricing
+  and the Pokémon scan catalogs. Prices now come from Scryfall alone, and card
+  values resolve from the per-printing `price_*` columns instead of a per-copy
+  `market_value`.
 
 ## [1.8.1] - 2026-08-19
 

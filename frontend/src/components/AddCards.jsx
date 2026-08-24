@@ -1,8 +1,7 @@
 import { useState } from 'react';
-import { Camera, Search, Award } from 'lucide-react';
+import { Camera, Search } from 'lucide-react';
 import CameraScanner from './CameraScanner';
 import CardSearch from './CardSearch';
-import SlabLookup from './SlabLookup';
 import { useT } from '../utils/i18n';
 
 function AddCards({ onAddSuccess, showToast, setActiveTab, initialMode = 'scan' }) {
@@ -41,23 +40,12 @@ function AddCards({ onAddSuccess, showToast, setActiveTab, initialMode = 'scan' 
             <Search size={18} />
             <span>{t('addCards.search')}</span>
           </button>
-          {/* A slab is a third way in, not a variant of the other two: the camera
-              cannot read a cert number through the plastic, and searching by name
-              cannot tell you the grade. The number on the label does both. */}
-          <button
-            className={`sub-nav-tab ${mode === 'slab' ? 'active' : ''}`}
-            onClick={() => setMode('slab')}
-          >
-            <Award size={18} />
-            <span>{t('addCards.slab')}</span>
-          </button>
         </div>
       </div>
 
       <div>
         {mode === 'scan' && <CameraScanner onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
         {mode === 'search' && <CardSearch onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
-        {mode === 'slab' && <SlabLookup onAddSuccess={onAddSuccess} showToast={showToast} />}
       </div>
     </div>
   );

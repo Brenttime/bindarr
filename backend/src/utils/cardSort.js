@@ -39,17 +39,10 @@ function prepareCardMetadata(card) {
 // Canonical category orderings shared with the frontend. See shared/cardOrder.json.
 const cardOrder = require('../../../shared/cardOrder.json');
 const sortSchemes = require('../../../shared/sortSchemes.json');
-const POKEMON_TYPE_ORDER = cardOrder.pokemonType;
 const PRINTING_ORDER_NORMALS_FIRST = cardOrder.printingNormalsFirst;
 const PRINTING_ORDER_FOILS_FIRST = cardOrder.printingFoilsFirst;
 const LANGUAGE_ORDER = cardOrder.language;
 const WUBRG_ORDER = cardOrder.wubrg;
-
-function typeCategory(types) {
-  const t = Array.isArray(types) ? types : safeJsonParse(types, []);
-  if (t.length > 1) return 'Multicolor';
-  return t[0] || 'Colorless';
-}
 
 function getColorCategory(card) {
   if (!card) return 'Colorless';
@@ -127,12 +120,6 @@ function sortCards(cards, sortOrder, foilSorting) {
         case 'printing':
           cmp = (printingOrder[a.printing] || 10) - (printingOrder[b.printing] || 10);
           break;
-        case 'type': {
-          const orderA = POKEMON_TYPE_ORDER[typeCategory(a.types)] || 50;
-          const orderB = POKEMON_TYPE_ORDER[typeCategory(b.types)] || 50;
-          cmp = orderA - orderB;
-          break;
-        }
         case 'language': {
           const la = LANGUAGE_ORDER[a.language] || 99;
           const lb = LANGUAGE_ORDER[b.language] || 99;
@@ -197,15 +184,6 @@ function getSortCategory(card, sortOrder) {
   if (primary === 'color_identity' || primary === 'color') {
     return getColorCategory(card);
   }
-  if (primary === 'type') {
-    let types = [];
-    if (card.types) {
-      try {
-        types = typeof card.types === 'string' ? JSON.parse(card.types) : card.types;
-      } catch (e) { types = Array.isArray(card.types) ? card.types : []; }
-    }
-    return typeCategory(types);
-  }
   if (primary === 'price') {
     const p = card.price_trend || 0;
     if (p >= 100) return '$100+';
@@ -227,7 +205,6 @@ module.exports = {
   sortCards,
   loadSetsCache,
   getSortCategory,
-  typeCategory,
   getColorCategory,
   rarityRank,
   prepareCardMetadata,

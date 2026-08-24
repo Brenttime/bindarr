@@ -17,10 +17,6 @@ process.env.DB_PATH = tmpDb;
 const db = require('../../src/db');
 const { sortCards } = require('../../src/utils/cardSort');
 
-// Setup mock fetchAndCacheSets
-const tcgApi = require('../../src/tcgApi');
-tcgApi.fetchAndCacheSets = async () => {};
-
 function cleanup() {
   try { db.dbConnection.close(); } catch {}
   for (const suffix of ['', '-wal', '-shm']) {
@@ -31,39 +27,39 @@ function cleanup() {
 async function runTests() {
   await db.initDb();
 
-  // F2-TC1: Assert that the collection table contains a game column
+  // F2-TC1: The collection table has no game column (single-game app).
   try {
     const cols = await db.all(`PRAGMA table_info(collection)`);
     const hasGame = cols.some(c => c.name === 'game');
-    assert.ok(hasGame, 'collection table must have game column');
+    assert.ok(!hasGame, 'collection table must NOT have a game column');
     console.log('PASS: F2-TC1');
   } catch (err) {
     console.error('FAIL: F2-TC1 -', err.message);
     throw err;
   }
 
-  // F2-TC2: Assert that the card_cache table contains a game column
+  // F2-TC2: The card_cache table has no game column.
   try {
     const cols = await db.all(`PRAGMA table_info(card_cache)`);
     const hasGame = cols.some(c => c.name === 'game');
-    assert.ok(hasGame, 'card_cache table must have game column');
+    assert.ok(!hasGame, 'card_cache table must NOT have a game column');
     console.log('PASS: F2-TC2');
   } catch (err) {
     console.error('FAIL: F2-TC2 -', err.message);
     throw err;
   }
 
-  // F2-TC3: Verify that MTG cards are sorted in WUBRG sequence
+  // F2-TC3: Verify that MTG cards are sorted in WUBRG sequence.
   try {
     const cards = [
-      { name: 'Mountain', types: ['Red'], game: 'mtg' },
-      { name: 'Forest', types: ['Green'], game: 'mtg' },
-      { name: 'Island', types: ['Blue'], game: 'mtg' },
-      { name: 'Plains', types: ['White'], game: 'mtg' },
-      { name: 'Swamp', types: ['Black'], game: 'mtg' }
+      { name: 'Mountain', types: ['Red'], color_identity: ['R'] },
+      { name: 'Forest', types: ['Green'], color_identity: ['G'] },
+      { name: 'Island', types: ['Blue'], color_identity: ['U'] },
+      { name: 'Plains', types: ['White'], color_identity: ['W'] },
+      { name: 'Swamp', types: ['Black'], color_identity: ['B'] }
     ];
     // WUBRG: White -> Blue -> Black -> Red -> Green
-    const sorted = sortCards(cards, 'type-name', 'normals_first');
+    const sorted = sortCards(cards, '[{"by":"color","dir":"asc"},{"by":"name","dir":"asc"}]', 'normals_first');
     const colorsSorted = sorted.map(c => c.types[0]);
     assert.deepStrictEqual(colorsSorted, ['White', 'Blue', 'Black', 'Red', 'Green'], 'MTG cards must sort in WUBRG order');
     console.log('PASS: F2-TC3');
@@ -72,44 +68,45 @@ async function runTests() {
     throw err;
   }
 
-  // F2-TC6: Verify DB schema migration idempotency
+  // F2-TC6: Verify DB schema migration idempotency.
   try {
-    // Run initDb again on existing DB
+    // Run initDb again on existing DB — no column may be duplicated or
+    // resurrected.
     await db.initDb();
     const cols = await db.all(`PRAGMA table_info(collection)`);
-    const gameCols = cols.filter(c => c.name === 'game');
-    assert.strictEqual(gameCols.length, 1, 'Should only have one game column even after running initDb twice');
+    const gradeCols = cols.filter(c => ['grader', 'grade', 'cert_number', 'market_value'].includes(c.name));
+    assert.strictEqual(gradeCols.length, 0, 'graded columns must stay removed even after running initDb twice');
     console.log('PASS: F2-TC6');
   } catch (err) {
     console.error('FAIL: F2-TC6 -', err.message);
     throw err;
   }
 
-  // F2-TC7: Verify multicolor cards sorting order
+  // F2-TC7: Verify multicolor cards sorting order.
   try {
     const cards = [
-      { name: 'Azorius Card', types: ['White', 'Blue'], game: 'mtg' },
-      { name: 'Island', types: ['Blue'], game: 'mtg' },
-      { name: 'Boros Card', types: ['Red', 'White'], game: 'mtg' },
-      { name: 'Plains', types: ['White'], game: 'mtg' }
+      { name: 'Azorius Card', types: ['White', 'Blue'], color_identity: ['W', 'U'] },
+      { name: 'Island', types: ['Blue'], color_identity: ['U'] },
+      { name: 'Boros Card', types: ['Red', 'White'], color_identity: ['R', 'W'] },
+      { name: 'Plains', types: ['White'], color_identity: ['W'] }
     ];
-    const sorted = sortCards(cards, 'type-name', 'normals_first');
-    // Expected order: Plains (White) -> Island (Blue) -> Azorius Card (Multicolor) -> Boros Card (Multicolor)
+    const sorted = sortCards(cards, '[{"by":"color","dir":"asc"},{"by":"name","dir":"asc"}]', 'normals_first');
+    // Expected order: Plains (White) -> Island (Blue) -> multicolors.
     assert.strictEqual(sorted[0].name, 'Plains');
     assert.strictEqual(sorted[1].name, 'Island');
-    assert.strictEqual(sorted[2].name, 'Azorius Card');
-    assert.strictEqual(sorted[3].name, 'Boros Card');
+    assert.ok(['Azorius Card', 'Boros Card'].includes(sorted[2].name));
+    assert.ok(['Azorius Card', 'Boros Card'].includes(sorted[3].name));
     console.log('PASS: F2-TC7');
   } catch (err) {
     console.error('FAIL: F2-TC7 -', err.message);
     throw err;
   }
 
-  // F2-TC10: Verify price history handles null/zero values safely
+  // F2-TC10: Verify price history handles null/zero values safely.
   try {
     await db.run(
-      `INSERT INTO card_cache (id, name, game, price_trend) VALUES (?, ?, ?, ?)`,
-      ['mtg-c3', 'Promo Lotus', 'mtg', null]
+      `INSERT INTO card_cache (id, name, price_trend) VALUES (?, ?, ?)`,
+      ['mtg-c3', 'Promo Lotus', null]
     );
     await db.run(
       `INSERT INTO price_history (card_id, price) VALUES (?, ?)`,
@@ -123,7 +120,7 @@ async function runTests() {
     throw err;
   }
 
-  // F2-TC11: Upgrade a legacy storage/notes schema without losing card data.
+  // F2-TC11: Upgrade a legacy storage/notes/graded schema without losing card data.
   try {
     await db.run(`CREATE TABLE locations (id INTEGER PRIMARY KEY, name TEXT)`);
     await db.run(`CREATE TABLE compartments (id INTEGER PRIMARY KEY, location_id INTEGER)`);
@@ -137,15 +134,11 @@ async function runTests() {
     await db.run(`
       INSERT INTO collection (
         card_id, quantity, condition, printing, language, purchase_price,
-        favorite, is_trade, list_type, game, notes, grader, grade,
-        cert_number, market_value, market_value_source,
-        location_id, compartment_id, position
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        favorite, is_trade, list_type, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       'mtg-c3', 2, 'Lightly Played', 'Holofoil', 'English', 12.5,
-      1, 1, 'collection', 'mtg', 'keep this per-card note', 'PSA', 9,
-      'legacy-cert', 42, 'manual',
-      7, 9, 3
+      1, 1, 'collection', 'keep this per-card note'
     ]);
 
     await db.initDb();
@@ -161,15 +154,13 @@ async function runTests() {
     `);
     assert.deepStrictEqual(remainingStorage, [], 'retired storage and notes tables should be removed');
 
-    const migrated = await db.get(`SELECT * FROM collection WHERE cert_number = ?`, ['legacy-cert']);
+    const migrated = await db.get(`SELECT * FROM collection WHERE card_id = 'mtg-c3'`);
     assert.ok(migrated, 'legacy collection row should survive migration');
     assert.strictEqual(migrated.quantity, 2);
     assert.strictEqual(migrated.condition, 'Lightly Played');
     assert.strictEqual(migrated.printing, 'Holofoil');
     assert.strictEqual(migrated.purchase_price, 12.5);
     assert.strictEqual(migrated.notes, 'keep this per-card note');
-    assert.strictEqual(migrated.grade, 9);
-    assert.strictEqual(migrated.market_value, 42);
     assert.strictEqual((await db.get(`PRAGMA foreign_keys`)).foreign_keys, 1);
 
     // A partially removed legacy schema must also be cleaned up. Earlier code

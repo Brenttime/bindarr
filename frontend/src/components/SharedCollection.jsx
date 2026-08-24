@@ -16,10 +16,8 @@ const COLORS = [
   '#ec4899', '#14b8a6', '#f43f5e', '#a855f7', '#6366f1'
 ];
 
+// MTG color pips for the per-color chips in the shared-catalog chart.
 const TYPE_COLORS = {
-  'Grass': '#4ade80', 'Fire': '#f87171', 'Water': '#60a5fa', 'Lightning': '#facc15',
-  'Psychic': '#c084fc', 'Fighting': '#f97316', 'Darkness': '#475569', 'Metal': '#94a3b8',
-  'Dragon': '#a855f7', 'Fairy': '#f472b6', 'Colorless': '#cbd5e1',
   'White': '#fef08a', 'Blue': '#3b82f6', 'Black': '#334155', 'Red': '#ef4444',
   'Green': '#10b981', 'Land': '#d97706'
 };

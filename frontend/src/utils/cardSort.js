@@ -7,14 +7,6 @@ import sortSchemes from '../../../shared/sortSchemes.json';
 // queue.
 // Category orderings come from shared/cardOrder.json so display order matches
 // the backend sort engine (backend/src/utils/cardSort.js) exactly.
-export const POKEMON_TYPE_ORDER = cardOrder.pokemonType;
-
-// Mirrors typeCategory in the backend: multi-color MTG cards bucket together.
-export function typeCategory(types) {
-  const t = Array.isArray(types) ? types : [];
-  if (t.length > 1) return 'Multicolor';
-  return t[0] || 'Colorless';
-}
 
 export function getPrintingRank(printing, foilSorting) {
   const order = foilSorting === 'foils_first' ? cardOrder.printingFoilsFirst : cardOrder.printingNormalsFirst;
@@ -91,12 +83,6 @@ export function sortCardsByOrder(cards, sortOrder, foilSorting, setsList = []) {
           const printA = getPrintingRank(a.printing, foilSorting);
           const printB = getPrintingRank(b.printing, foilSorting);
           cmp = printA - printB;
-          break;
-        }
-        case 'type': {
-          const orderA = POKEMON_TYPE_ORDER[typeCategory(a.types)] || 50;
-          const orderB = POKEMON_TYPE_ORDER[typeCategory(b.types)] || 50;
-          cmp = orderA - orderB;
           break;
         }
         case 'language': {

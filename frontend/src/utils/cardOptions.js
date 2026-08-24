@@ -9,27 +9,18 @@ export const PRINTINGS = ['Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition
 // picker and the backend can never drift out of sync.
 export const LANGUAGES = LANGUAGE_NAMES;
 
-// MTG cards are only Nonfoil or Foil, never the Pokémon finishes. The foil
-// price is stored under the 'Holofoil' value (scryfall usd_foil), so we keep
-// that stored value (also what the DB CHECK allows) and just relabel it "Foil".
+// Magic cards are only Nonfoil or Foil. The foil price is stored under the
+// 'Holofoil' value (scryfall usd_foil), so we keep that stored value (also what
+// the DB CHECK allows) and just relabel it "Foil".
 const MTG_PRINTINGS = [{ value: 'Normal', label: 'Nonfoil' }, { value: 'Holofoil', label: 'Foil' }];
 
-// Printing/finish {value,label} options for a card's game. Value stays within
-// the collection.printing CHECK constraint; only the label is game-specific.
+// Printing/finish {value,label} options. Value stays within the
+// collection.printing CHECK constraint. The `game` argument is kept for call
+// sites that still pass one; it no longer changes anything.
 export function getPrintings(game) {
-  if (String(game).toLowerCase() === 'mtg') return MTG_PRINTINGS;
-  return PRINTINGS.map(p => ({ value: p, label: p }));
+  void game;
+  return MTG_PRINTINGS;
 }
-
-// Grading companies, mirroring the collection.grader CHECK constraint in
-// backend/src/db.js. 'Raw' is the default and means ungraded — not unknown, so it
-// is a real option in the picker rather than an empty one.
-export const GRADERS = ['Raw', 'PSA', 'BGS', 'CGC', 'SGC', 'TAG'];
-
-// Grades a slab can carry, highest first because that is the order a collector
-// reads them in. PSA issues whole numbers plus 10; BGS and CGC add half grades, so
-// the list is the union and the picker is shared.
-export const GRADES = [10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5, 5, 4, 3, 2, 1];
 
 // A binder-family container lays out fixed pockets (Pages); other container
 // types (boxes, deck boxes) are continuous (Rows). Kept here so the several
@@ -46,7 +37,6 @@ const CONTAINER_TYPE_KEYS = {
   'Toploader Binder': 'toploaderBinder',
   'Box': 'box',
   'Toploader Box': 'toploaderBox',
-  'Graded Slab Box': 'gradedSlabBox',
   'Display Shelf / Stand': 'displayShelf',
   'Deck Box': 'deckBox',
   'Tin / Case': 'tinCase',

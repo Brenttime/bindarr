@@ -158,8 +158,7 @@ async function initDb() {
       release_date TEXT,
       ptcgo_code TEXT,
       symbol_url TEXT,
-      logo_url TEXT,
-      game TEXT DEFAULT 'pokemon'
+      logo_url TEXT
     )
   `);
 
@@ -187,7 +186,6 @@ async function initDb() {
       price_source TEXT,
       cmc REAL,
       color_identity TEXT,
-      game TEXT DEFAULT 'pokemon',
       language TEXT DEFAULT 'English',
       printed_name TEXT,
       tcgplayer_product_id INTEGER,
@@ -207,7 +205,6 @@ async function initDb() {
       favorite INTEGER DEFAULT 0,
       is_trade INTEGER DEFAULT 0,
       list_type TEXT DEFAULT 'collection',
-      game TEXT DEFAULT 'pokemon',
       added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(card_id) REFERENCES card_cache(id)
     )
@@ -222,15 +219,12 @@ async function initDb() {
     )
   `);
 
-  // card_cache id -> TCGplayer productId, for the Pokémon rows whose providers do
-  // not carry one (TCGdex supplies none at all; Scryfall gives MTG its id directly,
-  // so MTG never needs a row here).
-  //
-  // Its own table rather than a card_cache column because the mapping is derived,
-  // not provider data: it is rebuilt by matching set+number against TCGplayer's
-  // catalogue, and `confidence` records how — 1 for an exact set match, 0.8 for one
-  // recovered from a name suffix. Keeping it separate means a rebuild can be
-  // discarded and redone without touching a single real card row.
+  // card_cache id -> TCGplayer productId, so marketplace links can point at the
+  // card's own product page. Derived, not provider data: it is rebuilt by
+  // matching set+number against TCGplayer's catalogue, and `confidence` records
+  // how — 1 for an exact set match, 0.8 for one recovered from a name suffix.
+  // Keeping it separate means a rebuild can be discarded and redone without
+  // touching a single real card row.
   await run(`
     CREATE TABLE IF NOT EXISTS tcgplayer_product (
       card_id TEXT PRIMARY KEY,
@@ -243,65 +237,17 @@ async function initDb() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_tcgplayer_product_pid ON tcgplayer_product(product_id)`);
 
-  // TCGplayer's own product catalogue, keyed the way the READY-MADE Pokémon scan
-  // catalog is keyed: by product id.
-  //
-  // tcgplayer_product above is the other direction — cards this install holds, for
-  // which a product was found — so it can only ever answer for cards already
-  // downloaded and priced. The published scan catalog needs the reverse: given a
-  // product id the model matched, what card is that? Without this table the answer
-  // was nothing at all, and every scan against the ready-made Pokémon catalog
-  // matched and then named no card (see routes/collection.js scan-match).
-  //
-  // Cards only: a product with no collector number is sealed product, and no
-  // photograph of a card will ever be one.
-  await run(`
-    CREATE TABLE IF NOT EXISTS tcgplayer_catalog (
-      product_id INTEGER PRIMARY KEY,
-      category_id INTEGER NOT NULL,
-      group_id INTEGER NOT NULL,
-      group_name TEXT,
-      set_id TEXT,
-      name TEXT,
-      number TEXT,
-      built_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
   // Sets the provider LISTS but has no usable card data for — no cards at all, or
   // cards with no artwork, which a scan catalog cannot use either way.
   //
-  // Recorded so "N sets have no cards here yet" stops counting them. Measured on a
-  // real install: all 46 uncached English Pokemon sets were of this kind (promos,
-  // samples, jumbo cards, trainer kits), so the panel told the user to build sets
-  // that can never be built, and the weekly auto-update chased a number that could
-  // never drop. A build fills this in as it walks; a set whose data appears later
-  // clears its own row.
+  // Recorded so "N sets have no cards here yet" stops counting them.
   await run(`
     CREATE TABLE IF NOT EXISTS set_data_gaps (
-      game TEXT NOT NULL,
       language TEXT NOT NULL,
       set_id TEXT NOT NULL,
       reason TEXT,
       seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (game, language, set_id)
-    )
-  `);
-
-  // Cached PSA cert lookups. Cached forever, with no staleness check anywhere —
-  // deliberate, and the only table in this schema like that: a cert describes a
-  // slab that was sealed once and graded once. The grade cannot change, so a
-  // second request can only return the same answer while spending quota from a
-  // rate-limited token.
-  //
-  // `payload` is the provider response as received, not a parsed subset. The
-  // fields worth reading are still being learned, and re-deriving them from a
-  // stored response beats re-fetching 400 certs to pick up one more column.
-  await run(`
-    CREATE TABLE IF NOT EXISTS psa_cert (
-      cert_number TEXT PRIMARY KEY,
-      payload TEXT NOT NULL,
-      fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      PRIMARY KEY (language, set_id)
     )
   `);
 
@@ -313,7 +259,6 @@ async function initDb() {
       description TEXT,
       checked_out INTEGER DEFAULT 0,
       checked_out_at DATETIME,
-      game TEXT DEFAULT 'pokemon',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     )
@@ -343,7 +288,6 @@ async function initDb() {
       name TEXT NOT NULL,
       description TEXT,
       accent_color TEXT DEFAULT '#10b981',
-      game TEXT DEFAULT 'pokemon',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     )
@@ -360,23 +304,13 @@ async function initDb() {
   `);
 
   // --- MIGRATIONS ---
-  // When each game's price sweep last ran. Scryfall updates prices once a day,
-  // so a sweep more often than that cannot return anything new — and the boot
-  // sweep would otherwise re-run on every restart (constantly, under nodemon).
+  // When the price sweep last ran. Scryfall updates prices once a day, so a
+  // sweep more often than that cannot return anything new — and the boot sweep
+  // would otherwise re-run on every restart (constantly, under nodemon).
   // Persisted rather than in-memory precisely because restarts are the problem.
   const appSettingsCols = await all(`PRAGMA table_info(app_settings)`);
   if (!appSettingsCols.some(c => c.name === 'mtg_prices_swept_at')) {
     await run(`ALTER TABLE app_settings ADD COLUMN mtg_prices_swept_at DATETIME`);
-  }
-  if (!appSettingsCols.some(c => c.name === 'pokemon_prices_swept_at')) {
-    await run(`ALTER TABLE app_settings ADD COLUMN pokemon_prices_swept_at DATETIME`);
-  }
-  if (!appSettingsCols.some(c => c.name === 'tcgdex_prices_swept_at')) {
-    await run(`ALTER TABLE app_settings ADD COLUMN tcgdex_prices_swept_at DATETIME`);
-  }
-  // TCGCSV mirrors TCGplayer once a day, so its gate is the same 24h as the rest.
-  if (!appSettingsCols.some(c => c.name === 'tcgcsv_prices_swept_at')) {
-    await run(`ALTER TABLE app_settings ADD COLUMN tcgcsv_prices_swept_at DATETIME`);
   }
 
   // VESTIGIAL. This gated non-admin members building an individual per-set ORB
@@ -387,34 +321,6 @@ async function initDb() {
   // dropping it would mean a table rebuild for no gain.
   if (!appSettingsCols.some(c => c.name === 'allow_member_set_builds')) {
     await run(`ALTER TABLE app_settings ADD COLUMN allow_member_set_builds INTEGER NOT NULL DEFAULT 0`);
-  }
-  // Which API English Pokémon cards and sets come from.
-  //
-  // TCGdex for a NEW install: 218 English sets against pokemontcg.io's 174, every
-  // other language in the same place, no API key, and measured 57-206 ms per card
-  // lookup against 971-1963 ms (pokemontcg.io also answers 5xx often enough to need
-  // a retry policy — see tcgApi's interceptor).
-  //
-  // pokemontcg.io for an install that ALREADY HAS DATA, and this half is the point
-  // of the WHERE clause. The two providers number the same sets differently — sv1
-  // vs sv01, pgo vs swsh10.5, me1 vs me01 — and every cached card, every scan
-  // catalog and every collection row was built against one of those numberings.
-  // Flipping an existing install underneath its own data is how the set list ends
-  // up describing sets none of its cards belong to. An upgrade keeps what it was
-  // built with; the admin can switch deliberately in Settings → Instance Settings,
-  // which re-syncs the set table and rebuilds the product map behind it.
-  //
-  // "Already has data" is read off the Pokémon set catalogue and card cache, not
-  // off `users`: this migration runs before the startup set sync, so a brand new
-  // database genuinely has neither, while any install that has ever run has both.
-  // Same shape as the setup_complete migration below.
-  if (!appSettingsCols.some(c => c.name === 'pokemon_provider')) {
-    await run(`ALTER TABLE app_settings ADD COLUMN pokemon_provider TEXT DEFAULT 'tcgdex'`);
-    await run(`
-      UPDATE app_settings SET pokemon_provider = 'pokemontcg'
-       WHERE (SELECT COUNT(*) FROM sets WHERE game = 'pokemon') > 0
-          OR (SELECT COUNT(*) FROM card_cache WHERE game = 'pokemon') > 0
-    `);
   }
   if (!appSettingsCols.some(c => c.name === 'scan_exclude_tokens')) {
     await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_tokens INTEGER NOT NULL DEFAULT 0`);
@@ -427,18 +333,6 @@ async function initDb() {
   }
   if (!appSettingsCols.some(c => c.name === 'scan_exclude_promos')) {
     await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_promos INTEGER NOT NULL DEFAULT 0`);
-  }
-  // The one scan exclusion that defaults ON, and the only one that is not a
-  // matter of taste: Pokémon TCG Pocket cards exist solely in the phone game, so
-  // no camera will ever be pointed at one. Indexing them costs a linear pass over
-  // 2,321 extra vectors on every unscoped scan and — because Pocket art is
-  // largely redrawn from paper cards — invites confident matches naming a set the
-  // user cannot own. MTG has always excluded digital sets (cardSets.listAllSets
-  // filters Scryfall's `digital` flag); this is the Pokémon half of that rule
-  // finally catching up, which is why existing installs get it applied on
-  // migration rather than grandfathered off.
-  if (!appSettingsCols.some(c => c.name === 'scan_exclude_digital')) {
-    await run(`ALTER TABLE app_settings ADD COLUMN scan_exclude_digital INTEGER NOT NULL DEFAULT 1`);
   }
 
   // Whether the first-run wizard has been seen through to the end. Server-side,
@@ -465,9 +359,9 @@ async function initDb() {
     await run(`ALTER TABLE card_cache ADD COLUMN printed_name TEXT`);
   }
   // Marketplace links as the PROVIDER gives them. Building them from name+set+number
-  // only works for English cards: searching TCGplayer for "ヒトカゲ ポケモンカード151"
-  // returns nothing, because those sites index English names. Scryfall and
-  // pokemontcg.io both hand us a real product/search URL per card, so store it.
+  // only works for English cards: those marketplaces index English names, so a
+  // localized name searches to nothing. Scryfall hands back a real product/search
+  // URL per card, so store it.
   for (const col of ['tcgplayer_url', 'cardmarket_url']) {
     if (!cardCacheCols.some(c => c.name === col)) {
       await run(`ALTER TABLE card_cache ADD COLUMN ${col} TEXT`);
@@ -476,11 +370,8 @@ async function initDb() {
   // TCGplayer's own product id, which is what turns a link into the actual card.
   // The stored `tcgplayer_url` above is NOT reliably a product page: Scryfall
   // hands back a name search whenever it has no product for a printing (6,109 of
-  // 106,163 cached MTG rows), and TCGdex supplies no TCGplayer link at all. An id
-  // is unambiguous — /product/<id> either resolves or the card is not listed.
-  //
-  // Provider-agnostic on purpose: Scryfall publishes it as `tcgplayer_id`, and
-  // the Pokémon rows get theirs from the TCGCSV catalogue mapping.
+  // 106,163 cached MTG rows). An id is unambiguous — /product/<id> either
+  // resolves or the card is not listed.
   // collection.printing has allowed '1st Edition' since v1.0, and resolveCardPrice
   // had no column to read for it — so a 1st Edition Base Set card was valued at the
   // Unlimited price, which for a Charizard is a difference of thousands. TCGplayer
@@ -492,20 +383,18 @@ async function initDb() {
   // Which marketplace a row's prices came from, and in what currency.
   //
   // The price columns have always been unit-less, and until now they mixed
-  // TCGplayer USD (English) with Cardmarket EUR (everything TCGdex served) while
-  // the UI rendered one '$' over both. Recording the source per row is what lets
-  // the inspector say which number it is showing, instead of inferring it from
-  // whether a Cardmarket URL happens to exist.
+  // TCGplayer USD (English printings) with Cardmarket EUR (the non-English ones)
+  // while the UI rendered one '$' over both. Recording the source per row is what
+  // lets the inspector say which number it is showing, instead of inferring it
+  // from whether a Cardmarket URL happens to exist.
   if (!cardCacheCols.some(c => c.name === 'price_currency')) {
     await run(`ALTER TABLE card_cache ADD COLUMN price_currency TEXT DEFAULT 'USD'`);
   }
   if (!cardCacheCols.some(c => c.name === 'price_source')) {
     await run(`ALTER TABLE card_cache ADD COLUMN price_source TEXT`);
-    // Backfill from what each row's id already tells us: TCGdex is the only source
-    // that ever wrote EUR, and its ids are prefixed. No network needed.
+    // Backfill from what each row's id already tells us: Scryfall is the only
+    // source that ever wrote rows, and its ids are prefixed. No network needed.
     await run(`UPDATE card_cache SET price_source = 'scryfall', price_currency = 'USD' WHERE id LIKE 'mtg-%'`);
-    await run(`UPDATE card_cache SET price_source = 'tcgdex', price_currency = 'EUR' WHERE id LIKE 'tcgdex-%'`);
-    await run(`UPDATE card_cache SET price_source = 'pokemontcg', price_currency = 'USD' WHERE price_source IS NULL AND game = 'pokemon'`);
   }
   if (!cardCacheCols.some(c => c.name === 'tcgplayer_product_id')) {
     await run(`ALTER TABLE card_cache ADD COLUMN tcgplayer_product_id INTEGER`);
@@ -546,64 +435,118 @@ async function initDb() {
   if (!collectionCols.some(c => c.name === 'list_type')) {
     await run(`ALTER TABLE collection ADD COLUMN list_type TEXT DEFAULT 'collection'`);
   }
-  if (!collectionCols.some(c => c.name === 'game')) {
-    await run(`ALTER TABLE collection ADD COLUMN game TEXT DEFAULT 'pokemon'`);
-  }
   if (!collectionCols.some(c => c.name === 'notes')) {
     await run(`ALTER TABLE collection ADD COLUMN notes TEXT DEFAULT ''`);
   }
-  // Grading lives on the COPY, not on the printing. A PSA 10 and a raw copy of the
-  // same card share one card_cache row and differ only in what the owner holds —
-  // which is exactly what the collection table records. Putting a grade on
-  // card_cache would make every owner of that printing share one grade.
-  //
-  // `grade` is REAL, not INTEGER: PSA uses whole numbers plus 10, but BGS and CGC
-  // issue half grades (9.5, 8.5), and the 'Graded Slab Box' container type has been
-  // in db.js since v1.0 with nothing to put in it.
-  if (!collectionCols.some(c => c.name === 'grader')) {
-    await run(`ALTER TABLE collection ADD COLUMN grader TEXT CHECK(grader IN ('Raw','PSA','BGS','CGC','SGC','TAG')) DEFAULT 'Raw'`);
+
+  // --- Pokemon and grading removal (2026-08) ---
+  // The app was Pokemon-agnostic in schema but Pokemon-flavoured in code; the
+  // Pokemon game and the graded-slab feature are now gone. Databases created
+  // before the removal still carry:
+  //   - rows with game = 'pokemon' (and NULL, the pre-column default)
+  //   - the game column on sets/card_cache/collection/decks/card_lists
+  //   - the graded columns on collection (grader/grade/cert_number/market_value*)
+  //   - users.psa_api_token / users.graded_price_api_key
+  //   - app_settings.pokemon_provider / pokemon_prices_swept_at /
+  //     tcgdex_prices_swept_at / scan_exclude_digital
+  //   - the psa_cert and tcgplayer_catalog tables
+  //   - a 3-column set_data_gaps table
+  // Drop all of it while keeping every MTG row. SQLite 3.52+ allows DROP COLUMN
+  // (3.35+), which this install ships; no column dropped here is named by a
+  // remaining FK, so plain drops are safe. Guarded and idempotent — a database
+  // already in the new shape is a no-op.
+  {
+    const hasTable = async (name) => {
+      const r = await get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [name]);
+      return !!r;
+    };
+    // DROP COLUMN fails when an index still names the column, so dropCol clears
+    // any user-created index on the table that references the target column
+    // first. Autoindexes (origin 'u'/'pk') cannot be dropped and are skipped.
+    const dropIndexesReferencing = async (table, cols) => {
+      const target = new Set(cols);
+      const indexes = await all(`PRAGMA index_list(${table})`);
+      for (const ix of indexes) {
+        if (ix.origin !== 'c') continue; // only user-created indexes are droppable
+        const colsOfIndex = await all(`PRAGMA index_info(${ix.name})`);
+        if (colsOfIndex.some(c => target.has(c.name))) {
+          await run(`DROP INDEX ${ix.name}`);
+        }
+      }
+    };
+    const dropCol = async (table, col) => {
+      const cols = await all(`PRAGMA table_info(${table})`);
+      if (cols.some(c => c.name === col)) {
+        await dropIndexesReferencing(table, [col]);
+        await run(`ALTER TABLE ${table} DROP COLUMN ${col}`);
+      }
+    };
+
+    // Pokemon rows reference card_cache ids that are about to go, so the
+    // collection rows must lead; card_cache second; the rest after. On a fresh
+    // database the game column never existed, so these are no-ops.
+    for (const table of ['collection', 'card_cache', 'decks', 'card_lists', 'sets']) {
+      const cols = await all(`PRAGMA table_info(${table})`);
+      if (cols.some(c => c.name === 'game')) {
+        await run(`DELETE FROM ${table} WHERE game = 'pokemon' OR game IS NULL`);
+      }
+    }
+
+    for (const table of ['sets', 'card_cache', 'collection', 'decks', 'card_lists']) {
+      await dropCol(table, 'game');
+    }
+
+    // Graded columns. collection has no FKs naming them, so they drop in place.
+    for (const col of ['market_value_source', 'market_value_at', 'market_value',
+      'cert_number', 'grade', 'grader']) {
+      await dropCol('collection', col);
+    }
+    if (await hasTable('psa_cert')) await run(`DROP TABLE psa_cert`);
+
+    await dropCol('users', 'psa_api_token');
+    await dropCol('users', 'graded_price_api_key');
+    // The user-level provider key was the pokemontcg.io key — with the Pokemon
+    // provider gone it names nothing, so the column goes with it.
+    await dropCol('users', 'tcg_api_key');
+
+    // app_settings: drop the Pokemon-specific settings. Idempotent via PRAGMA.
+    for (const col of ['pokemon_provider', 'pokemon_prices_swept_at',
+      'tcgdex_prices_swept_at', 'scan_exclude_digital']) {
+      const cols = await all(`PRAGMA table_info(app_settings)`);
+      if (cols.some(c => c.name === col)) await run(`ALTER TABLE app_settings DROP COLUMN ${col}`);
+    }
+
+    // set_data_gaps kept its rows but its PRIMARY KEY changed from
+    // (game, language, set_id) to (language, set_id). SQLite cannot alter a
+    // table's PRIMARY KEY in place, so rebuild it from the surviving rows.
+    if (await hasTable('set_data_gaps')) {
+      const oldCols = await all(`PRAGMA table_info(set_data_gaps)`);
+      if (oldCols.some(c => c.name === 'game')) {
+        const keep = oldCols.map(c => c.name).filter(n => n !== 'game').join(', ');
+        await withTransaction(async () => {
+          await run(`DROP TABLE IF EXISTS set_data_gaps_new`);
+          await run(`CREATE TABLE set_data_gaps_new (
+            language TEXT NOT NULL,
+            set_id TEXT NOT NULL,
+            reason TEXT,
+            seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (language, set_id)
+          )`);
+          await run(`INSERT INTO set_data_gaps_new (${keep}) SELECT ${keep} FROM set_data_gaps`);
+          await run(`DROP TABLE set_data_gaps`);
+          await run(`ALTER TABLE set_data_gaps_new RENAME TO set_data_gaps`);
+        });
+      }
+    }
+
+    // The TCGplayer product catalogue only existed to name scans against the
+    // ready-made Pokemon catalog; nothing reads it now.
+    if (await hasTable('tcgplayer_catalog')) {
+      await run(`DROP INDEX IF EXISTS idx_tcgplayer_catalog_pid`);
+      await run(`DROP TABLE tcgplayer_catalog`);
+    }
+    console.log('Pokemon and graded schema removed; MTG rows preserved.');
   }
-  if (!collectionCols.some(c => c.name === 'grade')) {
-    await run(`ALTER TABLE collection ADD COLUMN grade REAL`);
-  }
-  if (!collectionCols.some(c => c.name === 'cert_number')) {
-    await run(`ALTER TABLE collection ADD COLUMN cert_number TEXT`);
-  }
-  // What this copy is actually worth, when the card_cache price is wrong for it.
-  // A PSA 10 is a multiple of the raw price the providers quote, and no free
-  // provider prices every grader — so the value of a slab is either typed in or
-  // fetched from a graded-price provider, and both land here. One column, because
-  // everything downstream (net worth, set totals, sorting by price) then has one
-  // number to read regardless of where it came from.
-  //
-  // Per COPY, like grade and cert: two PSA 10s of the same card in different
-  // markets are still one card_cache row.
-  if (!collectionCols.some(c => c.name === 'market_value')) {
-    await run(`ALTER TABLE collection ADD COLUMN market_value REAL`);
-  }
-  // 'manual' or a provider name. Kept so a refresh knows which rows it may
-  // overwrite: a fetched number is stale in a week, a typed one is the owner's
-  // considered judgement and nothing should quietly replace it.
-  if (!collectionCols.some(c => c.name === 'market_value_source')) {
-    await run(`ALTER TABLE collection ADD COLUMN market_value_source TEXT`);
-  }
-  if (!collectionCols.some(c => c.name === 'market_value_at')) {
-    await run(`ALTER TABLE collection ADD COLUMN market_value_at DATETIME`);
-  }
-  // A cert number identifies one physical slab, so entering it twice is a mistake
-  // rather than a second copy — unlike raw cards, where two identical rows are
-  // normal and `quantity` exists for exactly that reason.
-  //
-  // Scoped per user, and partial. Per user because this instance cannot know that
-  // two accounts naming the same cert are wrong (a sold slab legitimately appears
-  // in the buyer's collection and the seller's history); partial because the
-  // overwhelming majority of rows are raw and have no cert, and a plain UNIQUE
-  // would collapse all of them into one.
-  await run(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_cert
-       ON collection(user_id, grader, cert_number)
-     WHERE cert_number IS NOT NULL AND cert_number != ''`
-  );
 
   // --- Storage removal (2026-08) ---
   // The physical storage feature (binder/box locations, compartments, card
@@ -654,6 +597,8 @@ async function initDb() {
         // Rebuild collection without the placement columns. keepList is built
         // from the LIVE column list, so an old database missing some newer
         // columns still copies over cleanly; the new table's defaults fill in.
+        // (The game and graded columns were already dropped by the earlier
+        // Pokemon-and-graded migration, so they are not in keepList.)
         await withTransaction(async () => {
           await run(`DROP TABLE IF EXISTS collection_new`);
           await run(`
@@ -668,15 +613,8 @@ async function initDb() {
               favorite INTEGER DEFAULT 0,
               is_trade INTEGER DEFAULT 0,
               list_type TEXT DEFAULT 'collection',
-              game TEXT DEFAULT 'pokemon',
               added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               notes TEXT DEFAULT '',
-              grader TEXT CHECK(grader IN ('Raw','PSA','BGS','CGC','SGC','TAG')) DEFAULT 'Raw',
-              grade REAL,
-              cert_number TEXT,
-              market_value REAL,
-              market_value_source TEXT,
-              market_value_at DATETIME,
               user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
               FOREIGN KEY(card_id) REFERENCES card_cache(id)
             )
@@ -688,13 +626,8 @@ async function initDb() {
       }
 
       // The rebuild dropped collection's indexes with the old table; recreate
-      // the two that outlived storage.
-      await run(`CREATE INDEX IF NOT EXISTS idx_collection_user_game ON collection(user_id, game)`);
-      await run(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_cert
-        ON collection(user_id, grader, cert_number)
-        WHERE cert_number IS NOT NULL AND cert_number != ''
-      `);
+      // the one that outlived storage.
+      await run(`CREATE INDEX IF NOT EXISTS idx_collection_user ON collection(user_id)`);
       console.log('Storage schema removed; collection rows preserved.');
     }
   }
@@ -711,20 +644,6 @@ async function initDb() {
   }
 
   const usersCols = await all(`PRAGMA table_info(users)`);
-  if (!usersCols.some(c => c.name === 'tcg_api_key')) {
-    await run(`ALTER TABLE users ADD COLUMN tcg_api_key TEXT DEFAULT ''`);
-  }
-  // PSA's public API token. Per user, alongside tcg_api_key, because PSA issues
-  // these per account and rate-limits per token — one shared instance token would
-  // let one member's bulk entry exhaust everyone's quota.
-  if (!usersCols.some(c => c.name === 'psa_api_token')) {
-    await run(`ALTER TABLE users ADD COLUMN psa_api_token TEXT DEFAULT ''`);
-  }
-  // PokemonPriceTracker key, for graded (PSA 8/9/10) prices. Same per-user
-  // reasoning as the PSA token: its free tier is 100 credits/day per key.
-  if (!usersCols.some(c => c.name === 'graded_price_api_key')) {
-    await run(`ALTER TABLE users ADD COLUMN graded_price_api_key TEXT DEFAULT ''`);
-  }
   // Read-only key for scripts and dashboards (issue #33): a Bearer credential that
   // does not expire the way a session does, so a finance tracker polling net worth
   // is not logged out overnight. authenticateToken refuses anything but GET on it,
@@ -844,7 +763,8 @@ async function initDb() {
   // --- PERFORMANCE INDEXES ---
   // `user_id` first, because it is the predicate on essentially every read in the
   // app — every collection query, every stats aggregate — and nothing indexed it.
-  await run(`CREATE INDEX IF NOT EXISTS idx_collection_user_game ON collection(user_id, game)`);
+  await run(`DROP INDEX IF EXISTS idx_collection_user_game`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_collection_user ON collection(user_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_set_num ON card_cache(set_id, number)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_deck_cards_checkout ON deck_cards(deck_id, checked_out)`);
   // Indexes on the retired tags/audit_logs tables. A fresh database never creates

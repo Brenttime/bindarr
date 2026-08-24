@@ -28,9 +28,6 @@ router.get('/export', async (req, res) => {
         cc.set_name,
         cc.number as collector_number,
         cc.image_url,
-        c.grader,
-        c.grade,
-        c.market_value,
         cc.price_trend,
         cc.price_normal,
         cc.price_holofoil,
@@ -42,7 +39,7 @@ router.get('/export', async (req, res) => {
     `;
     const raw = await db.all(query, [req.user.id]);
     // market_price used to be cc.price_trend flat, which exported the wrong number
-    // for every foil, every 1st Edition and every slab — the same three cases
+    // for every foil, every 1st Edition and every reverse holo — the same cases
     // resolveCardPrice exists to get right. An export that disagrees with the
     // dashboard is worse than no export: it is a spreadsheet someone will trust.
     // price_trend is destructured OUT along with the per-printing columns: the CSV
@@ -55,14 +52,14 @@ router.get('/export', async (req, res) => {
 
     if (format.toLowerCase() === 'json') {
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename=pokedexrr_collection_${targetFormat}.json`);
+      res.setHeader('Content-Disposition', `attachment; filename=bindarr_collection_${targetFormat}.json`);
       return res.json(rows);
     }
 
     const csvContent = generateExportCSV(rows, targetFormat);
 
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=pokedexrr_collection_${targetFormat}.csv`);
+    res.setHeader('Content-Disposition', `attachment; filename=bindarr_collection_${targetFormat}.csv`);
     res.send(csvContent);
   } catch (error) {
     res.status(500).json({ error: 'Export failed', message: error.message });
@@ -153,7 +150,7 @@ router.post('/import', async (req, res) => {
             [
               cardId,
               item.name || 'Imported Card',
-              item.supertype || (item.game === 'mtg' ? 'Card' : 'Pokémon'),
+              item.supertype || 'Card',
               '[]',
               JSON.stringify(item.types || []),
               item.rarity || 'Common',
@@ -168,8 +165,8 @@ router.post('/import', async (req, res) => {
 
         await db.run(
           `INSERT INTO collection 
-           (card_id, user_id, quantity, condition, printing, language, purchase_price, game, added_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+           (card_id, user_id, quantity, condition, printing, language, purchase_price, added_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
           [
             cardId,
             req.user.id,
@@ -177,8 +174,7 @@ router.post('/import', async (req, res) => {
             item.condition || 'Near Mint',
             item.printing || 'Normal',
             item.language || 'English',
-            item.purchase_price || 0,
-            item.game || 'pokemon'
+            item.purchase_price || 0
           ]
         );
         importedCount++;

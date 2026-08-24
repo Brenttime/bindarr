@@ -5,33 +5,22 @@ import { priceText } from '../utils/formatPrice';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
 import CardEntryFields from './CardEntryFields';
 import CardImageZoom from './CardImageZoom';
-import { translateJapaneseName } from '../utils/langHelper';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { CONDITIONS, PRINTINGS } from '../utils/cardOptions';
 import { LANGUAGES, langName, isEnglish, displayName, translatedName, setReference, setCode } from '../utils/languages';
-import { defaultGame, gameOptions, showGamePicker, gameLabel } from '../utils/games';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 
 // Search failures worth explaining in-page rather than only as a toast. `keyHint`
 // marks the ones a user API key actually fixes; an upstream 5xx does not. Title
 // and body are looked up as searchErr.<code>.title / .body.
-const SEARCH_ERRORS = {
-  'invalid-key': { keyHint: true },
-  'rate-limit': { keyHint: true },
-  upstream: { keyHint: false },
-};
-
-function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
+function CardSearch({ onAddSuccess, showToast }) {
   const { t } = useT();
   const [query, setQuery] = useState('');
   const [numberQuery, setNumberQuery] = useState('');
   const [setCodeQuery, setSetCodeQuery] = useState('');
-  // Honour the default game from Settings, like the scanner and collection do —
-  // and never open on a game the user has hidden.
-  const [game, setGame] = useState(() => defaultGame());
   // Which language's printings to search. Magic comes from Scryfall in every
-  // language; non-English Pokémon comes from TCGdex (pokemontcg.io is English-only).
+  // language.
   const [searchLang, setSearchLang] = useState('en');
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -83,18 +72,12 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
   const [printing, setPrinting] = useState('Normal');
   const [language, setLanguage] = useState('English');
   const [purchasePrice, setPurchasePrice] = useState(0);
-  const [grader, setGrader] = useState('Raw');
-  const [grade, setGrade] = useState('');
-  const [certNumber, setCertNumber] = useState('');
 
-  // Set codes for the autocomplete. The sets table already holds every set for
-  // both games, so nobody has to know that "ltr" means Tales of Middle-earth.
-  // MTG ids are stored prefixed ("mtg-ltr"); the search wants the bare code.
-  // `lang` matters here: Japan gets Pokémon sets the West never sees, so the set
-  // list is per-language (the route reads it from TCGdex for those).
+  // Set codes for the autocomplete, sourced from the sets already cached in the
+  // DB. MTG ids are stored prefixed ("mtg-ltr"); the search wants the bare code.
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/sets?game=${game}&lang=${encodeURIComponent(searchLang)}`)
+    fetch(`/api/sets?lang=${encodeURIComponent(searchLang)}`)
       .then(r => (r.ok ? r.json() : []))
       .then(rows => {
         if (cancelled) return;
@@ -106,7 +89,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [game, searchLang]);
+  }, [searchLang]);
 
   // pageNum > 1 appends to the existing results instead of replacing them.
   const runSearch = async (pageNum, size = pageSize) => {
@@ -124,16 +107,11 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     }
     try {
       const params = new URLSearchParams();
-      // The Japanese-name micro-dictionary only ever existed because the English
-      // Pokémon API can't be searched in Japanese. With a real Japanese source
-      // selected, the typed name goes straight through — it IS the card's name.
-      const translate = game === 'pokemon' && isEnglish(searchLang);
-      const finalQuery = query ? (translate ? (translateJapaneseName(query) || query) : query) : '';
+      const finalQuery = query ? query : '';
       if (finalQuery) params.append('name', finalQuery);
       if (numberQuery) params.append('number', numberQuery);
       if (setCodeQuery) params.append('set', setCodeQuery);
       params.append('scope', 'internet');
-      params.append('game', game);
       params.append('lang', searchLang);
       params.append('page', pageNum);
       params.append('limit', size);
@@ -275,8 +253,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           condition,
           printing,
           language,
-          purchase_price: parseFloat(purchasePrice) || 0,
-          game
+          purchase_price: parseFloat(purchasePrice) || 0
         })
       });
       const data = await response.json().catch(() => ({}));
@@ -314,7 +291,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
         printing,
         language,
         purchase_price: parseFloat(purchasePrice) || 0,
-        game,
         stackable: true
       })
     });
@@ -333,7 +309,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     setRapidBusy(true);
     try {
       const params = new URLSearchParams({
-        number, set: setCodeQuery, scope: 'internet', game, lang: searchLang, page: '1', limit: '10'
+        number, set: setCodeQuery, scope: 'internet', lang: searchLang, page: '1', limit: '10'
       });
       const res = await fetch(`/api/search?${params.toString()}`);
       if (!res.ok) {
@@ -399,7 +375,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     setLanguage(card.language || langName(searchLang));
     // Guess printing based on rarity
     const rarity = (card.rarity || '').toLowerCase();
-    if (rarity.includes('holo') || rarity.includes('secret') || rarity.includes('ultra') || rarity.includes('shining')) {
+    if (rarity.includes('foil') || rarity.includes('mythic') || rarity.includes('rare')) {
       setPrinting('Holofoil');
     } else {
       setPrinting('Normal');
@@ -419,9 +395,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
     // of Japanese cards should not have to re-pick it for every card.
     setLanguage(langName(searchLang));
     setPurchasePrice(0);
-    setGrader('Raw');
-    setGrade('');
-    setCertNumber('');
   };
 
   const handleSubmit = async (e) => {
@@ -438,10 +411,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           condition,
           printing,
           language,
-          purchase_price: parseFloat(purchasePrice) || 0,
-          grader,
-          grade: grade === '' ? null : parseFloat(grade),
-          cert_number: certNumber.trim() || null
+          purchase_price: parseFloat(purchasePrice) || 0
         })
       });
 
@@ -479,22 +449,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       {/* Search Header Panel */}
       <div className="glass-panel" style={{ marginBottom: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
-          <h2 style={{ fontSize: '1.25rem', margin: 0, color: 'var(--text-strong)' }}>{t('search.title', { game: gameLabel(game) })}</h2>
-          {showGamePicker() && (
-            <div className="sub-nav-tabs" style={{ margin: 0 }}>
-              {gameOptions().map(({ value, short }) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`sub-nav-tab ${game === value ? 'active' : ''}`}
-                  style={{ padding: '0.4rem 0.9rem', fontSize: '0.8rem' }}
-                  onClick={() => setGame(value)}
-                >
-                  {short}
-                </button>
-              ))}
-            </div>
-          )}
+          <h2 style={{ fontSize: '1.25rem', margin: 0, color: 'var(--text-strong)' }}>{t('search.title')}</h2>
         </div>
         <form onSubmit={handleSearch} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.75rem' }}>
@@ -504,7 +459,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                 <input
                   type="text"
                   className="input-control"
-                  placeholder={t(game === 'mtg' ? 'search.namePlaceholderMtg' : 'search.namePlaceholderPokemon')}
+                  placeholder={t('search.namePlaceholderMtg')}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   style={{ width: '100%', paddingLeft: '2.5rem' }}
@@ -553,7 +508,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                 type="text"
                 className="input-control"
                 list="known-set-codes"
-                placeholder={t(game === 'mtg' ? 'search.setsPlaceholderMtg' : 'search.setsPlaceholderPokemon')}
+                placeholder={t('search.setsPlaceholderMtg')}
                 value={setCodeQuery}
                 onChange={(e) => setSetCodeQuery(e.target.value)}
               />
@@ -669,21 +624,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
           </h3>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
             {t(`searchErr.${searchError}.body`)}
-            {/* Scryfall needs no API key, so never point an MTG search at pokemontcg.io. */}
-            {SEARCH_ERRORS[searchError].keyHint && game === 'pokemon' && (
-              <> {t('searchErr.keyHint')} <a href="https://dev.pokemontcg.io/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)', textDecoration: 'underline' }}>pokemontcg.io</a></>
-            )}
           </p>
-          {setActiveTab && SEARCH_ERRORS[searchError].keyHint && game === 'pokemon' && (
-            <button 
-              type="button" 
-              className="btn btn-secondary" 
-              onClick={() => setActiveTab('settings')}
-              style={{ width: 'fit-content', padding: '0.35rem 0.75rem', fontSize: '0.75rem', marginTop: '0.25rem' }}
-            >
-              {t('searchErr.goToSettings')}
-            </button>
-          )}
         </div>
       )}
 
@@ -791,7 +732,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
       {!loading && cards.length > 0 && filteredAndSortedCards.length > 0 && (
         <div className="card-grid">
           {filteredAndSortedCards.map((card) => {
-            const glowClass = (card.types && card.types[0]) ? `type-glow-${card.types[0].toLowerCase()}` : 'type-glow-normal';
             const isSelected = selectedIds.has(card.id);
             return (
               <div
@@ -801,7 +741,7 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
                 onClick={(e) => handleCardClick(card, e)}
                 {...pressHandlers(card.id)}
               >
-                <div className={`tcg-card-inner ${glowClass}`} style={isSelected ? { outline: '3px solid var(--accent-red)', outlineOffset: '2px' } : undefined}>
+                <div className="tcg-card-inner" style={isSelected ? { outline: '3px solid var(--accent-red)', outlineOffset: '2px' } : undefined}>
                   {/* Same check bubble the collection uses for selection. */}
                   {selectMode && (
                     <div style={{ position: 'absolute', top: '6px', right: '6px', zIndex: 20, width: '22px', height: '22px', borderRadius: '50%', background: isSelected ? 'var(--accent-red)' : 'rgba(0,0,0,0.6)', border: '2px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-strong)', fontSize: '0.8rem', fontWeight: 900 }}>{isSelected ? '✓' : ''}</div>
@@ -928,8 +868,6 @@ function CardSearch({ onAddSuccess, showToast, setActiveTab }) {
               <CardEntryFields
                 quantity={quantity} purchasePrice={purchasePrice} condition={condition} printing={printing} language={language}
                 onQuantity={setQuantity} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={setLanguage}
-                grader={grader} grade={grade} certNumber={certNumber}
-                onGrader={setGrader} onGrade={setGrade} onCertNumber={setCertNumber}
               />
 
 

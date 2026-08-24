@@ -4,15 +4,15 @@ Developer-facing reference for the codebase. For install/run/deploy and end-user
 features, see [README.md](README.md); this document explains **how the system is
 built and why**.
 
-Bindarr is a self-hosted trading-card collection manager for **Pokémon** and
-**Magic: The Gathering**. It identifies cards from a phone photo (no typing),
+Bindarr is a self-hosted trading-card collection manager for **Magic:
+The Gathering**. It identifies cards from a phone photo (no typing),
 values the collection over time, and helps you pull the cards for a deck back
 out again.
 
 - **Backend**: Node.js + Express, SQLite (single file), served together with the built frontend from one container.
 - **Frontend**: React + Vite SPA.
 - **Auth**: opaque session tokens in a server-side `sessions` table, sent as a `Bearer` header.
-- **Card data**: Pokémon TCG API (Pokémon) and Scryfall (MTG), cached locally in `card_cache`.
+- **Card data**: Scryfall, cached locally in `card_cache`.
 - **Image ID**: two small ONNX models — `cornelius` finds the card's corners, `milo` embeds the dewarped card as a 128-d unit vector — then a brute-force cosine sweep over a prebuilt catalog of every cached card's artwork. Corner detection also runs in the browser, so the outline on screen is the crop that gets matched.
 
 Stack: React + Vite + Recharts on the front, Express + `sqlite3` + Helmet +
@@ -38,22 +38,16 @@ backend/
       settings.js          app-wide settings (admin)
       shared.js            public read-only shared collection by share_token
       admin.js             user management, card seeding
-    tcgApi.js              Pokémon TCG API client (search + fetch by id) -> card_cache shape
-    scryfallApi.js         Scryfall (MTG) client -> same normalized card shape
-    tcgdexApi.js           TCGdex client: non-English Pokémon cards (the only source for them)
-    tcgcsvApi.js           TCGCSV pricing + the tcgplayer_product id mapping
-    psaApi.js              PSA cert lookup (what is in the slab), cached forever in psa_cert
-    gradedPrices.js        Graded-price lookup (what the slab is worth) via PokemonPriceTracker
+    scryfallApi.js         Scryfall client (search + fetch by id + price sweep) -> card_cache shape
     cvScan.js              Image ID pipeline: cornelius corners -> dewarp -> milo embedding -> cosine over a catalog
     catalog.js             Catalog builds: cache every set's cards, then embed their artwork (Admin -> Catalogs)
-    cardSets.js            Set discovery per game/language, and fetching a set's cards into card_cache
+    cardSets.js            Set discovery per language, and fetching a set's cards into card_cache
     cardArt.js             Per-card art overrides (user-supplied images)
     utils/
       cardSort.js          Card ordering: sort-scheme comparators shared with the frontend
       priceHelpers.js      Price resolution across printings; vintage-set detection; UTC parsing
       authHelpers.js       Auth-related helpers
       npz.js               Minimal .npz reader, for the published (not locally built) catalogs
-      pokemonProvider.js   The single answer to "pokemontcg.io or TCGdex for this language"
       languages.js         Language code/name resolution
     backup.js              DB backup helpers
   scripts/                 fetch-models.mjs, catalog builders, the scan-gate measurement harness
@@ -110,9 +104,9 @@ is reported and survived: everything except catalog builds still works.
 Authentication is DB-backed session tokens, not JWTs:
 
 - `POST /api/auth/login` verifies a PBKDF2 password hash and inserts a row into `sessions` (`user_id`, `token`, `expires_at`).
-- `authenticateToken` (`middleware/auth.js`) reads the `Bearer` token, looks it up in `sessions` where `expires_at > now`, and sets `req.user = { id, username, role, tcg_api_key, ... }`.
+- `authenticateToken` (`middleware/auth.js`) reads the `Bearer` token, looks it up in `sessions` where `expires_at > now`, and sets `req.user = { id, username, role, share_token, share_enabled, api_key, ... }`.
 - `requireAdmin` gates admin-only routes on `req.user.role === 'admin'`.
-- A bearer token that matches no session is then checked against `users.api_key` — a long-lived read-only credential for external scripts (issue #33). It sets `req.user.via_api_key`, which makes `authenticateToken` refuse any non-GET (403) and `requireAdmin` refuse it outright, and makes `/auth/me` strip the account's other provider keys. Read-only is the whole reason a non-expiring credential is acceptable here; anything that weakens it has to replace it with something scoped.
+- A bearer token that matches no session is then checked against `users.api_key` — a long-lived read-only credential for external scripts (issue #33). It sets `req.user.via_api_key`, which makes `authenticateToken` refuse any non-GET (403) and `requireAdmin` refuse it outright, and makes `/auth/me` return only the read-only key rather than the account's other fields. Read-only is the whole reason a non-expiring credential is acceptable here; anything that weakens it has to replace it with something scoped.
 - Rate limiters (`authLimiter`, `searchLimiter`, `importLimiter`) protect login and expensive endpoints.
 
 `collection.js` applies `router.use(authenticateToken)` up front, so every
@@ -122,26 +116,20 @@ collection/deck-adjacent route requires a valid session.
 
 | Mount | File | Responsibility |
 |-------|------|----------------|
-| `/api/auth` | auth.js | `register`, `login`, `logout`, `me`, `PUT /settings` (per-user, e.g. `tcg_api_key`), `POST/DELETE /api-key` (read-only external key) |
-| `/api` | collection.js | Card `search`, `scan-match`, `collection/cert/:certNumber`; `collection` CRUD + `bulk` + `:id/market-value/fetch`; `stats`, `stats/history`, `stats/networth`, `export`, `import`; `cards/:id/price-history` |
+| `/api/auth` | auth.js | `register`, `login`, `logout`, `me`, `PUT /settings` (per-user), `POST/DELETE /api-key` (read-only external key) |
+| `/api` | collection.js | Card `search`, `scan-match`; `collection` CRUD + `bulk`; `stats`, `stats/history`, `stats/networth`, `export`, `import`; `cards/:id/price-history` |
 | `/api/decks` | decks.js | Deck CRUD, `:id/cards`, `:id/checkout`, `:id/return`, `:id/locations` (checkout/check-in coverage payload) |
-| `/api/sets` | sets.js | Set catalog for dividers and scan scoping; non-English Pokémon set lists come from TCGdex, whose ids differ per language |
+| `/api/sets` | sets.js | Set catalog for dividers and scan scoping |
 | `/api/settings` | settings.js | App-wide settings (read any; write requires admin) |
 | `/api/shared` | shared.js | Public, read-only collection view by `share_token` (no auth) |
 | `/api/admin` | admin.js | User management, card cache seeding, `catalogs` (list / `build` / `stop` / `progress`), DB backups (admin) |
 
 ### Card data sources
 
-`tcgApi.js` (Pokémon), `tcgdexApi.js` (non-English Pokémon) and `scryfallApi.js`
-(MTG) all normalize provider cards into one shape and upsert into `card_cache`, so
-the rest of the app is game-agnostic. Every card carries a `game` field
-(`pokemon` | `mtg`) and a `language`. A user's Pokémon TCG API key (stored
-per-user) is passed through where available.
-
-`utils/pokemonProvider.js` owns the pokemontcg.io-vs-TCGdex decision. It is asked,
-never re-derived from the language: four call sites once derived it themselves and
-four of them disagreed, which is how 21,828 rows were cached with the wrong
-normalizer and ended up with no image and no collector number.
+`scryfallApi.js` normalizes provider cards into one shape and upserts into
+`card_cache`. Every card carries a `language` recording which printing the
+row is (a non-English printing is its own card, not a display variant: it has
+its own provider id, its own art and its own name).
 
 #### Two names per card, and which is which
 
@@ -151,25 +139,20 @@ card**. Display reads `printed_name || name` (`utils/languages.displayName`,
 `CollectionList`'s filter); logic that must not split a card across languages — the
 four-copy deck rule, CSV export, marketplace links — reads `name` only.
 
-Scryfall hands over both for free. TCGdex publishes one name per language, so
-`normalizeCard` writes the localized name into both columns and
-`tcgdexApi.learnEnglishName` fills `name` in from the card's own English printing
-when a card is added (plus a backfill on the price sweep). A Japan-exclusive set has
-no English printing and keeps the localized name in both columns.
+Scryfall hands over both for free: `name` is the card's English name and
+`printed_name` the name as printed on that specific printing.
 
 A copy's language is chosen separately from the card that was picked — Quick Add's
 dropdown, or a scan the English catalog answered — so `cardApi.printingInLanguage`
 swaps the row for that language's printing inside `addCardToCollection`, which every
-add path routes through. MTG resolves by set + collector number (language-invariant),
-TCGdex by the language segment in its id. Null means keep what was picked: a card
-never printed in that language, or a pokemontcg.io id, which is English-only and
-whose set numbering does not map to TCGdex's.
+add path routes through. Resolution is by set + collector number, which is
+language-invariant: the same physical card has the same number in every language.
+Null means keep what was picked: a card never printed in that language.
 
 ### Image identification pipeline
 
 Image-only, no OCR. Two ONNX models, both game-independent — a card is a card to
-a corner detector and an embedder — so only the catalog differs per game and
-language.
+a corner detector and an embedder — so only the catalog differs per language.
 
 The browser does the first half. `utils/detectWorker.js` runs **cornelius**
 (384×384, ~4.2 MB, fetched once from `GET /models/cornelius.onnx`) through
@@ -208,17 +191,16 @@ auto-add above the confidence bar, otherwise the candidate list for a manual pic
 Artwork is identical across languages, so any catalog can answer *which card this
 is*; only the printing differs. `loadAll` therefore sweeps the catalog for the
 scanned language **and** the English one, and the route re-expresses the winner
-(`getPrintingInLang` — by set + collector number for MTG, by id for Pokémon)
+(`getPrintingInLang` — by set + collector number, which is language-invariant)
 before it reaches the picker.
 
 That second sweep is not a nicety. A non-English catalog is only as complete as
-its provider: TCGdex serves card records for **28 of the 177 Japanese Pokémon
-sets it lists**, so a Japanese catalog holds ~3.3k of ~16k cards. A cosine sweep
-never returns nothing, so every card outside those 28 sets used to come back as
-the nearest of the wrong 3.3k, sometimes confidently. The English catalog has a
-row for nearly all of them — verified: Japanese スズナ → Candice at 0.863,
-モンジャラ → Tangela, ダブラン → Duosion, from the English catalog alone. The right
-card in the wrong language beats a wrong card in the right one.
+its provider: Scryfall serves card records for only part of each language's sets,
+so a catalog holds fewer cards than the language actually has. A cosine sweep
+never returns nothing, so every card outside those sets would come back as the
+nearest of the cards that *are* there, sometimes confidently. The English catalog
+has a row for nearly all of them. The right card in the wrong language beats a
+wrong card in the right one.
 
 #### Set scoping is a filter, and it is per catalog
 
@@ -249,12 +231,12 @@ missing card:
 | absolute cosine ≥ 0.65 | 31–41 of 60 | 15–19 of 60 |
 | gap ≥ 0.10 | 12 of 60 | 11–12 of 60 |
 
-One threshold, same behaviour on a good photo and a bad one, across both the
-3,296 row Japanese catalog and the 21,771 row English one, and no correct answer
-was rejected in any of the four runs (worst genuine gap 0.105). The gap is
-measured within a single catalog on purpose: the same card sits in both the
-Japanese and the English one, and its own twin a rank down would flatten a merged
-neighbourhood and make every correct answer look like a stranger.
+One threshold, same behaviour on a good photo and a bad one, across catalogs of
+very different sizes, and no correct answer was rejected in any of the runs. The
+gap is measured within a single catalog on purpose: the same card sits in the
+English catalog and in its own language's one, and its own twin a rank down in a
+merged sweep would flatten the neighbourhood and make every correct answer look
+like a stranger.
 
 When it trips, the response carries `notInCatalog: true` **and** the candidates.
 The client refuses to auto-add and says the card is not in the catalog, but still
@@ -277,7 +259,7 @@ against CollectorVision on the same 100-card noisy MTG sample:
 
 Two points of exact printing for 3.8× the speed — and the reason to switch is
 what went with it. ~2.6 GB of per-set ORB indexes plus two whole-game rollups
-became two ONNX files and one catalog per (game, language) at ~5 MB per 10k
+became two ONNX files and one catalog per language at ~5 MB per 10k
 cards. There is no index build in the scan path at all, so set-scoped scanning
 needs no preparation and a scan has no geometric verification stage to be slow in.
 
@@ -292,20 +274,18 @@ history has it if that trade ever looks different.
 
 ### Catalog builds
 
-A catalog is one (game, language) pair, and building it has two phases:
+A catalog is one language, and building it has two phases:
 
-1. **Cache** — walk every set the provider lists for that language and pull its
+1. **Cache** — walk every set Scryfall lists for that language and pull its
    cards into `card_cache` (`cardSets.cacheSetCards`).
 2. **Embed** — run every cached card's artwork through milo and write the
-   embedding table the scanner sweeps (`milo-<game>[-<lang>]-local.bin`, plus a
+   embedding table the scanner sweeps (`milo-mtg[-<lang>]-local.bin`, plus a
    `.json` carrying ids, dimensions and source urls).
 
 They are one job rather than two buttons because phase 2 can only ever be as
 complete as phase 1 — and phase 1 is the half that was missing for years.
 Caching used to happen only as a side effect of building a scan index, so a set
-nobody indexed, searched or browsed simply was not there: Pokémon held 7,118 of
-20,460 English cards (35%), with 104 of 174 sets holding only the handful the
-owner happened to have.
+nobody indexed, searched or browsed simply was not there.
 
 Both phases resume. Phase 1 is idempotent; phase 2 keeps every embedding whose
 **embedded** source url is unchanged, and a cancelled build still writes what it
@@ -315,25 +295,23 @@ per-language provider coverage is patchy enough that counting gaps as failures
 would abort every non-English build partway through.
 
 Settings → Scan catalogs drives it (`/api/admin/catalogs`, admin-only) and lists what
-exists **with a denominator**, because "built, 3,297 cards" reads as complete and
-is not. English is counted against the `sets` table; a non-English total comes
-from the provider's own set list for that language, so Japanese Pokémon reads
-*3,297 of 16,192*. A catalog can be perfectly built and still cover a fifth of the
-game.
+exists **with a denominator**, because "built, 9,604 cards" reads as complete and
+is not. The English total is counted against the `sets` table (Scryfall-derived,
+so it matches `card_cache`); a non-English catalog is only as complete as
+Scryfall's own data for that language. A catalog can be perfectly built and still
+cover a third of the game.
 
-The scanner matches card **art**, so a build embeds the highest-resolution image
-the provider offers rather than the one the UI shows: TCGdex's cached url is
-`/low.png` (245×337, chosen so card grids do not pull 312 KB per thumbnail) and is
-swapped to `/high.png` (600×825) at embed time only. Embedding the thumbnail meant
-every TCGdex row was an upscaled blur while the camera handed over a sharp 448
-crop. Because resume keys on the url actually embedded, raising the resolution
-invalidates the old vectors instead of silently reusing them.
+The scanner matches card **art**, so a build embeds the image the provider
+serves (`card_cache.image_url`). Scryfall's urls are already full-size renders,
+so there is nothing to swap at embed time. Because resume keys on the url
+actually embedded, a re-uploaded image invalidates the old vector instead of
+silently reusing it.
 
 Locally built catalogs are keyed by `card_cache.id`, so every hit resolves by
-construction. The published fallback catalogs (`milo-<game>.npz`, read by
-`utils/npz.js`) are keyed by provider id — TCGplayer product ids for Pokémon, of
-which only ~24% map to a card a given install has ever cached — which is why a
-local build always wins when one is present.
+construction. The published fallback catalog (`milo-mtg.npz`, read by
+`utils/npz.js`) is keyed by the same provider ids, so it also resolves — it is a
+dated snapshot rather than this install's cache, and a local build wins when one
+is present.
 
 ### Measuring the scan gate
 
@@ -341,7 +319,7 @@ local build always wins when one is present.
 measured rather than guessed:
 
 ```bash
-node scripts/measure-scan-floor.js pokemon Japanese 60
+node scripts/measure-scan-floor.js mtg English 60
 ```
 
 It samples catalog rows evenly (not the first N — ids are ordered by set, so the
@@ -360,47 +338,38 @@ a gate that behaves the same in both over one tuned to either.
 ### Prices
 
 `utils/priceHelpers.resolveCardPrice(row)` is the single answer to "what is this
-worth", and its order is: `collection.market_value` (this copy's own value),
-then the price column matching the row's `printing`, then `price_trend`. Any
-query whose result reaches it must select `c.market_value` alongside the
-`cc.price_*` columns, or a graded copy silently reverts to the raw card's price
-in that one view — the failure is invisible, it just reads low.
+worth". It reads the price column matching the row's `printing` — `Holofoil`,
+`Reverse Holofoil`, `Normal`, or `1st Edition` — falling back to `price_trend`
+when that column is empty. Any query that wants a card's value must therefore
+select the `cc.price_*` columns the resolver reads, not just `price_trend`, or a
+foil or 1st Edition silently reads as its unlimited price in that one view — the
+failure is invisible, it just reads low.
 
-Where the provider price itself comes from depends on the game AND the language,
-because it depends on which marketplace sells that printing:
+Where the provider price itself comes from depends on the language, because it
+depends on which marketplace sells that printing. Scryfall quotes two:
+`prices.usd` (TCGplayer's number) and `prices.eur` (Cardmarket's).
 
 | Rows | Source | `price_source` | Currency |
 |------|--------|----------------|----------|
-| MTG, any language | Scryfall `prices.usd`, else `prices.eur` | `scryfall` | USD or EUR |
-| Pokémon English / Japanese | TCGCSV (TCGplayer categories 3 / 85) | `tcgcsv` | USD |
-| Pokémon other languages | the **English** TCGplayer product | `tcgcsv-en` | USD |
-| Pokémon fallback | TCGdex's Cardmarket block | `tcgdex` | EUR |
+| any language, when Scryfall carries a USD price | `prices.usd` | `scryfall` | USD |
+| a printing with no USD price (most non-English printings) | `prices.eur` | `scryfall` | EUR |
 
-Two rules hold that together. **A row is never mixed**: if a printing's USD price is
-missing, the EUR normal *and* foil prices are used together, because a USD normal
+Two rules hold that together. **A row is never mixed**: when a printing has no
+USD price, the EUR normal *and* foil prices are used together, because a USD normal
 next to a EUR foil is a pair nothing can compare. And **nothing is converted** — an
 exchange rate is a live number this app has no source for, and a stale hardcoded one
 misprices a collection silently — so `price_currency` travels with the row and the UI
 prints the matching symbol (`utils/formatPrice.priceText`). Collection totals sum the
 currencies as-is; `/api/stats/networth` reports `currencies` so a consumer can tell.
 
-`tcgcsv-en` exists because TCGplayer has no German, Korean or Chinese Pokémon
-catalogue: those cards are priced off the English product for the same set and
-number. That is the closest real quote and much better than 0.00, but it is not the
-printing the user owns, so the inspector labels it "TCGplayer (English printing)"
-rather than presenting it as this card's price.
+Coverage is a function of the sweep's scope, not of the cache: the daily sweep
+(`scryfallApi.updateCollectionPrices`) runs over the cards the user owns or runs
+in decks, one `/cards/collection` request per 75 identifiers, so a browsed-but-
+unowned set reads 0.00 until a card from it is added.
 
-Coverage is a function of the sweep's scope, not of the cache: `tcgcsvApi`'s daily
-sweep runs over sets the user owns cards from (`scope: 'owned'`, one request per
-set), so a browsed-but-unowned set reads 0.00 until a card from it is added.
-
-`market_value` is written from two places and read as one number: the owner types
-it (`PUT /collection/:id`, source `manual`) or fetches it
-(`POST /collection/:id/market-value/fetch`, source `pokemonpricetracker`). The
-fetch path lives in `gradedPrices.js` and exists because no card API prices
-slabs. It is per-request and never swept: the only free provider meters at 100
-lookups a day. `frontend/src/utils/resolveCardPrice.js` mirrors the same order
-for cards not yet saved.
+`frontend/src/utils/resolveCardPrice.js` mirrors the same per-printing order for
+cards not yet saved, so the displayed price matches the one that will be recorded
+when the card is added.
 
 ### Card ordering
 
@@ -416,10 +385,10 @@ location rules — was removed with the physical-location feature):
 
 | Table | Purpose / key columns |
 |-------|-----------------------|
-| `users` | `id`, `username`, `password_hash` (PBKDF2, iterations embedded), `role`, `share_token`, `share_enabled`, `tcg_api_key`, `psa_api_token`, `graded_price_api_key`, `api_key` (read-only external credential) |
+| `users` | `id`, `username`, `password_hash` (PBKDF2, iterations embedded), `role`, `share_token`, `share_enabled`, `api_key` (read-only external credential) |
 | `sessions` | `user_id`, `token`, `expires_at` — Bearer-token auth |
-| `card_cache` | Normalized card metadata keyed by provider `id`: `name` (searchable) and `printed_name` (as printed), `language`, `set_id`/`set_name`, `number`, `image_url`, `types`/`subtypes`/`supertype`, `rarity`, `cmc`, `color_identity`, `price_*` with `price_source`/`price_currency`, `tcgplayer_product_id`, `tcgplayer_url`/`cardmarket_url`, `game`, `last_updated`. Written only through `utils/cardCache.cacheNormalizedCards`, which upserts — `INSERT OR REPLACE` re-created the row and reset every column outside the provider's own list |
-| `collection` | One row per owned stack: `id` (entry_id), `user_id`, `card_id`→card_cache, `quantity`, `condition`, `printing`, `language`, `purchase_price`, `list_type` (`collection`/`trade`), `is_trade`, `game`, `added_at`; per-copy grading (`grader`, `grade`, `cert_number`) and per-copy value (`market_value`, `market_value_source`, `market_value_at`) |
+| `card_cache` | Normalized card metadata keyed by provider `id`: `name` (searchable) and `printed_name` (as printed), `language`, `set_id`/`set_name`, `number`, `image_url`, `types`/`subtypes`/`supertype`, `rarity`, `cmc`, `color_identity`, `price_*` with `price_source`/`price_currency`, `tcgplayer_product_id`, `tcgplayer_url`/`cardmarket_url`, `last_updated`. Written only through `utils/cardCache.cacheNormalizedCards`, which upserts — `INSERT OR REPLACE` re-created the row and reset every column outside the provider's own list |
+| `collection` | One row per owned stack: `id` (entry_id), `user_id`, `card_id`→card_cache, `quantity`, `condition`, `printing`, `language`, `purchase_price`, `list_type` (`collection`/`trade`), `is_trade`, `notes`, `added_at` |
 | `decks` | `user_id`, `name`, `description`, `checked_out`, `checked_out_at`, `created_at` |
 | `deck_cards` | Deck contents: `deck_id`, `card_id`, `quantity` |
 | `price_history` | Per-card price points over time, powering trend charts |
@@ -445,12 +414,12 @@ code-split view components. `/share/:token` renders the public view without auth
 | `Dashboard` | Collection value, net-worth trends, distributions, milestones |
 | `AddCards` | Wrapper toggling **CameraScanner** vs **CardSearch** |
 | `CameraScanner` | Camera capture, in-browser corner detection + dewarp, POST `/api/scan-match`, confidence gate + manual pick |
-| `CardSearch` | Name/number text search against the card APIs |
+| `CardSearch` | Name/number text search against the card API |
 | `CardInspectorModal` | Card detail: pricing, types, printing/rarity |
 | `CollectionList` | Browse/filter/sort the collection; bulk actions |
 | `DeckBuilder` | Deck CRUD, composition charts, draw simulator, checkout/return |
 | `CheckoutWizardModal` | Checkout **and** check-in coverage checklist (mode prop): owned vs required vs in-use-elsewhere, with a missing count |
-| `CatalogPanel` | Scan catalogs: what is built per game/language, coverage against the provider's own totals, build/stop with live progress |
+| `CatalogPanel` | Scan catalogs: what is built per language, coverage against the provider's own totals, build/stop with live progress |
 | `Settings`, `AdminPanel`, `SharedCollection`, `PriceHistoryChart` | Preferences, user admin, public view, price charts |
 
 Client utils (`utils/`): `cardSort` (shared sort comparators + `sortCardsByOrder`),
@@ -482,8 +451,8 @@ locked by other checked-out decks.
 
 - **Backend has no auto-reload** in production/local `node src/server.js`; restart it after backend changes so new routes/data load. Frontend uses Vite HMR.
 - **SQLite runs in WAL mode** — checkpoint/stop before file-level backups so `-wal`/`-shm` are flushed.
-- **Everything is game-scoped** (`pokemon` | `mtg`); new card fields must be threaded through both `tcgApi.js` and `scryfallApi.js` normalization.
-- **Scanning needs a catalog**: the two ONNX models identify nothing on their own, and there is no second matcher to fall back to. `/api/scan-match` answers `503 notBuilt` with the fix in the message rather than an empty candidate list, which reads to the user as "your card could not be identified". A catalog is per (game, language) and only as complete as the provider's data for that language.
+- **New card fields must be threaded through `scryfallApi.js` normalization** and added to the `card_cache` upsert list — `utils/cardCache.cacheNormalizedCards` only writes the columns it names, so a field left out is silently dropped.
+- **Scanning needs a catalog**: the two ONNX models identify nothing on their own, and there is no second matcher to fall back to. `/api/scan-match` answers `503 notBuilt` with the fix in the message rather than an empty candidate list, which reads to the user as "your card could not be identified". A catalog is per language and only as complete as the provider's data for that language.
 - **Frontend lint is strict**: CI runs `eslint --max-warnings 0`, so unused vars/imports and empty blocks fail the Docker build.
 
 ---

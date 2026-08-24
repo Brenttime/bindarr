@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
-  Cpu, Download, Check, X, Layers, KeyRound,
+  Cpu, Download, Check, X, Layers,
   ArrowLeft, ArrowRight, Camera, Database, Swords, LayoutDashboard, Settings as SettingsIcon,
   Languages,
 } from 'lucide-react';
-import { GAMES, enabledGames, setGameEnabled, defaultGame, gameLabel } from '../utils/games';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 
 // First-run setup.
@@ -30,7 +29,7 @@ import { LOCALES, localeName, useT } from '../utils/i18n';
 // asked twice, and an admin who closes halfway is picked up where they left off
 // after the next login.
 
-const STEPS = ['language', 'cards', 'scanning', 'keys', 'tour'];
+const STEPS = ['language', 'scanning', 'tour'];
 
 const markComplete = () => fetch('/api/settings', {
   method: 'PUT',
@@ -45,16 +44,6 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
   // Step 2: scanning
   const [engine, setEngine] = useState(null);
   const [catalogs, setCatalogs] = useState([]);
-
-  // Step 1: which cards this collector keeps
-  const [shownGames, setShownGames] = useState(() => enabledGames());
-  const [defaultGameValue, setDefaultGameValue] = useState(() => defaultGame());
-
-  // Step 3: optional provider keys
-  const [tcgKey, setTcgKey] = useState(user?.tcg_api_key || '');
-  const [psaToken, setPsaToken] = useState(user?.psa_api_token || '');
-  const [gradedKey, setGradedKey] = useState(user?.graded_price_api_key || '');
-  const [savingKeys, setSavingKeys] = useState(false);
 
   // Sizes and counts are locale-formatted, so they go through t() rather than
   // being glued into a sentence: "9.6 MB" is "9,6 MB" in half of Europe.
@@ -102,22 +91,6 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     } catch (e) { showToast?.(e.message); }
   };
 
-  const saveKeys = async () => {
-    setSavingKeys(true);
-    try {
-      const r = await fetch('/api/auth/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tcg_api_key: tcgKey, psa_api_token: psaToken, graded_price_api_key: gradedKey }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || t('setup.keys.errSave'));
-      onUpdateUser?.(j.user);
-      showToast?.(t('setup.keys.saved'));
-    } catch (e) { showToast?.(e.message); }
-    finally { setSavingKeys(false); }
-  };
-
   const finish = async () => {
     try { await markComplete(); } catch { /* worst case, the wizard offers itself again */ }
     onClose();
@@ -135,11 +108,6 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     padding: '0.5rem 0.7rem', borderRadius: 'var(--radius-sm)',
     border: '1px solid var(--border-glass)', background: 'var(--surface-1)',
   };
-  const link = { color: 'var(--accent-red)', textDecoration: 'underline' };
-  const A = ({ href, children }) => (
-    <a href={href} target="_blank" rel="noreferrer noopener" style={link}>{children}</a>
-  );
-
   const Heading = ({ icon, title, sub }) => (
     <div>
       <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '1.05rem' }}>
@@ -224,56 +192,6 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     </>
   );
 
-  const cardsStep = (
-    <>
-      <Heading
-        icon={<Layers size={18} />}
-        title={t('setup.cards.title')}
-        sub={t('setup.cards.sub')}
-      />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        {GAMES.map(({ value, label: cardName }) => {
-          const on = shownGames.includes(value);
-          const isLast = on && shownGames.length === 1;
-          return (
-            <label key={value} style={{
-              display: 'flex', alignItems: 'center', gap: '0.6rem', margin: 0,
-              background: 'var(--surface-1)', padding: '0.6rem 0.8rem',
-              borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)',
-              cursor: isLast ? 'not-allowed' : 'pointer', opacity: isLast ? 0.7 : 1,
-            }}>
-              <input
-                type="checkbox" checked={on} disabled={isLast}
-                onChange={(e) => {
-                  if (!setGameEnabled(value, e.target.checked)) return;
-                  setShownGames(enabledGames());
-                  setDefaultGameValue(defaultGame());
-                }}
-                style={{ width: 16, height: 16, accentColor: 'var(--accent-red)' }}
-              />
-              <span style={{ fontSize: '0.85rem', color: 'var(--text-strong)', fontWeight: 600 }}>{cardName}</span>
-            </label>
-          );
-        })}
-      </div>
-      <div>
-        <div style={{ ...label, marginBottom: '0.3rem' }}>{t('setup.cards.openOn')}</div>
-        <select
-          className="select-control" style={input} value={defaultGameValue}
-          disabled={shownGames.length === 1}
-          onChange={(e) => { setDefaultGameValue(e.target.value); localStorage.setItem('default_game', e.target.value); }}
-        >
-          {GAMES.filter(g => shownGames.includes(g.value)).map(g => (
-            <option key={g.value} value={g.value}>{g.label}</option>
-          ))}
-        </select>
-        <p style={{ ...body, fontSize: '0.74rem', marginTop: '0.35rem' }}>
-          {t('setup.cards.openOnHint')}
-        </p>
-      </div>
-    </>
-  );
-
   const scanning = (
     <>
       <Heading
@@ -315,7 +233,7 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
             <div key={c.name}>
               <div style={row}>
                 <span style={{ fontSize: '0.76rem', color: 'var(--text-strong)' }}>
-                  {gameLabel(c.game)}
+                  Magic
                   <span style={{ color: 'var(--text-secondary)' }}>
                     {' · '}{t('setup.scan.catalogMeta', { size: mb(c.bytes), snapshot: c.snapshot })}
                   </span>
@@ -348,43 +266,6 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     </>
   );
 
-  const keys = (
-    <>
-      <Heading
-        icon={<KeyRound size={18} />}
-        title={t('setup.keys.title')}
-        sub={t('setup.keys.sub')}
-      />
-      <div>
-        <div style={label}>{t('setup.keys.tcgTitle')}</div>
-        <p style={{ ...body, fontSize: '0.74rem', margin: '0.2rem 0 0.35rem' }}>
-          {t('setup.keys.tcgBody', { from: 1000, to: 20000 })}
-          {' '}<A href="https://dev.pokemontcg.io/">dev.pokemontcg.io</A>
-        </p>
-        <input type="password" value={tcgKey} onChange={(e) => setTcgKey(e.target.value)} style={input} placeholder={t('setup.keys.pasteKey')} />
-      </div>
-      <div>
-        <div style={label}>{t('setup.keys.psaTitle')}</div>
-        <p style={{ ...body, fontSize: '0.74rem', margin: '0.2rem 0 0.35rem' }}>
-          {t('setup.keys.psaBody')}
-          {' '}<A href="https://www.psacard.com/publicapi/documentation">psacard.com</A>
-        </p>
-        <input type="password" value={psaToken} onChange={(e) => setPsaToken(e.target.value)} style={input} placeholder={t('setup.keys.pasteToken')} />
-      </div>
-      <div>
-        <div style={label}>{t('setup.keys.gradedTitle')}</div>
-        <p style={{ ...body, fontSize: '0.74rem', margin: '0.2rem 0 0.35rem' }}>
-          {t('setup.keys.gradedBody')}
-          {' '}<A href="https://www.pokemonpricetracker.com/">pokemonpricetracker.com</A>
-        </p>
-        <input type="password" value={gradedKey} onChange={(e) => setGradedKey(e.target.value)} style={input} placeholder={t('setup.keys.pasteKey')} />
-      </div>
-      <button className="btn btn-primary btn-sm" onClick={saveKeys} disabled={savingKeys} style={{ alignSelf: 'flex-start' }}>
-        {savingKeys ? t('setup.keys.saving') : t('setup.keys.save')}
-      </button>
-    </>
-  );
-
   const tour = (
     <>
       <Heading icon={<LayoutDashboard size={18} />} title={t('setup.tour.title')} />
@@ -408,7 +289,7 @@ export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) 
     </>
   );
 
-  const content = [language, cardsStep, scanning, keys, tour][step];
+  const content = [language, scanning, tour][step];
   const last = step === STEPS.length - 1;
 
   return (

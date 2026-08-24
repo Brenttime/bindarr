@@ -14,7 +14,6 @@ router.get('/', async (req, res) => {
         d.id,
         d.name,
         d.description,
-        d.game,
         d.format,
         d.category,
         d.accent_color,
@@ -43,7 +42,6 @@ router.post('/', async (req, res) => {
   const { 
     name, 
     description = '', 
-    game = 'pokemon',
     format = 'Standard',
     category = 'Competitive',
     accent_color = '#eab308',
@@ -54,13 +52,13 @@ router.post('/', async (req, res) => {
   if (!name) {
     return res.status(400).json({ error: 'Deck name is required' });
   }
-  const deckGame = ['pokemon', 'mtg'].includes(game) ? game : 'pokemon';
+
   const targetSizeNum = parseInt(target_size, 10) || 60;
 
   try {
     const result = await db.run(
-      `INSERT INTO decks (name, description, game, format, category, accent_color, target_size, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, description, deckGame, format, category, accent_color, targetSizeNum, req.user.id]
+      `INSERT INTO decks (name, description, format, category, accent_color, target_size, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [name, description, format, category, accent_color, targetSizeNum, req.user.id]
     );
     const newDeckId = result.lastID;
 
@@ -74,7 +72,7 @@ router.post('/', async (req, res) => {
         if (match) {
           const qty = parseInt(match[1], 10);
           const cardName = match[2].trim();
-          const card = await db.get(`SELECT id FROM card_cache WHERE LOWER(name) = LOWER(?) AND game = ? LIMIT 1`, [cardName, deckGame]);
+          const card = await db.get(`SELECT id FROM card_cache WHERE LOWER(name) = LOWER(?) LIMIT 1`, [cardName]);
           if (card) {
             await db.run(
               `INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, ?, ?) ON CONFLICT(deck_id, card_id) DO UPDATE SET quantity = quantity + EXCLUDED.quantity`,
@@ -248,16 +246,11 @@ router.post('/:id/cards', async (req, res) => {
       return res.status(404).json({ error: 'Deck not found or unauthorized' });
     }
 
-    // Ensure card metadata exists in cache. Dispatch on the ID, because only the
-    // provider that minted it can resolve it: this asked pokemontcg.io for every
-    // uncached card, and tcgApi.getCardById short-circuits on 'mtg-' and
-    // 'tcgdex-' ids to whatever is cached — so an uncached MTG or non-English
-    // Pokémon card came back null and the deck refused it as "not found on the
-    // Pokémon TCG API", for a card that exists on a provider it never asked.
+    // Ensure card metadata exists in cache.
     let card = await db.get(`SELECT id FROM card_cache WHERE id = ?`, [card_id]);
     if (!card) {
       console.log(`Card ${card_id} not in cache. Fetching...`);
-      const apiCard = await cardApi.getCardById(card_id, { tcgApiKey: req.user.tcg_api_key });
+      const apiCard = await cardApi.getCardById(card_id);
       if (!apiCard) {
         return res.status(404).json({ error: `Card ${card_id} not found on any card provider.` });
       }

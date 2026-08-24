@@ -13,16 +13,7 @@ const helmet = require('helmet');
 const compression = require('compression');
 const path = require('path');
 const db = require('./db');
-const tcgApi = require('./tcgApi');
 const scryfallApi = require('./scryfallApi');
-
-// Which module owns the Pokémon `sets` table. Asked per call rather than resolved
-// once: the provider is a setting an admin can change while the server is up, and
-// the weekly refresh has to follow it without a restart.
-const pokemonSetSource = async () =>
-  (await require('./utils/pokemonProvider').usesTcgdex('English'))
-    ? require('./tcgdexApi')
-    : tcgApi;
 
 const authRoutes = require('./routes/auth');
 const sharedRoutes = require('./routes/shared');
@@ -118,7 +109,7 @@ app.use(helmet({
       // break scanning the moment that flips.
       scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
       connectSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'blob:', 'https://images.pokemontcg.io', 'https://cards.scryfall.io', 'https://c1.scryfall.com', 'https://img.scryfall.com', 'https://assets.tcgdex.net'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https://cards.scryfall.io', 'https://c1.scryfall.com', 'https://img.scryfall.com'],
       // index.html loads Antonio, Outfit and Plus Jakarta Sans from Google Fonts,
       // which is two separate origins: the stylesheet comes from fonts.googleapis
       // .com and the .woff2 files it then references come from fonts.gstatic.com.
@@ -242,11 +233,7 @@ db.initDb()
     const splitCount = await splitStackedEntries(db);
     if (splitCount > 0) console.log(`Split ${splitCount} stacked collection copies into individual rows.`);
 
-    // Sync sets on startup (both games). WHICH Pokémon provider fills the `sets`
-    // table follows the same setting the cards do — this used to be pokemontcg.io
-    // unconditionally, so a TCGdex install browsed a set list numbered by a
-    // provider none of its cards came from.
-    await (await pokemonSetSource()).fetchAndCacheSets();
+    // Sync sets on startup.
     await scryfallApi.fetchAndCacheSets();
 
     // Warm the scan models and catalogs. Two ONNX sessions plus an embedding table
@@ -256,7 +243,7 @@ db.initDb()
     // pays the load itself.
     try {
       const cvScan = require('./cvScan');
-      const warm = ['mtg', 'pokemon'].filter(g => cvScan.isBuilt(g));
+      const warm = ['mtg'].filter(g => cvScan.isBuilt(g));
       for (const g of warm) {
         cvScan.load(g).catch(err => console.warn(`cvScan ${g} warm-up failed:`, err.message));
       }
@@ -273,7 +260,6 @@ db.initDb()
     // weekly is plenty — prices are on their own schedule below.
     setInterval(async () => {
       try {
-        await (await pokemonSetSource()).fetchAndCacheSets(true);
         await scryfallApi.fetchAndCacheSets(true);
         await loadSetsCache(db);
         await autoUpdateCatalogs();
@@ -286,17 +272,7 @@ db.initDb()
     // most often worth doing and the most often allowed. `force` because the
     // interval itself is already the right cadence.
     setInterval(() => {
-      tcgApi.updateCollectionPrices(true);
       scryfallApi.updateCollectionPrices(true);
-      // Non-English Pokémon cards: their ids 404 on pokemontcg.io, so tcgApi's
-      // sweep skips them and this is their only price refresh. No-op until the
-      // user actually owns one.
-      require('./tcgdexApi').updateCollectionPrices(true);
-      // TCGCSV runs LAST of the Pokémon sweeps on purpose. It writes the same
-      // columns as the other two and is the better source — TCGplayer market
-      // prices in USD, and 97% coverage against TCGdex's 8% — so it should have
-      // the final say on any card it can place.
-      require('./tcgcsvApi').updateCollectionPrices(true);
     }, 1000 * 60 * 60 * 24);
 
     // Shortly after startup, catch up if the last sweep was over a day ago.
@@ -304,10 +280,7 @@ db.initDb()
     // nodemon meant a full sweep on every code edit — for data that cannot have
     // changed since the last one.
     setTimeout(() => {
-      tcgApi.updateCollectionPrices();
       scryfallApi.updateCollectionPrices();
-      require('./tcgdexApi').updateCollectionPrices();
-      require('./tcgcsvApi').updateCollectionPrices();
     }, 30000);
 
     // Periodically purge expired sessions so the table doesn't grow unbounded

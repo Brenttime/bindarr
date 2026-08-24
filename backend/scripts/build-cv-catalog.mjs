@@ -1,29 +1,21 @@
 // Build a CollectorVision embedding catalog from THIS install's card_cache.
 //
-// Why not just use the published catalogs: they are keyed by the provider's id,
-// which for MTG happens to be card_cache's primary key but for Pokemon is a
-// TCGplayer product id that has to be joined through tcgplayer_product. Measured
-// on this install, only 23.6% of the published Pokemon catalog resolved to a card
-// the app had ever cached — so three quarters of a correct match could not be
-// turned into an answer.
-//
-// A catalog built from card_cache cannot have that problem: every row IS a card
-// this install knows, so a hit is always resolvable. It is also current (the
-// published ones are dated snapshots) and it covers exactly the sets the user
-// actually has, rather than everything TCGplayer ever listed.
+// A catalog built from card_cache keys every row by card_cache's primary key,
+// so a hit is always resolvable. It is also current (published catalogs are
+// dated snapshots) and it covers exactly the sets the user actually has,
+// rather than everything the provider ever listed.
 //
 // Output, beside the models:
 //   milo-<game>-local.bin    Float32 embeddings, n * dim, row-major
 //   milo-<game>-local.json   { dim, ids: [...], builtAt, model, views }
 //
 // Resumable: re-running keeps every embedding already computed and only fetches
-// cards that are new or whose image_url changed. A full Pokemon build is ~13k
-// images; MTG is ~106k and takes hours, which is exactly why it resumes.
+// cards that are new or whose image_url changed. A full MTG build is ~106k
+// images and takes hours, which is exactly why it resumes.
 //
 // Usage, from backend/:
-//   node scripts/build-cv-catalog.mjs --game pokemon
 //   node scripts/build-cv-catalog.mjs --game mtg --limit 2000
-//   node scripts/build-cv-catalog.mjs --game pokemon --views 3   # augmented mean
+//   node scripts/build-cv-catalog.mjs --game mtg --views 3   # augmented mean
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +28,7 @@ const ort = require('onnxruntime-node');
 const db = require('../src/db');
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
-const game = arg('--game', 'pokemon');
+const game = arg('--game', 'mtg');
 const lang = arg('--lang', 'English');
 const limit = parseInt(arg('--limit', '0'), 10);
 const views = Math.max(1, parseInt(arg('--views', '1'), 10));
@@ -118,9 +110,9 @@ async function main() {
 
   const rows = await db.all(
     `SELECT id, name, image_url FROM card_cache
-      WHERE game = ? AND language = ? AND image_url IS NOT NULL AND image_url != ''
+      WHERE language = ? AND image_url IS NOT NULL AND image_url != ''
       ORDER BY id` + (limit ? ` LIMIT ${limit}` : ''),
-    [game, lang]
+    [lang]
   );
   console.log(`${rows.length} ${game} cards with artwork in card_cache (${lang})`);
 

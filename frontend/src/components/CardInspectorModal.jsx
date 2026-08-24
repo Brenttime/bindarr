@@ -38,11 +38,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
   const [favorite, setFavorite] = useState(0);
   const [listType, setListType] = useState('collection');
   const [notes, setNotes] = useState('');
-  const [grader, setGrader] = useState('Raw');
-  const [grade, setGrade] = useState('');
-  const [certNumber, setCertNumber] = useState('');
-  const [marketValue, setMarketValue] = useState('');
-  const [fetchingValue, setFetchingValue] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const hasToggledRef = useRef(false);
 
@@ -63,10 +58,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
     setFavorite(card.favorite ? 1 : 0);
     setListType(card.list_type || 'collection');
     setNotes(card.notes || '');
-    setGrader(card.grader || 'Raw');
-    setGrade(card.grade == null ? '' : String(card.grade));
-    setCertNumber(card.cert_number || '');
-    setMarketValue(card.market_value == null ? '' : String(card.market_value));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset form only when the entry changes, not on every card mutation
   }, [targetEntryId, startInEdit]);
 
@@ -103,16 +94,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
           list_type: listType,
           is_trade: isTrade ? 1 : 0,
           favorite: favorite ? 1 : 0,
-          notes,
-          grader,
-          grade: grade === '' ? null : parseFloat(grade),
-          cert_number: certNumber.trim() || null,
-          // Only when it actually changed. A value just fetched from the provider is
-          // already saved with that provider recorded as its source; sending it back
-          // untouched would relabel it as hand-typed and exempt it from a refresh.
-          ...(marketValue !== (card.market_value == null ? '' : String(card.market_value))
-            ? { market_value: marketValue === '' ? null : parseFloat(marketValue) }
-            : {})
+          notes
         })
       });
       if (res.ok) {
@@ -125,10 +107,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
         card.is_trade = isTrade ? 1 : 0;
         card.favorite = favorite ? 1 : 0;
         card.notes = notes;
-        card.grader = grader;
-        card.grade = grade === '' ? null : parseFloat(grade);
-        card.cert_number = certNumber.trim() || null;
-        card.market_value = marketValue === '' ? null : parseFloat(marketValue);
         // The server resolves this per printing on the next fetch; mirror it here so
         // a screen still holding this object does not show the old printing's price.
         card.price_trend = resolveCardPrice(card, printing);
@@ -136,41 +114,12 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
         onUpdate && onUpdate();
         onClose();
       } else {
-        // The server's own words when it has any: a duplicate cert number names the
-        // card already holding it, which a generic failure toast would throw away
-        // and leave the user re-typing a number that was never the problem.
         const body = await res.json().catch(() => null);
         showToast && showToast(body?.error || t('inspector.errUpdate'));
       }
     } catch (err) {
       console.error(err);
       showToast && showToast(t('inspector.errEdit'));
-    }
-  };
-
-  // Ask the graded-price provider what this slab is worth and drop the answer into
-  // the field. One card, one request, because the free tier is metered per day —
-  // so this is a button the owner presses, never a sweep.
-  const handleFetchValue = async () => {
-    if (!targetEntryId) return;
-    setFetchingValue(true);
-    try {
-      const res = await fetch(`/api/collection/${targetEntryId}/market-value/fetch`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setMarketValue(String(data.market_value));
-        card.market_value = data.market_value;
-        showToast && showToast(t('inspector.valueFetched', { basis: data.basis }));
-      } else {
-        // The provider's refusals name what to do instead ("enter it by hand", "check
-        // the key in Settings"), which a generic failure toast would throw away.
-        showToast && showToast(data.error || t('inspector.errFetchValue'));
-      }
-    } catch (err) {
-      console.error(err);
-      showToast && showToast(t('common.errBackend'));
-    } finally {
-      setFetchingValue(false);
     }
   };
 
@@ -358,9 +307,9 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
             <h3 style={{ fontSize: '1.65rem', color: 'var(--text-strong)', fontWeight: 800, lineHeight: 1.15, marginBottom: '0.25rem' }}>
               {getCardDisplayName(card.name, card.language, card.printed_name)}
             </h3>
-            {/* The English name when the provider gives us one for this printing
-                (Magic always does). Nothing is shown for a Japan-only Pokémon
-                card — no provider has an English name for it. */}
+            {/* The English name when the provider has one for this printing
+                (Scryfall has it for every Magic printing). Shown only when the
+                card's own language differs from the UI's. */}
             {translatedName(card) && (
               <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 500, marginBottom: '0.25rem' }}>
                 {translatedName(card)}
@@ -377,8 +326,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
               {cardNumber ? ` • #${cardNumber}` : ''}{card.rarity ? ` • ${card.rarity}` : ''} • {t('inspector.owned', { count: card.quantity ?? 1 })}
             </p>
 
-            {/* MTG cards: show color pips + type line (Pokémon energy types are
-                already conveyed via the type-glow styling elsewhere). */}
+            {/* MTG cards: show color pips + type line. */}
             {card.supertype === 'MTG' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
                 {(Array.isArray(card.types) ? card.types : []).map(color => (
@@ -418,42 +366,9 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
               )}
 
               <CardEntryFields
-                game={card.game || card.supertype}
                 quantity={q} purchasePrice={purchasePrice} condition={condition} printing={printing} language={language}
                 onQuantity={setQ} onPurchasePrice={setPurchasePrice} onCondition={setCondition} onPrinting={setPrinting} onLanguage={setLanguage}
-                grader={grader} grade={grade} certNumber={certNumber}
-                onGrader={setGrader} onGrade={setGrade} onCertNumber={setCertNumber}
               />
-
-              {/* What this copy is worth, when the card's market price is not it —
-                  a slab, a signed card, a misprint. Everything that adds up money
-                  (net worth, set totals, the top-valuable list) reads this instead
-                  once it is set. Empty means "use the card's price" again. */}
-              <div className="form-group">
-                <label htmlFor="copy-value">{t('inspector.copyValue')}</label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <input
-                    id="copy-value"
-                    type="number" inputMode="decimal" min="0" step="0.01"
-                    className="input-control"
-                    style={{ flex: 1 }}
-                    value={marketValue}
-                    onChange={(e) => setMarketValue(e.target.value)}
-                    placeholder={formatPrice(displayPrice)}
-                  />
-                  {grader !== 'Raw' && (
-                    <button
-                      type="button" className="btn btn-secondary" onClick={handleFetchValue} disabled={fetchingValue}
-                      style={{ whiteSpace: 'nowrap', fontSize: '0.75rem' }}
-                    >
-                      {fetchingValue ? t('common.loading') : t('inspector.fetchGradedValue')}
-                    </button>
-                  )}
-                </div>
-                <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: '0.3rem', lineHeight: 1.4 }}>
-                  {t('inspector.copyValueHint')}
-                </div>
-              </div>
 
               <div className="form-group">
                 <label>{t('inspector.notes')}</label>
@@ -488,30 +403,13 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
                       {t('inspector.priceVia', { source: priceSource(card).name, currency: priceSource(card).currency })}
                     </div>
                   )}
-                  {/* Every price source this app has — TCGplayer, Scryfall,
-                      Cardmarket — quotes RAW singles. None of them price slabs, and
-                      a PSA 10 is worth a multiple of its raw copy. So for a graded
-                      copy the number above is either a value set on this copy, or it
-                      is the raw price and says so. Inventing a grade multiplier
-                      would be worse than either: confidently wrong. */}
-                  {card.market_value > 0 ? (
-                    <div style={{ fontSize: '0.62rem', color: 'var(--accent-yellow)', marginTop: '0.1rem', lineHeight: 1.35 }}>
-                      {card.market_value_source && card.market_value_source !== 'manual'
-                        ? t('inspector.valueFromProvider', { source: card.market_value_source })
-                        : t('inspector.valueFromYou')}
-                    </div>
-                  ) : card.grader && card.grader !== 'Raw' && (
-                    <div style={{ fontSize: '0.62rem', color: 'var(--accent-yellow)', marginTop: '0.1rem', lineHeight: 1.35 }}>
-                      {t('inspector.priceRawOnly')}
-                    </div>
-                  )}
                   {/* Printings are priced separately; conditions are not, by anyone
                       Bindarr talks to — TCGplayer, Scryfall and Cardmarket all quote
                       a Near Mint copy. Saying so beats letting a played card show a
                       NM price with nothing to explain it, and beats inventing a
                       condition multiplier, which would be a made-up number wearing
                       the same styling as a real one. */}
-                  {!(card.market_value > 0) && condition && condition !== 'Near Mint' && (
+                  {condition && condition !== 'Near Mint' && (
                     <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: '0.1rem', lineHeight: 1.35 }}>
                       {t('inspector.priceNearMintOnly', { condition })}
                     </div>
@@ -574,17 +472,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
 
               {/* Specifications Details Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem 1rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem' }}>
-                {/* A slab reports its grade where a raw card reports its condition:
-                    they answer the same question, and showing 'Near Mint' for a
-                    PSA 9 states an opinion the grader already overruled. */}
-                {card.grader && card.grader !== 'Raw' ? (
-                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specGrade')}</span> <span style={{ color: 'var(--accent-yellow)', fontWeight: 700 }}>{card.grader}{card.grade != null ? ` ${card.grade}` : ''}</span></div>
-                ) : (
-                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.condition}</span></div>
-                )}
-                {card.cert_number && (
-                  <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCert')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.cert_number}</span></div>
-                )}
+                <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.condition}</span></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.printing}</span></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.language}</span></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>{t('inspector.specSupertype')}</span> <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{card.supertype}</span></div>

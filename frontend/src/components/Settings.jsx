@@ -1,6 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, Eye, EyeOff, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Layers, Languages, Globe } from 'lucide-react';
-import { GAMES, enabledGames, setGameEnabled, gameOptions, defaultGame } from '../utils/games';
+import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Languages, Globe } from 'lucide-react';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 import { buildCardListText } from '../utils/cardList';
 import { REPO_URL } from '../utils/repo';
@@ -9,49 +8,6 @@ import MoxfieldPanel from './MoxfieldPanel';
 // Admin-only surface, code-split like the view components so its heavy deps
 // (catalog management, backups) only load for admins on the Settings tab.
 const AdminPanel = lazy(() => import('./AdminPanel'));
-
-// One secret: what it is called, what it buys you, and where to get one. Three of
-// these replaced three near-identical panels, so a fourth provider is a few lines
-// rather than another screenful.
-function KeyField({ id, label, hint, link, linkLabel, value, onChange, disabled, placeholder, t }) {
-  const [shown, setShown] = useState(false);
-  return (
-    <div className="form-group" style={{ marginBottom: 0 }}>
-      <label htmlFor={id}>{label}</label>
-      <div style={{ position: 'relative' }}>
-        <input
-          id={id}
-          type={shown ? 'text' : 'password'}
-          autoComplete="off"
-          className="input-control"
-          placeholder={placeholder}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          disabled={disabled}
-          style={{ fontFamily: 'monospace', paddingRight: '2.4rem', width: '100%' }}
-        />
-        <button
-          type="button"
-          onClick={() => setShown((v) => !v)}
-          aria-label={t(shown ? 'settings.hideApiKey' : 'settings.showApiKey')}
-          title={t(shown ? 'settings.hideApiKey' : 'settings.showApiKey')}
-          style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
-        >
-          {shown ? <EyeOff size={16} /> : <Eye size={16} />}
-        </button>
-      </div>
-      {/* The link carries a whole clause rather than sitting mid-sentence: a
-          translator gets two complete units instead of two fragments whose order
-          their language may not allow. */}
-      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem', lineHeight: 1.45 }}>
-        {hint}{' '}
-        <a href={link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>
-          {linkLabel}
-        </a>
-      </div>
-    </div>
-  );
-}
 
 function Settings({ user, onUpdateUser, showToast, target }) {
   const { locale, setLocale, t } = useT();
@@ -63,19 +19,9 @@ function Settings({ user, onUpdateUser, showToast, target }) {
   const [shareEnabled, setShareEnabled] = useState(user?.share_enabled === 1);
   const [shareLoading, setShareLoading] = useState(false);
 
-  const [tcgApiKey, setTcgApiKey] = useState(user?.tcg_api_key || '');
-  const [psaToken, setPsaToken] = useState(user?.psa_api_token || '');
-  const [gradedKey, setGradedKey] = useState(user?.graded_price_api_key || '');
-  const [keysLoading, setKeysLoading] = useState(false);
-  const [accessKey, setAccessKey] = useState(user?.api_key || '');
-  const [showAccessKey, setShowAccessKey] = useState(false);
-  const [accessKeyLoading, setAccessKeyLoading] = useState(false);
-
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
 
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
-  const [defaultGameValue, setDefaultGameValue] = useState(() => defaultGame());
-  const [shownGames, setShownGames] = useState(() => enabledGames());
 
   const [versionInfo, setVersionInfo] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -233,10 +179,6 @@ function Settings({ user, onUpdateUser, showToast, target }) {
   useEffect(() => {
     if (user) {
       setShareEnabled(user.share_enabled === 1 || user.share_enabled === true);
-      setTcgApiKey(user.tcg_api_key || '');
-      setPsaToken(user.psa_api_token || '');
-      setGradedKey(user.graded_price_api_key || '');
-      setAccessKey(user.api_key || '');
     }
   }, [user]);
 
@@ -373,63 +315,6 @@ function Settings({ user, onUpdateUser, showToast, target }) {
       showToast(t('settings.errRegenerateGeneric'));
     } finally {
       setShareLoading(false);
-    }
-  };
-
-  // All three provider keys in one PUT. They are independent services, but they
-  // are set up in one sitting and the settings route takes them together, so three
-  // buttons only ever meant three chances to save two of them.
-  const handleSaveKeys = async (e) => {
-    e.preventDefault();
-    setKeysLoading(true);
-    try {
-      const response = await fetch('/api/auth/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tcg_api_key: tcgApiKey,
-          psa_api_token: psaToken,
-          graded_price_api_key: gradedKey
-        })
-      });
-      const data = await response.json().catch(() => null);
-      if (response.ok) {
-        onUpdateUser(data.user);
-        showToast(t('settings.keysUpdated'));
-      } else {
-        showToast(data?.error || t('settings.errKeys'));
-      }
-    } catch (err) {
-      console.error(err);
-      showToast(t('settings.errKeys'));
-    } finally {
-      setKeysLoading(false);
-    }
-  };
-
-  // Create/rotate/revoke the read-only API key. Rotating and revoking both break
-  // whatever is already using the old key, so both ask first.
-  const handleAccessKey = async (action) => {
-    if (action === 'create' && accessKey && !window.confirm(t('settings.accessConfirmRotate'))) return;
-    if (action === 'revoke' && !window.confirm(t('settings.accessConfirmRevoke'))) return;
-    setAccessKeyLoading(true);
-    try {
-      const response = await fetch('/api/auth/api-key', { method: action === 'revoke' ? 'DELETE' : 'POST' });
-      const data = await response.json().catch(() => null);
-      if (response.ok) {
-        const next = action === 'revoke' ? '' : (data?.api_key || '');
-        setAccessKey(next);
-        setShowAccessKey(action !== 'revoke');
-        onUpdateUser({ ...user, api_key: next });
-        showToast(t(action === 'revoke' ? 'settings.accessRevoked' : 'settings.accessCreated'));
-      } else {
-        showToast(data?.error || t('settings.errAccessKey'));
-      }
-    } catch (err) {
-      console.error(err);
-      showToast(t('settings.errAccessKey'));
-    } finally {
-      setAccessKeyLoading(false);
     }
   };
 
@@ -660,116 +545,6 @@ function Settings({ user, onUpdateUser, showToast, target }) {
           </form>
         </div>
 
-        {/* Every key in one panel. These were four panels — four headers, four
-            bordered intro boxes, four save buttons — for what is three text inputs
-            and a generated credential. The explanations survive as a line under
-            each field, because which key does what is the part nobody remembers. */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <KeyRound size={20} style={{ color: 'var(--accent-red)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.keysTitle')}</h3>
-          </div>
-
-          {/* One form and one save for all three: they are all "keys for outside
-              services", and three separate saves was three round trips to set up
-              an account once. */}
-          <form onSubmit={handleSaveKeys} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-            <KeyField
-              id="settings-tcg-api-key" label={t('settings.apiKeyTitle')} hint={t('settings.apiKeyIntro')}
-              link="https://dev.pokemontcg.io" linkLabel={t('settings.apiKeyGetOne')}
-              value={tcgApiKey} onChange={setTcgApiKey} disabled={keysLoading} t={t}
-              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-            />
-            <KeyField
-              id="settings-psa-token" label={t('settings.psaTokenTitle')} hint={t('settings.psaTokenIntro')}
-              link="https://www.psacard.com/publicapi/documentation" linkLabel={t('settings.psaTokenGetOne')}
-              value={psaToken} onChange={setPsaToken} disabled={keysLoading} t={t}
-            />
-            <KeyField
-              id="settings-graded-key" label={t('settings.gradedKeyTitle')} hint={t('settings.gradedKeyIntro')}
-              link="https://www.pokemonpricetracker.com/api" linkLabel={t('settings.gradedKeyGetOne')}
-              value={gradedKey} onChange={setGradedKey} disabled={keysLoading} t={t}
-            />
-
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={keysLoading}
-              style={{ padding: '0.6rem 1.2rem', alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-            >
-              {keysLoading ? (
-                <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div>
-              ) : t('settings.saveKeys')}
-            </button>
-          </form>
-
-          {/* The one key that points the other way: not a credential Bindarr uses
-              to reach a service, but one something else uses to read Bindarr. Shown
-              in full rather than once-at-creation — read-only is what makes that
-              acceptable, and a write-once secret is one people rotate repeatedly
-              until they manage to catch it. */}
-          <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="settings-access-key">{t('settings.accessTitle')}</label>
-              {accessKey ? (
-                <div style={{ position: 'relative' }}>
-                  <input
-                    id="settings-access-key"
-                    type={showAccessKey ? 'text' : 'password'}
-                    readOnly
-                    className="input-control"
-                    value={accessKey}
-                    onClick={(e) => e.target.select()}
-                    style={{ fontFamily: 'monospace', paddingRight: '2.4rem', width: '100%' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowAccessKey((v) => !v)}
-                    aria-label={t(showAccessKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
-                    title={t(showAccessKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
-                    style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
-                  >
-                    {showAccessKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-              ) : (
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t('settings.accessNone')}</div>
-              )}
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem', lineHeight: 1.45 }}>
-                {t('settings.accessIntro')} {t('settings.accessNetWorth')}
-              </div>
-              <pre style={{ margin: '0.4rem 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                {`curl -H "Authorization: Bearer ${accessKey || '<key>'}" ${origin}/api/stats/networth`}
-              </pre>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={accessKeyLoading}
-                onClick={() => handleAccessKey('create')}
-                style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                {accessKeyLoading ? (
-                  <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div>
-                ) : t(accessKey ? 'settings.accessRotate' : 'settings.accessCreate')}
-              </button>
-              {accessKey && (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={accessKeyLoading}
-                  onClick={() => handleAccessKey('revoke')}
-                  style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}
-                >
-                  {t('settings.accessRevoke')}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
         {/* Moxfield Sync Panel */}
         <div id="moxfield-panel" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', scrollMarginTop: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
@@ -921,75 +696,6 @@ function Settings({ user, onUpdateUser, showToast, target }) {
             </select>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
               {t('prefs.themeHint')}
-            </div>
-          </div>
-
-          {/* Games shown. Hiding a game removes its tabs, filters and cards from
-              the UI; only offered while more than one game exists to hide. */}
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label>{t('prefs.gamesShown')}</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {GAMES.map(({ value, label }) => {
-                const on = shownGames.includes(value);
-                const isLast = on && shownGames.length === 1;
-                return (
-                  <label
-                    key={value}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '0.6rem', margin: 0,
-                      background: 'rgba(255,255,255,0.01)', padding: '0.6rem 0.8rem',
-                      borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)',
-                      cursor: isLast ? 'not-allowed' : 'pointer', opacity: isLast ? 0.7 : 1,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={on}
-                      disabled={isLast}
-                      onChange={(e) => {
-                        if (!setGameEnabled(value, e.target.checked)) {
-                          showToast(t('prefs.lastGameKept'));
-                          return;
-                        }
-                        const next = enabledGames();
-                        setShownGames(next);
-                        // A hidden game can't stay the default the other views open on.
-                        setDefaultGameValue(defaultGame());
-                        showToast(t(e.target.checked ? 'prefs.gameShown' : 'prefs.gameHidden', { game: label }));
-                      }}
-                      style={{ width: '16px', height: '16px', accentColor: 'var(--accent-red)' }}
-                    />
-                    <Layers size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                    <span style={{ fontSize: '0.9rem', color: 'var(--text-strong)', fontWeight: 600 }}>{label}</span>
-                  </label>
-                );
-              })}
-            </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
-              {t('prefs.gamesShownHint')}
-            </div>
-          </div>
-
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="settings-default-game">{t('prefs.defaultGame')}</label>
-            <select
-              id="settings-default-game"
-              className="select-control"
-              value={defaultGameValue}
-              disabled={shownGames.length === 1}
-              onChange={(e) => {
-                const val = e.target.value;
-                setDefaultGameValue(val);
-                localStorage.setItem('default_game', val);
-                // Game names are brands, so they come from GAMES rather than the
-                // locale file — nobody translates "Magic: The Gathering".
-                showToast(t('prefs.defaultGameSet', { game: GAMES.find(g => g.value === val)?.label || val }));
-              }}
-            >
-              {gameOptions().map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-            </select>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
-              {t(shownGames.length === 1 ? 'prefs.defaultGameHintSingle' : 'prefs.defaultGameHint')}
             </div>
           </div>
         </div>

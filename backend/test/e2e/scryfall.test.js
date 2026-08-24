@@ -129,7 +129,6 @@ async function runTests() {
       const cachedCard = await db.get(`SELECT * FROM card_cache WHERE id = ?`, ['mtg-lea-232']);
       assert.ok(cachedCard, 'Card must be saved in cache after search');
       assert.strictEqual(cachedCard.name, 'Black Lotus');
-      assert.strictEqual(cachedCard.game, 'mtg');
       console.log('PASS: F3-TC2');
     } catch (err) {
       console.error('FAIL: F3-TC2 -', err.message);
@@ -215,7 +214,6 @@ async function runTests() {
       
       assert.strictEqual(card.id, 'mtg-54321');
       assert.strictEqual(card.supertype, 'MTG');
-      assert.strictEqual(card.game, 'mtg');
       assert.ok(card.subtypes.includes('Instant'));
       assert.ok(card.types.includes('Red'));
       assert.strictEqual(card.rarity, 'Common');
@@ -287,8 +285,8 @@ async function runTests() {
 
       // Insert lightning bolt to cache first
       await db.run(
-        `INSERT OR REPLACE INTO card_cache (id, name, game, last_updated) VALUES (?, ?, ?, ?)`,
-        ['mtg-54321', 'Lightning Bolt', 'mtg', new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString()]
+        `INSERT OR REPLACE INTO card_cache (id, name, last_updated) VALUES (?, ?, ?)`,
+        ['mtg-54321', 'Lightning Bolt', new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString()]
       );
 
       const res = await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lightning`, { headers: authHeaders });
@@ -396,7 +394,7 @@ async function runTests() {
       const bulkRes = await fetch(`http://localhost:${port}/api/collection/bulk-add`, {
         method: 'POST',
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card_ids: ['mtg-lea-232', 'mtg-does-not-exist'], quantity: 2, game: 'mtg' })
+        body: JSON.stringify({ card_ids: ['mtg-lea-232', 'mtg-does-not-exist'], quantity: 2 })
       });
       assert.strictEqual(bulkRes.status, 200);
       const bulk = await bulkRes.json();

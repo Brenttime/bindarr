@@ -34,9 +34,7 @@ const SHARPNESS_GATE = 0.02;
 const STRONG_SIM = 0.55;
 const STRONG_MARGIN = 0.04;
 // "Nothing here is your card." A sweep always returns its nearest row, so a card
-// the catalog has never heard of comes back looking exactly like one it has —
-// which is how Japanese Pokemon scans returned wrong cards for sets TCGdex has no
-// data for.
+// the catalog has never heard of comes back looking exactly like one it has.
 //
 // The gate is how far the winner stands above its own neighbourhood (ranks 2-11),
 // NOT its absolute cosine, because absolute cosine tracks photo quality and the
@@ -72,14 +70,13 @@ const GAP_K = 11;
 const SESSION_OPTS = { intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential' };
 
 // The two models are game-independent — a card is a card to the corner detector
-// and the embedder. Only the catalog differs, so sessions load once and catalogs
-// load per game, on first use of that game.
+// and the embedder. Sessions load once.
 let models = null;
 const catalogs = {};   // game -> { cat, ids, n, dim } (or an in-flight promise)
 
 // English keeps the bare filename so existing builds stay valid; other languages
 // get their own catalog, because a language whose card text AND set structure
-// differ (Japanese Pokemon) cannot be reached from the English one.
+// differ (Japanese) cannot be reached from the English one.
 const suffix = (lang) => (!lang || lang === 'en' || lang === 'English' ? '' : `-${String(lang).toLowerCase()}`);
 const localBin = (game, lang) => path.join(MODEL_DIR, `milo-${game}${suffix(lang)}-local.bin`);
 const localMeta = (game, lang) => path.join(MODEL_DIR, `milo-${game}${suffix(lang)}-local.json`);
@@ -89,9 +86,8 @@ function catalogPath(game) {
 }
 
 // A locally built catalog wins when present. Its ids are card_cache primary keys,
-// so every hit resolves by construction — which the published Pokemon catalog
-// cannot promise, being keyed by TCGplayer product ids of which only ~24% map to
-// a card this install has ever cached.
+// so every hit resolves by construction — which a stale published catalog
+// cannot promise, being a dated snapshot of an install's cache.
 function hasLocal(game, lang) {
   return fs.existsSync(localBin(game, lang)) && fs.existsSync(localMeta(game, lang));
 }
@@ -169,11 +165,11 @@ async function load(game = 'mtg', lang) {
 
 // Every catalog one scan should search, best language first.
 //
-// A non-English catalog is only ever as complete as its provider. TCGdex serves
-// card records for 28 of the 177 Japanese Pokemon sets it LISTS, so a Japanese
-// catalog holds ~3.3k of 20k+ cards — and a cosine sweep never returns nothing,
-// so every one of the missing cards was answered with the nearest of the wrong
-// 3.3k, often at a similarity high enough to auto-fill. That is the whole reason
+// A non-English catalog is only ever as complete as its provider. A Japanese
+// catalog holds only the sets Scryfall actually lists, so a large share of
+// cards have no row — and a cosine sweep never returns nothing, so every one
+// of the missing cards was answered with the nearest of the wrong set, often
+// at a similarity high enough to auto-fill. That is the whole reason
 // Japanese scans came back wrong.
 //
 // The artwork is identical across languages, so the English catalog holds a row
@@ -321,7 +317,7 @@ async function detectAndDewarp(session, imageBuffer) {
 async function rowSets(s, game) {
   if (s.setOf) return s.setOf;
   const db = require('./db');
-  const rows = await db.all(`SELECT id, set_id FROM card_cache WHERE game = ?`, [game]);
+  const rows = await db.all(`SELECT id, set_id FROM card_cache`);
   const byId = new Map(rows.map(r => [r.id, (r.set_id || '').toLowerCase()]));
   s.setOf = s.ids.map((raw) => {
     const id = String(raw).replace(/_back$/, '');
@@ -435,10 +431,8 @@ async function match(imageBuffer, game = 'mtg', topK = 8, opts = {}) {
   }
   hits.sort((a, b) => b.sim - a.sim);
 
-  // What the catalog is keyed by differs per game, and the caller has to know
-  // which so it can hydrate: MTG's ids ARE card_cache's primary key (`mtg-<uuid>`),
-  // while the published Pokemon catalog's are TCGplayer product ids that have to go
-  // through the tcgplayer_product mapping table.
+  // What the catalog is keyed by: a locally built catalog is keyed by
+  // card_cache's primary key, the published one by Scryfall's uuid.
   //
   // A DFC's back is catalogued as `{id}_back`; both faces are the same printing.
   //
@@ -451,11 +445,8 @@ async function match(imageBuffer, game = 'mtg', topK = 8, opts = {}) {
     const id = String(h.c.ids[h.i]).replace(/_back$/, '');
     if (seen.has(id)) continue;
     seen.add(id);
-    // A local catalog is already keyed by card_cache.id for either game; only the
-    // published catalogs need their provider id translated.
     candidates.push(h.c.local ? { cardId: id, score: h.sim, catalogLang: h.c.lang }
-      : game === 'pokemon' ? { productId: Number(id), score: h.sim, catalogLang: h.c.lang }
-        : { cardId: `${game}-${id}`, score: h.sim, catalogLang: h.c.lang });
+      : { cardId: `${game}-${id}`, score: h.sim, catalogLang: h.c.lang });
     if (candidates.length >= topK) break;
   }
 

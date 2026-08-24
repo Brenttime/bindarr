@@ -65,12 +65,12 @@ async function runTests() {
 
     // Seed: one MTG card with set+number, one without, one in a wishlist
     // entry that must NOT appear in the export.
-    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number, game) VALUES (?, ?, ?, ?, ?)`,
-      ['cl-c1', 'Lightning Bolt', 'jud', '124', 'mtg']);
-    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number, game) VALUES (?, ?, ?, ?, ?)`,
-      ['cl-c2', 'The Legend of Yangchen // Avatar Yangchen', 'tla', '27', 'mtg']);
-    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number, game) VALUES (?, ?, ?, ?, ?)`,
-      ['cl-c3', 'Unsettled Basic', null, null, 'mtg']);
+    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
+      ['cl-c1', 'Lightning Bolt', 'jud', '124']);
+    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
+      ['cl-c2', 'The Legend of Yangchen // Avatar Yangchen', 'tla', '27']);
+    await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
+      ['cl-c3', 'Unsettled Basic', null, null]);
     await db.run(
       `INSERT INTO collection (card_id, quantity, user_id, list_type) VALUES (?, ?, ?, ?)`,
       ['cl-c1', 4, adminId, 'collection']);

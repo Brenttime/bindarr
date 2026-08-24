@@ -22,8 +22,8 @@ const USER_DIR = path.join(path.dirname(db.dbPath), 'card-art');
 const MAX_WIDTH = 745;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
-// Card ids come from three providers and mix case and separators
-// (`tcgdex-ja-SV2a-004`, `sv3pt5-25`, a Scryfall uuid), but none of them contain
+// Card ids mix case and separators (a bare set-code form like `sv3pt5-25`,
+// a prefixed `mtg-<uuid>`), but none of them contain
 // a path separator or a dot-segment. Anything else is refused rather than
 // escaped: the id becomes a filename, so a permissive rule here is a directory
 // traversal.

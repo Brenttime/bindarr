@@ -12,8 +12,8 @@ information you enter into or generate with the app.
 All data lives on the server **you** run. This may include:
 
 - Your account login (username and a securely hashed password).
-- Your card collection: card identities, quantities, conditions, purchase
-  info, market values, and binder/box slot locations.
+- Your card collection: card identities, quantities, conditions, and purchase
+  prices.
 - Photos you take with your device camera to identify cards.
 - Data you export (CSV or database files).
 
@@ -30,9 +30,8 @@ the developer.
 ## Third-party services your server contacts
 
 To identify cards and fetch prices and card images, your Bindarr **server**
-makes requests to public card-catalog APIs:
+makes requests to the public Magic: The Gathering card-catalog API:
 
-- Pokémon TCG API (`api.pokemontcg.io`, `images.pokemontcg.io`)
 - Scryfall (`api.scryfall.com`, `scryfall.com`, `cards.scryfall.io`)
 
 These requests contain card search terms (names, set identifiers) needed to

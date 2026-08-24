@@ -19,18 +19,8 @@
   --accent-yellow: #eab308;
   --accent-yellow-glow: rgba(234, 179, 8, 0.4);
   
-  /* Pokémon Type Colors for Visual Coding */
+  /* Semantic colors (green = positive/complete) */
   --type-grass: #4ade80;
-  --type-fire: #f87171;
-  --type-water: #60a5fa;
-  --type-lightning: #facc15;
-  --type-psychic: #c084fc;
-  --type-fighting: #f97316;
-  --type-darkness: #475569;
-  --type-metal: #94a3b8;
-  --type-dragon: #a855f7;
-  --type-fairy: #f472b6;
-  --type-colorless: #cbd5e1;
 
   /* Semantic surface/foreground tokens. These back the values components used
      to hardcode (#fff text, white overlay fills, dark input bg) so themes can
@@ -324,15 +314,6 @@ button, input, select, textarea {
 .glass-panel:hover {
   border-color: var(--border-glass-hover);
 }
-
-/* Glow Cards based on Pokemon Types */
-.type-glow-fire { border-color: rgba(248, 113, 113, 0.4); box-shadow: 0 4px 20px rgba(248, 113, 113, 0.15); }
-.type-glow-water { border-color: rgba(96, 165, 250, 0.4); box-shadow: 0 4px 20px rgba(96, 165, 250, 0.15); }
-.type-glow-grass { border-color: rgba(74, 222, 128, 0.4); box-shadow: 0 4px 20px rgba(74, 222, 128, 0.15); }
-.type-glow-lightning { border-color: rgba(250, 204, 21, 0.4); box-shadow: 0 4px 20px rgba(250, 204, 21, 0.15); }
-.type-glow-psychic { border-color: rgba(192, 132, 252, 0.4); box-shadow: 0 4px 20px rgba(192, 132, 252, 0.15); }
-.type-glow-dragon { border-color: rgba(168, 85, 247, 0.4); box-shadow: 0 4px 20px rgba(168, 85, 247, 0.15); }
-.type-glow-normal { border-color: var(--border-glass); }
 
 /* Header & Title Component */
 .app-header {
@@ -765,7 +746,7 @@ button, input, select, textarea {
 .tcg-card-inner {
   position: relative;
   width: 100%;
-  aspect-ratio: 0.718; /* Pokemon Card Aspect Ratio */
+  aspect-ratio: 0.718; /* Standard trading card aspect ratio */
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   transform-style: preserve-3d;
   border-radius: var(--radius-sm);

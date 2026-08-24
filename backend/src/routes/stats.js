@@ -7,22 +7,17 @@ const router = express.Router();
 // 7. Get Collection Statistics & Analytics
 router.get('/stats', async (req, res) => {
   try {
-    // Optional per-game view (e.g. only Pokémon or only MTG). Absent = all games.
-    const { game } = req.query;
-    const gameFilter = game ? ` AND cc.game = ?` : '';
-    const statsParams = game ? [req.user.id, game] : [req.user.id];
-
     // Retrieve all collection items to compute statistics
     const query = `
       SELECT
-        c.quantity, c.purchase_price, c.added_at, c.printing, c.condition, c.card_id, c.market_value,
-        cc.types, cc.subtypes, cc.supertype, cc.game, cc.rarity, cc.set_name, cc.set_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition,
+        c.quantity, c.purchase_price, c.added_at, c.printing, c.condition, c.card_id,
+        cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.set_name, cc.set_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition,
         cc.price_avg1, cc.price_avg7, cc.price_avg30
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ?${gameFilter}
+      WHERE c.user_id = ?
     `;
-    const rows = await db.all(query, statsParams);
+    const rows = await db.all(query, [req.user.id]);
 
     let totalCards = 0;
     let uniqueCards = rows.length;
@@ -83,9 +78,8 @@ router.get('/stats', async (req, res) => {
       // Parse types
       const types = JSON.parse(row.types || '[]');
       const subtypes = JSON.parse(row.subtypes || '[]');
-      const isMtg = row.game === 'mtg' || row.supertype === 'MTG';
 
-      if (isMtg) {
+      {
         const isLand = subtypes.includes('Land') || row.supertype === 'Land' || (types.length === 0 && subtypes.some(s => ['Plains','Island','Swamp','Mountain','Forest','Land'].includes(s)));
         if (isLand) {
           typeCounts['Land'] = (typeCounts['Land'] || 0) + qty;
@@ -95,13 +89,6 @@ router.get('/stats', async (req, res) => {
           types.forEach(t => {
             typeCounts[t] = (typeCounts[t] || 0) + qty;
           });
-        }
-      } else {
-        types.forEach(t => {
-          typeCounts[t] = (typeCounts[t] || 0) + qty;
-        });
-        if (types.length === 0) {
-          typeCounts['Colorless'] = (typeCounts['Colorless'] || 0) + qty;
         }
       }
 
@@ -123,18 +110,13 @@ router.get('/stats', async (req, res) => {
       SELECT
         c.id AS entry_id,
         c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.is_trade, c.favorite, c.list_type,
-        c.grader, c.grade, c.market_value,
         cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
-        cc.game, cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity, cc.price_trend,
+        cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity, cc.price_trend,
         cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ?${gameFilter}
+      WHERE c.user_id = ?
       ORDER BY CASE
-        -- Mirrors resolveCardPrice, market_value first. A PSA 10 valued at 40x its
-        -- raw price has to be able to reach this list, and ranking it by the raw
-        -- price is exactly how it never would.
-        WHEN c.market_value IS NOT NULL AND c.market_value > 0 THEN c.market_value
         WHEN c.printing = 'Holofoil' AND cc.price_holofoil IS NOT NULL AND cc.price_holofoil > 0 THEN cc.price_holofoil
         WHEN c.printing = 'Reverse Holofoil' AND cc.price_reverse_holofoil IS NOT NULL AND cc.price_reverse_holofoil > 0 THEN cc.price_reverse_holofoil
         WHEN c.printing = 'Normal' AND cc.price_normal IS NOT NULL AND cc.price_normal > 0 THEN cc.price_normal
@@ -143,7 +125,7 @@ router.get('/stats', async (req, res) => {
       END DESC
       LIMIT 6
     `;
-    const topValuableRows = await db.all(topValuableQuery, statsParams);
+    const topValuableRows = await db.all(topValuableQuery, [req.user.id]);
     const topValuable = topValuableRows.map(row => ({
       ...row,
       price_trend: resolveCardPrice(row)
@@ -152,8 +134,8 @@ router.get('/stats', async (req, res) => {
     // Set completion.
     //
     // Sizes come from the `sets` table, which every provider sync fills in — not
-    // from a hand-kept map. That map listed thirteen Pokémon ids and fell back to a
-    // flat 150 for everything else, so every Magic set and every Pokémon set
+    // from a hand-kept map. That map listed a handful of ids and fell back to a
+    // flat 150 for everything else, so every set
     // released after 151 was measured against a number nobody chose. printed_total
     // is the right column (the number printed on the card, which is what a player
     // counts to); `total` includes secret rares and is the fallback when a provider
@@ -203,16 +185,15 @@ router.get('/stats', async (req, res) => {
     const recentRows = await db.all(`
       SELECT c.id AS entry_id,
              c.quantity, c.condition, c.printing, c.language, c.added_at, c.is_trade, c.favorite, c.list_type,
-             c.grader, c.grade, c.market_value,
              cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
-             cc.game, cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity,
+             cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity,
              cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ?${gameFilter}
+      WHERE c.user_id = ?
       ORDER BY c.added_at DESC
       LIMIT 6
-    `, statsParams);
+    `, [req.user.id]);
     const recentAdditions = recentRows.map(row => ({ ...row, price_trend: resolveCardPrice(row) }));
 
     const gainAbs = totalValue - totalSpent;
@@ -272,18 +253,16 @@ router.get('/stats', async (req, res) => {
 // 7b. Get Collection Net Worth Timeline History
 router.get('/stats/history', async (req, res) => {
   try {
-    const { period = '30d', game } = req.query;
-    const gameFilter = game ? ` AND cc.game = ?` : '';
-    const params = game ? [req.user.id, game] : [req.user.id];
+    const { period = '30d' } = req.query;
 
     // Retrieve all collection items to compute history
     const query = `
-      SELECT c.quantity, c.added_at, c.printing, c.market_value, cc.id as card_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
+      SELECT c.quantity, c.added_at, c.printing, cc.id as card_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ?${gameFilter}
+      WHERE c.user_id = ?
     `;
-    const items = await db.all(query, params);
+    const items = await db.all(query, [req.user.id]);
 
     // Real recorded price snapshots for every card this user owns, oldest
     // first, so each item's price at any past point can be looked up without
@@ -310,11 +289,6 @@ router.get('/stats/history', async (req, res) => {
     // used here was actually recorded or is the actual current price — never
     // a fabricated curve.
     const realPriceAt = (item, targetTime) => {
-      // price_history tracks the PRINTING, so for a copy with its own value (a
-      // slab) it is the wrong series entirely — a PSA 10 does not follow the raw
-      // card down. There is no per-copy history to draw instead, so it holds flat
-      // at the value on record rather than reporting the raw card's movement.
-      if (item.market_value > 0) return item.market_value;
       const hist = historyByCard[item.card_id];
       if (!hist || hist.length === 0) return resolveCardPrice(item);
       let best = null;
@@ -389,20 +363,15 @@ router.get('/stats/history', async (req, res) => {
 // and does not expire, so an external tracker keeps working without a login.
 router.get('/stats/networth', async (req, res) => {
   try {
-    const { game } = req.query;
-    const gameFilter = game ? ` AND cc.game = ?` : '';
-    const params = game ? [req.user.id, game] : [req.user.id];
-
     const rows = await db.all(`
-      SELECT c.quantity, c.purchase_price, c.printing, c.market_value, cc.game, cc.price_currency,
+      SELECT c.quantity, c.purchase_price, c.printing, cc.price_currency,
              cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ? AND c.list_type = 'collection'${gameFilter}
-    `, params);
+      WHERE c.user_id = ? AND c.list_type = 'collection'
+    `, [req.user.id]);
 
     let totalCards = 0, totalValue = 0, totalSpent = 0;
-    const byGame = {};
     const currencies = new Set();
     for (const row of rows) {
       const qty = row.quantity || 1;
@@ -411,10 +380,6 @@ router.get('/stats/networth', async (req, res) => {
       totalValue += value;
       totalSpent += qty * (row.purchase_price || 0);
       if (value > 0) currencies.add(row.price_currency || 'USD');
-      const g = row.game || 'unknown';
-      if (!byGame[g]) byGame[g] = { cards: 0, value: 0 };
-      byGame[g].cards += qty;
-      byGame[g].value += value;
     }
 
     const round = (n) => parseFloat(n.toFixed(2));
@@ -428,11 +393,7 @@ router.get('/stats/networth', async (req, res) => {
       gainPct: totalSpent > 0 ? parseFloat((((totalValue - totalSpent) / totalSpent) * 100).toFixed(1)) : null,
       totalCards,
       uniqueEntries: rows.length,
-      byGame: Object.fromEntries(Object.entries(byGame).map(([g, v]) => [g, { cards: v.cards, value: round(v.value) }])),
-      // Plural and honest: providers quote in different currencies (Scryfall and
-      // TCGplayer in USD, TCGdex in EUR), and the totals above sum them as-is —
-      // the same arithmetic the dashboard has always done. More than one entry
-      // here means the total is mixed, which a consumer converting it needs to know.
+      // Prices are USD (Scryfall); kept for consumers converting.
       currencies: [...currencies].sort(),
       asOf: new Date().toISOString(),
     });

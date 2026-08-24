@@ -31,7 +31,6 @@ function AdminPanel({ showToast }) {
 
   // Instance Settings States
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
-  const [pokemonProvider, setPokemonProvider] = useState('pokemontcg');
   const [settingsLoading, setSettingsLoading] = useState(false);
   const mountedRef = useRef(true);
 
@@ -160,7 +159,6 @@ function AdminPanel({ showToast }) {
         const data = await response.json();
         if (!mountedRef.current) return;
         setPublicBaseUrl(data.public_base_url || '');
-        setPokemonProvider(data.pokemon_provider || 'pokemontcg');
       }
     } catch (err) {
       console.error(err);
@@ -174,13 +172,12 @@ function AdminPanel({ showToast }) {
       const response = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ public_base_url: publicBaseUrl, pokemon_provider: pokemonProvider })
+        body: JSON.stringify({ public_base_url: publicBaseUrl })
       });
 
       if (response.ok) {
         const data = await response.json();
         setPublicBaseUrl(data.public_base_url || '');
-        setPokemonProvider(data.pokemon_provider || 'pokemontcg');
         showToast(t('admin.settingsUpdated'));
       } else {
         const data = await response.json();
@@ -426,28 +423,6 @@ function AdminPanel({ showToast }) {
                 onChange={(e) => setPublicBaseUrl(e.target.value)}
                 disabled={settingsLoading}
               />
-            </div>
-            {/* Which Pokémon API this install speaks to. It has always been a column
-                in app_settings and a branch in utils/pokemonProvider, with no way
-                to set it — so every install ran on pokemontcg.io whether or not it
-                suited them. The two are not interchangeable: they number the same
-                sets differently, so switching re-syncs the set table and rebuilds
-                the TCGplayer product map behind it. */}
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="admin-pokemon-provider">{t('admin.pokemonProvider')}</label>
-              <select
-                id="admin-pokemon-provider"
-                className="select-control"
-                value={pokemonProvider}
-                onChange={(e) => setPokemonProvider(e.target.value)}
-                disabled={settingsLoading}
-              >
-                <option value="pokemontcg">{t('admin.providerPokemontcg')}</option>
-                <option value="tcgdex">{t('admin.providerTcgdex')}</option>
-              </select>
-              <p style={{ margin: '0.4rem 0 0', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                {t('admin.pokemonProviderHint')}
-              </p>
             </div>
             <button type="submit" className="btn btn-primary" style={{ padding: '0.6rem', fontWeight: 700, alignSelf: 'flex-start' }} disabled={settingsLoading}>
               {settingsLoading ? <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div> : t('admin.saveSettings')}

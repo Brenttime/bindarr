@@ -1,10 +1,10 @@
 // What cosine says "this card is not in the catalog at all"?
 //
 // cvScan's sweep always returns SOMETHING: the nearest row exists whether or not
-// the card being scanned is catalogued. That is how Japanese Pokemon scans came
-// back wrong — TCGdex serves card data for 28 of the 177 Japanese sets it lists,
-// so most Japanese cards had no row and got answered with the nearest of the
-// 3,297 that did, sometimes at a similarity high enough to auto-fill.
+// the card being scanned is catalogued. A catalog that is only as complete as
+// its provider makes this worse — a card with no row gets answered with the
+// nearest of the ones that do, sometimes at a similarity high enough to
+// auto-fill.
 //
 // cvScan.FLOOR is the line under which the top hit is reported as
 // `notInCatalog`. This measures where that line belongs, per catalog:
@@ -101,16 +101,16 @@ function top2(emb, cat, n, dim, skip) {
 const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
 
 async function main() {
-  const [game = 'pokemon', lang = 'Japanese', sizeArg = '60'] = process.argv.slice(2);
+  const [game = 'mtg', lang = 'English', sizeArg = '60'] = process.argv.slice(2);
   const sample = Number(sizeArg);
   const s = await cvScan.load(game, lang);
   if (!s.local) throw new Error(`${game}/${lang} has no locally built catalog to measure`);
   console.log(`catalog: ${game}/${s.lang}, ${s.n} rows x ${s.dim}d`);
 
   const rows = await db.all(
-    `SELECT id, image_url FROM card_cache WHERE game = ? AND language = ?
+    `SELECT id, image_url FROM card_cache WHERE language = ?
        AND image_url IS NOT NULL AND image_url != ''`,
-    [game, s.lang]
+    [s.lang]
   );
   const byId = new Map(rows.map(r => [r.id, r.image_url]));
   const at = new Map(s.ids.map((id, i) => [String(id), i]));

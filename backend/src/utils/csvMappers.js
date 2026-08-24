@@ -17,8 +17,7 @@ const STRATEGIES = {
     condition: CONDITION_MAP[(row['Condition'] || '').toLowerCase()] || 'Near Mint',
     printing: row['Printing'] || 'Normal',
     language: row['Language'] || 'English',
-    purchase_price: parseFloat(row['Purchase Price'] || row['purchase_price']) || 0,
-    game: row['Game'] || row['game'] || 'pokemon'
+    purchase_price: parseFloat(row['Purchase Price'] || row['purchase_price']) || 0
   }),
   tcgplayer: (row) => ({
     name: row['Card Name'] || row['Name'],
@@ -26,8 +25,7 @@ const STRATEGIES = {
     collector_number: row['Number'] || row['Card Number'],
     quantity: parseInt(row['Quantity'], 10) || 1,
     condition: CONDITION_MAP[(row['Condition'] || '').toLowerCase()] || 'Near Mint',
-    printing: (row['Printing'] === 'Foil' || row['Printing'] === 'Holofoil') ? 'Holofoil' : 'Normal',
-    game: 'pokemon'
+    printing: (row['Printing'] === 'Foil' || row['Printing'] === 'Holofoil') ? 'Holofoil' : 'Normal'
   }),
   dragonshield: (row) => ({
     name: row['Card Name'] || row['Name'],
@@ -35,8 +33,7 @@ const STRATEGIES = {
     collector_number: row['Card Number'] || row['Number'],
     quantity: parseInt(row['Quantity'], 10) || 1,
     condition: CONDITION_MAP[(row['Condition'] || '').toLowerCase()] || 'Near Mint',
-    printing: (row['Printing'] === 'Foil' || row['Printing'] === 'Holofoil') ? 'Holofoil' : 'Normal',
-    game: 'pokemon'
+    printing: (row['Printing'] === 'Foil' || row['Printing'] === 'Holofoil') ? 'Holofoil' : 'Normal'
   }),
   manabox: (row) => ({
     name: row['Name'] || row['Card Name'],
@@ -44,8 +41,7 @@ const STRATEGIES = {
     collector_number: row['Card number'] || row['Number'],
     quantity: parseInt(row['Quantity'], 10) || 1,
     condition: CONDITION_MAP[(row['Condition'] || '').toLowerCase()] || 'Near Mint',
-    printing: (row['Foil'] === 'true' || row['Foil'] === '1' || row['Foil'] === true) ? 'Holofoil' : 'Normal',
-    game: 'mtg'
+    printing: (row['Foil'] === 'true' || row['Foil'] === '1' || row['Foil'] === true) ? 'Holofoil' : 'Normal'
   })
 };
 

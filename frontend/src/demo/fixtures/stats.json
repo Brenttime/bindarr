@@ -1,30 +1,30 @@
 {
   "summary": {
-    "totalCards": 24,
-    "uniqueCards": 24,
-    "totalValue": 309.81,
-    "totalSpent": 192.26,
+    "totalCards": 12,
+    "uniqueCards": 12,
+    "totalValue": 29.2,
+    "totalSpent": 20.38,
     "roi": {
-      "abs": 117.55,
-      "pct": 61.14
+      "abs": 8.82,
+      "pct": 43.28
     },
-    "avgCardValue": 12.91,
+    "avgCardValue": 2.43,
     "duplicateCopies": 0,
     "mintRate": 100,
     "vintageRatio": 0,
     "change7d": {
       "available": true,
-      "abs": 18.59,
+      "abs": 1.75,
       "pct": 6.4
     },
     "change30d": {
       "available": true,
-      "abs": 40.28,
+      "abs": 3.8,
       "pct": 14.9
     },
     "change1y": {
       "available": true,
-      "abs": 130.12,
+      "abs": 12.26,
       "pct": 72.1
     },
     "change5y": {
@@ -39,32 +39,12 @@
       "value": 7
     },
     {
-      "name": "Psychic",
-      "value": 4
-    },
-    {
       "name": "White",
       "value": 4
     },
     {
-      "name": "Colorless",
-      "value": 3
-    },
-    {
-      "name": "Water",
-      "value": 3
-    },
-    {
-      "name": "Fire",
-      "value": 2
-    },
-    {
       "name": "Green",
       "value": 2
-    },
-    {
-      "name": "Fighting",
-      "value": 1
     }
   ],
   "rarities": [
@@ -74,85 +54,23 @@
     },
     {
       "name": "Common",
-      "value": 5
-    },
-    {
-      "name": "Illustration Rare",
-      "value": 4
+      "value": 2
     },
     {
       "name": "Rare",
-      "value": 3
-    },
-    {
-      "name": "Rare Holo Star",
-      "value": 1
+      "value": 2
     },
     {
       "name": "Mythic",
-      "value": 1
-    },
-    {
-      "name": "Rare Holo",
-      "value": 1
-    },
-    {
-      "name": "Rare Holo EX",
-      "value": 1
-    },
-    {
-      "name": "Special Illustration Rare",
       "value": 1
     }
   ],
   "sets": [
     {
-      "id": "sv3",
-      "name": "Obsidian Flames",
-      "count": 1,
-      "value": 76.02
-    },
-    {
-      "id": "sv4",
-      "name": "Paradox Rift",
-      "count": 1,
-      "value": 49.8
-    },
-    {
-      "id": "sv8",
-      "name": "Surging Sparks",
-      "count": 1,
-      "value": 43.94
-    },
-    {
-      "id": "sv3pt5",
-      "name": "151",
-      "count": 1,
-      "value": 42.3
-    },
-    {
-      "id": "sv2",
-      "name": "Paldea Evolved",
-      "count": 1,
-      "value": 32.9
-    },
-    {
-      "id": "ex3",
-      "name": "EX Deoxys",
-      "count": 1,
-      "value": 25.19
-    },
-    {
       "id": "voc",
       "name": "Crimson Vow Commander",
       "count": 1,
       "value": 8.08
-    },
-    {
-      "id": "fossil",
-      "name": "Fossil",
-      "count": 1,
-      "value": 4.66
     },
     {
       "id": "inv",
@@ -185,12 +103,6 @@
       "value": 2.37
     },
     {
-      "id": "dp5",
-      "name": "Majestic Dawn",
-      "count": 1,
-      "value": 2.16
-    },
-    {
       "id": "msc",
       "name": "Marvel Super Heroes Commander",
       "count": 1,
@@ -215,34 +127,10 @@
       "value": 1.34
     },
     {
-      "id": "jungle",
-      "name": "Jungle",
-      "count": 1,
-      "value": 1.05
-    },
-    {
       "id": "j22",
       "name": "Jumpstart 2022",
       "count": 1,
       "value": 1.02
-    },
-    {
-      "id": "me1",
-      "name": "Mega Evolution",
-      "count": 1,
-      "value": 1.02
-    },
-    {
-      "id": "xy8",
-      "name": "BREAKthrough",
-      "count": 1,
-      "value": 0.93
-    },
-    {
-      "id": "sv9",
-      "name": "Journey Together",
-      "count": 1,
-      "value": 0.64
     },
     {
       "id": "j25",
@@ -253,161 +141,139 @@
   ],
   "topValuable": [
     {
-      "entry_id": 5020,
+      "entry_id": 5007,
       "quantity": 1,
       "condition": "Near Mint",
       "printing": "Normal",
       "language": "English",
-      "purchase_price": 38.38,
+      "purchase_price": 5.77,
       "is_trade": 0,
       "favorite": 0,
       "list_type": "collection",
-      "card_id": "sv3-200",
-      "name": "Palafin",
-      "rarity": "Illustration Rare",
-      "set_name": "Obsidian Flames",
-      "image_url": "https://images.pokemontcg.io/sv3/200.png",
-      "number": "200",
-      "price_trend": 76.02,
-      "price_normal": 76.02,
+      "card_id": "mtg-3ff8fbcd-5db9-4cde-9f56-243b1f4924f8",
+      "name": "Angel of Flight Alabaster",
+      "rarity": "Rare",
+      "set_name": "Crimson Vow Commander",
+      "image_url": "https://cards.scryfall.io/normal/front/3/f/3ff8fbcd-5db9-4cde-9f56-243b1f4924f8.jpg?1782703279",
+      "number": "77",
+      "price_trend": 8.08,
+      "price_normal": 8.08,
       "price_holofoil": null,
       "price_reverse_holofoil": null,
-      "added_at": "2026-07-15 18:15:00"
+      "added_at": "2026-07-19 17:15:00"
     },
     {
-      "entry_id": 5016,
+      "entry_id": 5017,
       "quantity": 1,
       "condition": "Near Mint",
       "printing": "Normal",
       "language": "English",
-      "purchase_price": 32.25,
+      "purchase_price": 2.77,
       "is_trade": 0,
       "favorite": 0,
       "list_type": "collection",
-      "card_id": "sv4-200",
-      "name": "Mienshao",
-      "rarity": "Illustration Rare",
-      "set_name": "Paradox Rift",
-      "image_url": "https://images.pokemontcg.io/sv4/200.png",
-      "number": "200",
-      "price_trend": 49.8,
-      "price_normal": 49.8,
+      "card_id": "mtg-6ab9a90c-5fd8-4f8c-b692-f98a2974810c",
+      "name": "Elfhame Sanctuary",
+      "rarity": "Uncommon",
+      "set_name": "Invasion",
+      "image_url": "https://cards.scryfall.io/normal/front/6/a/6ab9a90c-5fd8-4f8c-b692-f98a2974810c.jpg?1782720008",
+      "number": "185",
+      "price_trend": 3.11,
+      "price_normal": 3.11,
       "price_holofoil": null,
       "price_reverse_holofoil": null,
-      "added_at": "2026-07-16 14:15:00"
+      "added_at": "2026-07-16 15:15:00"
     },
     {
-      "entry_id": 5014,
+      "entry_id": 5009,
       "quantity": 1,
       "condition": "Near Mint",
       "printing": "Normal",
       "language": "English",
-      "purchase_price": 30.3,
+      "purchase_price": 2.1,
       "is_trade": 0,
       "favorite": 0,
       "list_type": "collection",
-      "card_id": "sv8-200",
-      "name": "Bruxish",
-      "rarity": "Illustration Rare",
-      "set_name": "Surging Sparks",
-      "image_url": "https://images.pokemontcg.io/sv8/200.png",
-      "number": "200",
-      "price_trend": 43.94,
-      "price_normal": 43.94,
+      "card_id": "mtg-699c0207-901e-4fe9-b22d-1f6cb994a1f2",
+      "name": "Emeritus of Conflict // Lightning Bolt",
+      "rarity": "Mythic",
+      "set_name": "Secrets of Strixhaven Promos",
+      "image_url": "https://cards.scryfall.io/normal/front/6/9/699c0207-901e-4fe9-b22d-1f6cb994a1f2.jpg?1782723451",
+      "number": "113p",
+      "price_trend": 2.73,
+      "price_normal": 2.73,
       "price_holofoil": null,
       "price_reverse_holofoil": null,
-      "added_at": "2026-07-17 12:15:00"
+      "added_at": "2026-07-18 19:15:00"
     },
     {
-      "entry_id": 5018,
+      "entry_id": 5003,
       "quantity": 1,
       "condition": "Near Mint",
       "printing": "Normal",
       "language": "English",
-      "purchase_price": 21.23,
+      "purchase_price": 1.68,
       "is_trade": 0,
       "favorite": 0,
       "list_type": "collection",
-      "card_id": "sv3pt5-200",
-      "name": "Blastoise ex",
-      "rarity": "Special Illustration Rare",
-      "set_name": "151",
-      "image_url": "https://images.pokemontcg.io/sv3pt5/200.png",
-      "number": "200",
-      "price_trend": 42.3,
-      "price_normal": 42.3,
+      "card_id": "mtg-67a76010-d932-4727-8b5e-b8e2d14e1362",
+      "name": "Adult Gold Dragon",
+      "rarity": "Rare",
+      "set_name": "Adventures in the Forgotten Realms",
+      "image_url": "https://cards.scryfall.io/normal/front/6/7/67a76010-d932-4727-8b5e-b8e2d14e1362.jpg?1782704314",
+      "number": "216",
+      "price_trend": 2.71,
+      "price_normal": 2.71,
       "price_holofoil": null,
       "price_reverse_holofoil": null,
-      "added_at": "2026-07-15 16:15:00"
+      "added_at": "2026-07-20 13:15:00"
     },
     {
-      "entry_id": 5022,
+      "entry_id": 5019,
       "quantity": 1,
       "condition": "Near Mint",
       "printing": "Normal",
       "language": "English",
-      "purchase_price": 20.1,
+      "purchase_price": 1.65,
       "is_trade": 0,
       "favorite": 0,
       "list_type": "collection",
-      "card_id": "sv2-200",
-      "name": "Pyroar",
-      "rarity": "Illustration Rare",
-      "set_name": "Paldea Evolved",
-      "image_url": "https://images.pokemontcg.io/sv2/200.png",
-      "number": "200",
-      "price_trend": 32.9,
-      "price_normal": 32.9,
+      "card_id": "mtg-e2f12f6f-9383-47e6-a44f-2834ad130e51",
+      "name": "Bloodbraid Elf",
+      "rarity": "Uncommon",
+      "set_name": "Double Masters 2022",
+      "image_url": "https://cards.scryfall.io/normal/front/e/2/e2f12f6f-9383-47e6-a44f-2834ad130e51.jpg?1782737844",
+      "number": "184",
+      "price_trend": 2.48,
+      "price_normal": 2.48,
       "price_holofoil": null,
       "price_reverse_holofoil": null,
-      "added_at": "2026-07-14 20:15:00"
+      "added_at": "2026-07-15 17:15:00"
     },
     {
-      "entry_id": 5006,
+      "entry_id": 5013,
       "quantity": 1,
       "condition": "Near Mint",
       "printing": "Normal",
       "language": "English",
-      "purchase_price": 21.82,
+      "purchase_price": 1.26,
       "is_trade": 0,
       "favorite": 0,
       "list_type": "collection",
-      "card_id": "ex3-102",
-      "name": "Rayquaza",
-      "rarity": "Rare Holo Star",
-      "set_name": "EX Deoxys",
-      "image_url": "https://images.pokemontcg.io/ex3/102.png",
-      "number": "102",
-      "price_trend": 25.19,
-      "price_normal": 25.19,
+      "card_id": "mtg-33ec7cbe-16a0-4dbb-91fe-7e445a5268c8",
+      "name": "Goblin Oriflamme",
+      "rarity": "Uncommon",
+      "set_name": "Modern Horizons",
+      "image_url": "https://cards.scryfall.io/normal/front/3/3/33ec7cbe-16a0-4dbb-91fe-7e445a5268c8.jpg?1782708478",
+      "number": "130",
+      "price_trend": 2.37,
+      "price_normal": 2.37,
       "price_holofoil": null,
       "price_reverse_holofoil": null,
-      "added_at": "2026-07-19 16:15:00"
+      "added_at": "2026-07-17 11:15:00"
     }
   ],
   "recentAdditions": [
-    {
-      "entry_id": 5002,
-      "quantity": 1,
-      "condition": "Near Mint",
-      "printing": "Normal",
-      "language": "English",
-      "purchase_price": 3.97,
-      "is_trade": 0,
-      "favorite": 0,
-      "list_type": "collection",
-      "card_id": "fossil-20",
-      "name": "Gengar",
-      "rarity": "Rare",
-      "set_name": "Fossil",
-      "image_url": "https://images.pokemontcg.io/fossil/20.png",
-      "number": "20",
-      "price_trend": 4.66,
-      "price_normal": 4.66,
-      "price_holofoil": null,
-      "price_reverse_holofoil": null,
-      "added_at": "2026-07-21 12:15:00"
-    },
     {
       "entry_id": 5001,
       "quantity": 1,
@@ -429,28 +295,6 @@
       "price_holofoil": null,
       "price_reverse_holofoil": null,
       "added_at": "2026-07-21 11:15:00"
-    },
-    {
-      "entry_id": 5000,
-      "quantity": 1,
-      "condition": "Near Mint",
-      "printing": "Normal",
-      "language": "English",
-      "purchase_price": 0.36,
-      "is_trade": 0,
-      "favorite": 1,
-      "list_type": "collection",
-      "card_id": "sv9-70",
-      "name": "Dhelmise",
-      "rarity": "Common",
-      "set_name": "Journey Together",
-      "image_url": "https://images.pokemontcg.io/sv9/70.png",
-      "number": "70",
-      "price_trend": 0.64,
-      "price_normal": 0.64,
-      "price_holofoil": null,
-      "price_reverse_holofoil": null,
-      "added_at": "2026-07-21 10:15:00"
     },
     {
       "entry_id": 5005,
@@ -475,28 +319,6 @@
       "added_at": "2026-07-20 15:15:00"
     },
     {
-      "entry_id": 5004,
-      "quantity": 1,
-      "condition": "Near Mint",
-      "printing": "Normal",
-      "language": "English",
-      "purchase_price": 0.64,
-      "is_trade": 0,
-      "favorite": 0,
-      "list_type": "collection",
-      "card_id": "jungle-51",
-      "name": "Eevee",
-      "rarity": "Common",
-      "set_name": "Jungle",
-      "image_url": "https://images.pokemontcg.io/jungle/51.png",
-      "number": "51",
-      "price_trend": 1.05,
-      "price_normal": 1.05,
-      "price_holofoil": null,
-      "price_reverse_holofoil": null,
-      "added_at": "2026-07-20 14:15:00"
-    },
-    {
       "entry_id": 5003,
       "quantity": 1,
       "condition": "Near Mint",
@@ -517,175 +339,157 @@
       "price_holofoil": null,
       "price_reverse_holofoil": null,
       "added_at": "2026-07-20 13:15:00"
+    },
+    {
+      "entry_id": 5007,
+      "quantity": 1,
+      "condition": "Near Mint",
+      "printing": "Normal",
+      "language": "English",
+      "purchase_price": 5.77,
+      "is_trade": 0,
+      "favorite": 0,
+      "list_type": "collection",
+      "card_id": "mtg-3ff8fbcd-5db9-4cde-9f56-243b1f4924f8",
+      "name": "Angel of Flight Alabaster",
+      "rarity": "Rare",
+      "set_name": "Crimson Vow Commander",
+      "image_url": "https://cards.scryfall.io/normal/front/3/f/3ff8fbcd-5db9-4cde-9f56-243b1f4924f8.jpg?1782703279",
+      "number": "77",
+      "price_trend": 8.08,
+      "price_normal": 8.08,
+      "price_holofoil": null,
+      "price_reverse_holofoil": null,
+      "added_at": "2026-07-19 17:15:00"
+    },
+    {
+      "entry_id": 5011,
+      "quantity": 1,
+      "condition": "Near Mint",
+      "printing": "Normal",
+      "language": "English",
+      "purchase_price": 1.57,
+      "is_trade": 0,
+      "favorite": 0,
+      "list_type": "collection",
+      "card_id": "mtg-7673784e-db4b-43a1-8d55-1bb9fc1e284f",
+      "name": "Lightning Bolt",
+      "rarity": "Uncommon",
+      "set_name": "Marvel Super Heroes Commander",
+      "image_url": "https://cards.scryfall.io/normal/front/7/6/7673784e-db4b-43a1-8d55-1bb9fc1e284f.jpg?1782681979",
+      "number": "806",
+      "price_trend": 1.81,
+      "price_normal": 1.81,
+      "price_holofoil": null,
+      "price_reverse_holofoil": null,
+      "added_at": "2026-07-18 21:15:00"
+    },
+    {
+      "entry_id": 5009,
+      "quantity": 1,
+      "condition": "Near Mint",
+      "printing": "Normal",
+      "language": "English",
+      "purchase_price": 2.1,
+      "is_trade": 0,
+      "favorite": 0,
+      "list_type": "collection",
+      "card_id": "mtg-699c0207-901e-4fe9-b22d-1f6cb994a1f2",
+      "name": "Emeritus of Conflict // Lightning Bolt",
+      "rarity": "Mythic",
+      "set_name": "Secrets of Strixhaven Promos",
+      "image_url": "https://cards.scryfall.io/normal/front/6/9/699c0207-901e-4fe9-b22d-1f6cb994a1f2.jpg?1782723451",
+      "number": "113p",
+      "price_trend": 2.73,
+      "price_normal": 2.73,
+      "price_holofoil": null,
+      "price_reverse_holofoil": null,
+      "added_at": "2026-07-18 19:15:00"
     }
   ],
   "setProgress": [
     {
-      "setId": "sv3",
-      "setName": "Obsidian Flames",
+      "setId": "inv",
+      "setName": "Invasion",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
+      "totalCards": 354,
+      "percent": 0
     },
     {
-      "setId": "sv4",
-      "setName": "Paradox Rift",
+      "setId": "afr",
+      "setName": "Adventures in the Forgotten Realms",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
+      "totalCards": 424,
+      "percent": 0
     },
     {
-      "setId": "sv8",
-      "setName": "Surging Sparks",
+      "setId": "2x2",
+      "setName": "Double Masters 2022",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
+      "totalCards": 579,
+      "percent": 0
     },
     {
-      "setId": "sv3pt5",
-      "setName": "151",
+      "setId": "mh1",
+      "setName": "Modern Horizons",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
+      "totalCards": 255,
+      "percent": 0
     },
     {
-      "setId": "sv2",
-      "setName": "Paldea Evolved",
+      "setId": "msc",
+      "setName": "Marvel Super Heroes Commander",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
+      "totalCards": 866,
+      "percent": 0
     },
     {
-      "setId": "ex3",
-      "setName": "EX Deoxys",
+      "setId": "fdn",
+      "setName": "Foundations",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
+      "totalCards": 771,
+      "percent": 0
+    },
+    {
+      "setId": "j22",
+      "setName": "Jumpstart 2022",
+      "ownedUnique": 1,
+      "totalCards": 835,
+      "percent": 0
+    },
+    {
+      "setId": "j25",
+      "setName": "Foundations Jumpstart",
+      "ownedUnique": 1,
+      "totalCards": 779,
+      "percent": 0
     },
     {
       "setId": "voc",
       "setName": "Crimson Vow Commander",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "fossil",
-      "setName": "Fossil",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "inv",
-      "setName": "Invasion",
-      "ownedUnique": 1,
-      "totalCards": 150,
+      "totalCards": 188,
       "percent": 1
     },
     {
       "setId": "psos",
       "setName": "Secrets of Strixhaven Promos",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "afr",
-      "setName": "Adventures in the Forgotten Realms",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "2x2",
-      "setName": "Double Masters 2022",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "mh1",
-      "setName": "Modern Horizons",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "dp5",
-      "setName": "Majestic Dawn",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "msc",
-      "setName": "Marvel Super Heroes Commander",
-      "ownedUnique": 1,
-      "totalCards": 150,
+      "totalCards": 80,
       "percent": 1
     },
     {
       "setId": "s99",
       "setName": "Starter 1999",
       "ownedUnique": 1,
-      "totalCards": 150,
+      "totalCards": 173,
       "percent": 1
     },
     {
       "setId": "ddf",
       "setName": "Duel Decks: Elspeth vs. Tezzeret",
       "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "fdn",
-      "setName": "Foundations",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "jungle",
-      "setName": "Jungle",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "j22",
-      "setName": "Jumpstart 2022",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "me1",
-      "setName": "Mega Evolution",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "xy8",
-      "setName": "BREAKthrough",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "sv9",
-      "setName": "Journey Together",
-      "ownedUnique": 1,
-      "totalCards": 150,
-      "percent": 1
-    },
-    {
-      "setId": "j25",
-      "setName": "Foundations Jumpstart",
-      "ownedUnique": 1,
-      "totalCards": 150,
+      "totalCards": 79,
       "percent": 1
     }
   ]

@@ -4,9 +4,9 @@
 // Drawn, for three reasons. It costs no network round trip at the exact moment
 // the network already failed us; it keeps working on an instance with no internet
 // at all, which is a normal way to run a self-hosted collection tracker; and it
-// avoids shipping the real Pokémon/Wizards card backs, which are their artwork,
-// not ours. (Scryfall does serve a Magic back at cards.scryfall.io/back.png if a
-// more authentic Magic-only look is ever wanted — no Pokémon API serves one.)
+// avoids shipping Wizards' card back, which is their artwork, not ours.
+// (Scryfall does serve a Magic back at cards.scryfall.io/back.png if a more
+// authentic look is ever wanted.)
 //
 // Emitted as a data URI so it drops straight into the same <img src> as real art
 // and every existing width/aspect-ratio/object-fit style keeps applying. Note
@@ -18,13 +18,8 @@
 const W = 718;
 const H = 1000;
 
-// Per-game accents. The frame is shared so a mixed Pokémon/Magic grid of missing
-// art still reads as one set of backs rather than two unrelated placeholders.
-const THEMES = {
-  pokemon: { glow: '#60a5fa', ring: '#facc15' },
-  mtg: { glow: '#a855f7', ring: '#cbd5e1' },
-  default: { glow: '#ff4747', ring: '#cbd5e1' },
-};
+const GLOW = '#a855f7';
+const RING = '#cbd5e1';
 
 // The five Magic colours, in WUBRG order, as pips around the emblem. Matches the
 // colours CardInspectorModal already uses for its colour-identity chips.
@@ -40,22 +35,9 @@ function manaPips(cx, cy, r) {
   }).join('');
 }
 
-// The three binder rings from the Bindarr logo, stood on end. This is the mark on
-// the Pokémon and generic backs; Magic gets the mana ring instead.
-function binderRings(cx, cy) {
-  return [-150, 0, 150]
-    .map(dy => `<path d="M ${cx - 78} ${cy + dy} A 78 78 0 0 1 ${cx + 78} ${cy + dy}"
-        fill="none" stroke="#0b1120" stroke-width="34" stroke-linecap="round"/>
-      <path d="M ${cx - 78} ${cy + dy} A 78 78 0 0 1 ${cx + 78} ${cy + dy}"
-        fill="none" stroke="#e2e8f0" stroke-width="16" stroke-linecap="round" opacity="0.85"/>`)
-    .join('');
-}
-
-function svg(game) {
-  const t = THEMES[game] || THEMES.default;
+function svg() {
   const cx = W / 2;
   const cy = H / 2;
-  const isMtg = game === 'mtg';
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
   <defs>
@@ -68,8 +50,8 @@ function svg(game) {
       <stop offset="100%" stop-color="#151d31"/>
     </linearGradient>
     <radialGradient id="halo" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="${t.glow}" stop-opacity="0.35"/>
-      <stop offset="100%" stop-color="${t.glow}" stop-opacity="0"/>
+      <stop offset="0%" stop-color="${GLOW}" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="${GLOW}" stop-opacity="0"/>
     </radialGradient>
     <pattern id="lattice" width="56" height="56" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
       <path d="M0 0 H56 M0 0 V56" stroke="#ffffff" stroke-opacity="0.035" stroke-width="2"/>
@@ -80,15 +62,15 @@ function svg(game) {
   <rect x="26" y="26" width="${W - 52}" height="${H - 52}" rx="22" fill="url(#field)"/>
   <rect x="26" y="26" width="${W - 52}" height="${H - 52}" rx="22" fill="url(#lattice)"/>
   <rect x="26" y="26" width="${W - 52}" height="${H - 52}" rx="22"
-        fill="none" stroke="${t.ring}" stroke-opacity="0.22" stroke-width="3"/>
+        fill="none" stroke="${RING}" stroke-opacity="0.22" stroke-width="3"/>
   <rect x="52" y="52" width="${W - 104}" height="${H - 104}" rx="12"
         fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>
 
   <circle cx="${cx}" cy="${cy}" r="300" fill="url(#halo)"/>
-  <circle cx="${cx}" cy="${cy}" r="212" fill="none" stroke="${t.ring}" stroke-opacity="0.28" stroke-width="4"/>
+  <circle cx="${cx}" cy="${cy}" r="212" fill="none" stroke="${RING}" stroke-opacity="0.28" stroke-width="4"/>
   <circle cx="${cx}" cy="${cy}" r="188" fill="#0b1120" fill-opacity="0.55"/>
 
-  ${isMtg ? manaPips(cx, cy, 132) : binderRings(cx, cy)}
+  ${manaPips(cx, cy, 132)}
 
   <text x="${cx}" y="${H - 92}" text-anchor="middle"
         font-family="Outfit, 'Plus Jakarta Sans', system-ui, sans-serif"
@@ -101,16 +83,12 @@ function svg(game) {
 // than the base64 of the same bytes, and stays greppable in devtools.
 const toDataUri = (s) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(s.replace(/\s+/g, ' '))}`;
 
-// Built once at module load — three small strings, reused by every <img> on the
-// page, so a grid of 200 artless cards shares one decoded image per game.
-const BACKS = {
-  pokemon: toDataUri(svg('pokemon')),
-  mtg: toDataUri(svg('mtg')),
-  default: toDataUri(svg('default')),
-};
+// Built once at module load and reused by every <img> on the page, so a grid of
+// 200 artless cards shares one decoded image.
+const BACK = toDataUri(svg());
 
-// `game` comes off the card row and is 'pokemon' | 'mtg' in practice; anything
-// else (or nothing, as on a partially-hydrated scan result) gets the neutral back.
-export const cardBackFor = (game) => BACKS[game] || BACKS.default;
+// Kept as a function so the call site (CardImage) does not change. The argument
+// is ignored: every card is Magic now.
+export const cardBackFor = () => BACK;
 
-export default BACKS;
+export default BACK;

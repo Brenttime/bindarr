@@ -70,9 +70,6 @@ router.post('/bootstrap', authLimiter, async (req, res) => {
         role: 'admin',
         share_token: shareToken,
         share_enabled: 0,
-        tcg_api_key: '',
-        psa_api_token: '',
-        graded_price_api_key: '',
         api_key: ''
       }
     });
@@ -157,9 +154,6 @@ router.post('/login', authLimiter, async (req, res) => {
         role: user.role,
         share_token: user.share_token,
         share_enabled: user.share_enabled,
-        tcg_api_key: user.tcg_api_key || '',
-        psa_api_token: user.psa_api_token || '',
-        graded_price_api_key: user.graded_price_api_key || '',
         api_key: user.api_key || ''
       }
     });
@@ -191,7 +185,6 @@ router.get('/me', authenticateToken, (req, res) => {
   // OTHER provider keys would make it a credential-theft tool: it can be pasted
   // into a dashboard config, and what leaks with it must stay read-only data.
   if (req.user.via_api_key) {
-    const { tcg_api_key, psa_api_token, graded_price_api_key, ...safe } = req.user; // eslint-disable-line no-unused-vars
     return res.json({ user: safe });
   }
   res.json({ user: req.user });
@@ -225,7 +218,7 @@ router.delete('/api-key', authenticateToken, async (req, res) => {
 
 // Update settings (password, sharing)
 router.put('/settings', authenticateToken, async (req, res) => {
-  const { current_password, password, share_enabled, regenerate_share_token, tcg_api_key, psa_api_token, graded_price_api_key } = req.body;
+  const { current_password, password, share_enabled, regenerate_share_token } = req.body || {};
 
   try {
     if (password !== undefined) {
@@ -244,17 +237,8 @@ router.put('/settings', authenticateToken, async (req, res) => {
       await db.run(`UPDATE users SET share_enabled = ? WHERE id = ?`, [share_enabled ? 1 : 0, req.user.id]);
     }
 
-    if (tcg_api_key !== undefined) {
-      await db.run(`UPDATE users SET tcg_api_key = ? WHERE id = ?`, [tcg_api_key.trim(), req.user.id]);
-    }
 
-    if (psa_api_token !== undefined) {
-      await db.run(`UPDATE users SET psa_api_token = ? WHERE id = ?`, [psa_api_token.trim(), req.user.id]);
-    }
 
-    if (graded_price_api_key !== undefined) {
-      await db.run(`UPDATE users SET graded_price_api_key = ? WHERE id = ?`, [graded_price_api_key.trim(), req.user.id]);
-    }
 
     let newShareToken = req.user.share_token;
     if (regenerate_share_token) {
@@ -263,7 +247,7 @@ router.put('/settings', authenticateToken, async (req, res) => {
     }
 
     // Retrieve updated info
-    const updatedUser = await db.get(`SELECT username, role, share_token, share_enabled, tcg_api_key, psa_api_token, graded_price_api_key, api_key FROM users WHERE id = ?`, [req.user.id]);
+    const updatedUser = await db.get(`SELECT username, role, share_token, share_enabled, api_key FROM users WHERE id = ?`, [req.user.id]);
     res.json({
       message: 'Settings updated successfully',
       user: {
@@ -271,9 +255,6 @@ router.put('/settings', authenticateToken, async (req, res) => {
         role: updatedUser.role,
         share_token: updatedUser.share_token,
         share_enabled: updatedUser.share_enabled,
-        tcg_api_key: updatedUser.tcg_api_key || '',
-        psa_api_token: updatedUser.psa_api_token || '',
-        graded_price_api_key: updatedUser.graded_price_api_key || '',
         api_key: updatedUser.api_key || ''
       }
     });

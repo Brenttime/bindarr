@@ -1,4 +1,4 @@
-import { CONDITIONS, getPrintings, LANGUAGES, GRADERS, GRADES } from '../utils/cardOptions';
+import { CONDITIONS, getPrintings, LANGUAGES } from '../utils/cardOptions';
 import { useT } from '../utils/i18n';
 
 // Shared quantity / purchase-price / condition / printing / language inputs for
@@ -11,19 +11,12 @@ import { useT } from '../utils/i18n';
 export default function CardEntryFields({
   quantity, purchasePrice, condition, printing, language,
   onQuantity, onPurchasePrice, onCondition, onPrinting, onLanguage,
-  variant = 'grid', game,
-  grader = 'Raw', grade = '', certNumber = '',
-  onGrader, onGrade, onCertNumber,
+  variant = 'grid',
 }) {
   const { t } = useT();
   const stacked = variant === 'stacked';
-  const printings = getPrintings(game);
+  const printings = getPrintings();
   const groupStyle = stacked ? { marginBottom: 0 } : undefined;
-  // Grading is opt-in per caller: the scanner's quick-add has no room for it and a
-  // scan cannot read a cert number off a slab anyway. Absent handlers means the
-  // caller does not do grading, so the fields are simply not rendered.
-  const grading = !!onGrader;
-  const graded = grading && grader !== 'Raw';
 
   const stepQty = (delta) => onQuantity(String(Math.max(1, (parseInt(quantity, 10) || 1) + delta)));
   const Quantity = stacked ? (
@@ -52,13 +45,7 @@ export default function CardEntryFields({
   const Condition = (
     <div className="form-group" style={groupStyle}>
       <label>{t('card.condition')}</label>
-      {/* A slab's grade IS its condition, assigned by the grader and not open to
-          the owner's opinion — so the picker is disabled rather than hidden, which
-          would leave the reader wondering where it went. The stored value is left
-          untouched: cracking a slab restores whatever it said before. */}
-      <select className="select-control" value={graded ? 'Near Mint' : condition} disabled={graded}
-        title={graded ? t('card.conditionGradedHint') : undefined}
-        onChange={(e) => onCondition(e.target.value)}>
+      <select className="select-control" value={condition} onChange={(e) => onCondition(e.target.value)}>
         {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
       </select>
     </div>
@@ -81,39 +68,6 @@ export default function CardEntryFields({
     </div>
   );
 
-  // Grader, grade and cert on one row. Grade and cert only mean anything once a
-  // grader is chosen, so they stay disabled until one is — an empty cert box next
-  // to grader 'Raw' invites typing a number that the backend then discards.
-  const Grading = grading && (
-    <div className="card-entry-fields-row-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
-      <div className="form-group" style={groupStyle}>
-        <label>{t('card.grader')}</label>
-        <select className="select-control" value={grader} onChange={(e) => {
-          const next = e.target.value;
-          onGrader(next);
-          // Switching back to Raw clears the grade and cert here as well as on the
-          // server, so the form cannot show a grade for a card it is about to save
-          // as ungraded.
-          if (next === 'Raw') { onGrade(''); onCertNumber(''); }
-        }}>
-          {GRADERS.map(g => <option key={g} value={g}>{g === 'Raw' ? t('card.graderRaw') : g}</option>)}
-        </select>
-      </div>
-      <div className="form-group" style={groupStyle}>
-        <label>{t('card.grade')}</label>
-        <select className="select-control" value={grade ?? ''} disabled={!graded} onChange={(e) => onGrade(e.target.value)}>
-          <option value="">{t('card.gradeNone')}</option>
-          {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
-        </select>
-      </div>
-      <div className="form-group" style={groupStyle}>
-        <label>{t('card.certNumber')}</label>
-        <input type="text" inputMode="numeric" className="input-control" value={certNumber ?? ''} disabled={!graded}
-          onChange={(e) => onCertNumber(e.target.value)} placeholder={graded ? t('card.certPlaceholder') : ''} />
-      </div>
-    </div>
-  );
-
   if (stacked) {
     // Language omitted here: scanner defaults to English and it's rarely changed
     // on a quick add. Still editable later in the card inspector.
@@ -127,7 +81,6 @@ export default function CardEntryFields({
     <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>{Quantity}{Price}</div>
       <div className="card-entry-fields-row-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>{Condition}{Printing}{Language}</div>
-      {Grading}
     </>
   );
 }
