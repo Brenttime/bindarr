@@ -11,7 +11,7 @@ router.get('/stats', async (req, res) => {
     const query = `
       SELECT
         c.quantity, c.purchase_price, c.added_at, c.printing, c.condition, c.card_id,
-        cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.set_name, cc.set_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition,
+        cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.set_name, cc.set_id, cc.price_trend, cc.price_normal, cc.price_holofoil,
         cc.price_avg1, cc.price_avg7, cc.price_avg30
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
@@ -112,15 +112,13 @@ router.get('/stats', async (req, res) => {
         c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.is_trade, c.favorite, c.list_type,
         cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
         cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity, cc.price_trend,
-        cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
+        cc.price_normal, cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ?
       ORDER BY CASE
         WHEN c.printing = 'Holofoil' AND cc.price_holofoil IS NOT NULL AND cc.price_holofoil > 0 THEN cc.price_holofoil
-        WHEN c.printing = 'Reverse Holofoil' AND cc.price_reverse_holofoil IS NOT NULL AND cc.price_reverse_holofoil > 0 THEN cc.price_reverse_holofoil
         WHEN c.printing = 'Normal' AND cc.price_normal IS NOT NULL AND cc.price_normal > 0 THEN cc.price_normal
-        WHEN c.printing = '1st Edition' AND cc.price_1st_edition IS NOT NULL AND cc.price_1st_edition > 0 THEN cc.price_1st_edition
         ELSE cc.price_trend
       END DESC
       LIMIT 6
@@ -187,7 +185,7 @@ router.get('/stats', async (req, res) => {
              c.quantity, c.condition, c.printing, c.language, c.added_at, c.is_trade, c.favorite, c.list_type,
              cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
              cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity,
-             cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
+             cc.price_trend, cc.price_normal, cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ?
@@ -257,7 +255,7 @@ router.get('/stats/history', async (req, res) => {
 
     // Retrieve all collection items to compute history
     const query = `
-      SELECT c.quantity, c.added_at, c.printing, cc.id as card_id, cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
+      SELECT c.quantity, c.added_at, c.printing, cc.id as card_id, cc.price_trend, cc.price_normal, cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ?
@@ -365,7 +363,7 @@ router.get('/stats/networth', async (req, res) => {
   try {
     const rows = await db.all(`
       SELECT c.quantity, c.purchase_price, c.printing, cc.price_currency,
-             cc.price_trend, cc.price_normal, cc.price_holofoil, cc.price_reverse_holofoil, cc.price_1st_edition
+             cc.price_trend, cc.price_normal, cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ? AND c.list_type = 'collection'

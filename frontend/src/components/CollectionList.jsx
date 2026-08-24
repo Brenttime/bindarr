@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
-import { CONDITIONS, PRINTINGS } from '../utils/cardOptions';
+import { CONDITIONS, PRINTING_OPTIONS } from '../utils/cardOptions';
 import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
 import { sortCardsByOrder } from '../utils/cardSort';
@@ -460,7 +460,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               <Field label={t('card.printing')}>
                 <select className="select-control" value={printingFilter} onChange={(e) => setPrintingFilter(e.target.value)}>
                   <option value="">{t('collection.allPrintings')}</option>
-                  {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
+                  {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
               </Field>
 
@@ -568,7 +568,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           </select>
           <select className="select-control" value="" disabled={!selectedIds.size} onChange={(e) => { if (e.target.value) runBulk('printing', e.target.value); e.target.value = ''; }} style={{ fontSize: '0.72rem', maxWidth: '150px', padding: '0.3rem 0.4rem' }}>
             <option value="">{t('bulk.setPrinting')}</option>
-            {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
+            {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
           </select>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <PackPriceSplitter

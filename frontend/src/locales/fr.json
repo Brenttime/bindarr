@@ -465,7 +465,7 @@
   "inspector.errAddDeck": "Impossible d'ajouter au deck.",
   "inspector.errAddDeckGeneric": "Erreur lors de l'ajout au deck.",
   "inspector.errEdit": "Erreur lors de la modification de la carte.",
-  "inspector.errFetchValue": "Impossible d'obtenir le prix gradé.",
+  "inspector.errFetchValue": "Impossible d'obtenir un prix du marché.",
   "inspector.errUpdate": "Impossible de mettre à jour la carte.",
   "inspector.errUpdateGeneric": "Erreur lors de la mise à jour de la carte.",
   "inspector.favorite": "Marquer comme favorite",

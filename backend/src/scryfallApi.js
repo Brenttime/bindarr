@@ -242,7 +242,6 @@ function normalizeCard(raw, lang) {
     price_trend: usd != null ? usd : (usdFoil != null ? usdFoil : 0),
     price_normal: usd,
     price_holofoil: usdFoil,
-    price_reverse_holofoil: null,
     price_avg1: null,
     price_avg7: null,
     price_avg30: null,

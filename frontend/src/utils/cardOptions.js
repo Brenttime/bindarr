@@ -4,7 +4,10 @@
 import { LANGUAGE_NAMES } from './languages';
 
 export const CONDITIONS = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged'];
-export const PRINTINGS = ['Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo'];
+// The legal collection.printing values — Magic cards are Nonfoil or Foil only.
+// These match the CHECK constraint in db.js, so anything the UI can pick is
+// something the database accepts.
+export const PRINTINGS = ['Normal', 'Holofoil'];
 // Re-exported from the language registry so the entry forms, the search language
 // picker and the backend can never drift out of sync.
 export const LANGUAGES = LANGUAGE_NAMES;
@@ -12,14 +15,17 @@ export const LANGUAGES = LANGUAGE_NAMES;
 // Magic cards are only Nonfoil or Foil. The foil price is stored under the
 // 'Holofoil' value (scryfall usd_foil), so we keep that stored value (also what
 // the DB CHECK allows) and just relabel it "Foil".
-const MTG_PRINTINGS = [{ value: 'Normal', label: 'Nonfoil' }, { value: 'Holofoil', label: 'Foil' }];
+export const PRINTING_OPTIONS = [
+  { value: 'Normal', label: 'Nonfoil' },
+  { value: 'Holofoil', label: 'Foil' },
+];
 
 // Printing/finish {value,label} options. Value stays within the
 // collection.printing CHECK constraint. The `game` argument is kept for call
 // sites that still pass one; it no longer changes anything.
 export function getPrintings(game) {
   void game;
-  return MTG_PRINTINGS;
+  return PRINTING_OPTIONS;
 }
 
 // A binder-family container lays out fixed pockets (Pages); other container

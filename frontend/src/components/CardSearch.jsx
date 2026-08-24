@@ -6,7 +6,7 @@ import { resolveCardPrice } from '../utils/resolveCardPrice';
 import CardEntryFields from './CardEntryFields';
 import CardImageZoom from './CardImageZoom';
 import { useMultiSelect } from '../utils/useMultiSelect';
-import { CONDITIONS, PRINTINGS } from '../utils/cardOptions';
+import { CONDITIONS, PRINTING_OPTIONS } from '../utils/cardOptions';
 import { LANGUAGES, langName, isEnglish, displayName, translatedName, setReference, setCode } from '../utils/languages';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
@@ -576,7 +576,7 @@ function CardSearch({ onAddSuccess, showToast }) {
               {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
             <select className="select-control" value={printing} onChange={(e) => setPrinting(e.target.value)} style={{ fontSize: '0.75rem', maxWidth: '150px' }}>
-              {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
+              {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
             <input
               type="number"
@@ -705,7 +705,7 @@ function CardSearch({ onAddSuccess, showToast }) {
             {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select className="select-control" value={printing} onChange={(e) => setPrinting(e.target.value)} style={{ fontSize: '0.72rem', maxWidth: '150px', padding: '0.3rem 0.4rem' }}>
-            {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
+            {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
           </select>
           <input
             type="number"

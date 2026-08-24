@@ -14,6 +14,12 @@ const { buildCardListText } = require('../../../shared/cardListText.js');
 
 const router = express.Router();
 
+// The one shared definition of a legal collection.printing value — the add,
+// bulk-add and bulk-set routes all write the column, so they must agree with
+// the CHECK constraint in db.js. Anything outside this list is rejected before
+// it can be stored.
+const PRINTING_VALUES = ['Normal', 'Holofoil'];
+
 // Stamp each result with how many copies the user already owns, so browsing a
 // set shows what is already in the binder instead of inviting duplicate adds.
 // A collection-scope search already reports owned_qty from its own join.
@@ -219,8 +225,6 @@ router.get('/collection', async (req, res) => {
         cc.price_trend,
         cc.price_normal,
         cc.price_holofoil,
-        cc.price_reverse_holofoil,
-        cc.price_1st_edition,
         cc.price_currency,
         cc.price_source,
         cc.tcgplayer_url,
@@ -272,6 +276,9 @@ async function addCardToCollection(user, body) {
 
   if (!card_id) {
     throw new AddCardError(400, 'card_id is required');
+  }
+  if (!PRINTING_VALUES.includes(printing)) {
+    throw new AddCardError(400, `Invalid printing: ${printing}`);
   }
 
   {
@@ -410,7 +417,14 @@ router.put('/collection/:id', async (req, res) => {
     // never disagree about how many copies the row stands for.
     const requestedQty = quantity !== undefined ? Math.max(1, parseInt(quantity, 10) || 1) : null;
     if (condition !== undefined) { updates.push('condition = ?'); params.push(condition); }
-    if (printing !== undefined) { updates.push('printing = ?'); params.push(printing); }
+    if (printing !== undefined) {
+      // Reject before the DB: the CHECK constraint would reject it too, but only
+      // after this request is already half through its writes.
+      if (!PRINTING_VALUES.includes(printing)) {
+        return res.status(400).json({ error: `Invalid printing: ${printing}` });
+      }
+      updates.push('printing = ?'); params.push(printing);
+    }
     if (language !== undefined) { updates.push('language = ?'); params.push(language); }
     if (purchase_price !== undefined) { updates.push('purchase_price = ?'); params.push(purchase_price); }
     if (list_type !== undefined) { updates.push('list_type = ?'); params.push(list_type); }
@@ -459,7 +473,7 @@ router.delete('/collection/:id', async (req, res) => {
 const BULK_ACTIONS = ['delete', 'trade', 'untrade', 'list_type', 'condition', 'printing', 'purchase_split', 'add_to_deck'];
 // Allowed field values mirror the collection table CHECK constraints in db.js.
 const BULK_CONDITIONS = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged'];
-const BULK_PRINTINGS = ['Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo'];
+const BULK_PRINTINGS = PRINTING_VALUES;
 router.post('/collection/bulk', async (req, res) => {
   const { entry_ids = [], action, value } = req.body;
   if (!Array.isArray(entry_ids) || entry_ids.length === 0) {

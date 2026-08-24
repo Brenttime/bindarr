@@ -338,12 +338,11 @@ a gate that behaves the same in both over one tuned to either.
 ### Prices
 
 `utils/priceHelpers.resolveCardPrice(row)` is the single answer to "what is this
-worth". It reads the price column matching the row's `printing` — `Holofoil`,
-`Reverse Holofoil`, `Normal`, or `1st Edition` — falling back to `price_trend`
-when that column is empty. Any query that wants a card's value must therefore
-select the `cc.price_*` columns the resolver reads, not just `price_trend`, or a
-foil or 1st Edition silently reads as its unlimited price in that one view — the
-failure is invisible, it just reads low.
+worth". It reads the price column matching the row's `printing` — `Holofoil`
+or `Normal` — falling back to `price_trend` when that column is empty. Any
+query that wants a card's value must therefore select the `cc.price_*` columns
+the resolver reads, not just `price_trend`, or a foil silently reads as its
+non-foil price in that one view — the failure is invisible, it just reads low.
 
 Where the provider price itself comes from depends on the language, because it
 depends on which marketplace sells that printing. Scryfall quotes two:

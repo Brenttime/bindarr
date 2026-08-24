@@ -177,11 +177,9 @@ async function initDb() {
       price_trend REAL,
       price_normal REAL,
       price_holofoil REAL,
-      price_reverse_holofoil REAL,
       price_avg1 REAL,
       price_avg7 REAL,
       price_avg30 REAL,
-      price_1st_edition REAL,
       price_currency TEXT DEFAULT 'USD',
       price_source TEXT,
       cmc REAL,
@@ -199,7 +197,7 @@ async function initDb() {
       card_id TEXT NOT NULL,
       quantity INTEGER DEFAULT 1,
       condition TEXT CHECK(condition IN ('Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged')) DEFAULT 'Near Mint',
-      printing TEXT CHECK(printing IN ('Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo')) DEFAULT 'Normal',
+      printing TEXT CHECK(printing IN ('Normal', 'Holofoil')) DEFAULT 'Normal',
       language TEXT DEFAULT 'English',
       purchase_price REAL,
       favorite INTEGER DEFAULT 0,
@@ -218,24 +216,6 @@ async function initDb() {
       PRIMARY KEY(card_id, recorded_at)
     )
   `);
-
-  // card_cache id -> TCGplayer productId, so marketplace links can point at the
-  // card's own product page. Derived, not provider data: it is rebuilt by
-  // matching set+number against TCGplayer's catalogue, and `confidence` records
-  // how — 1 for an exact set match, 0.8 for one recovered from a name suffix.
-  // Keeping it separate means a rebuild can be discarded and redone without
-  // touching a single real card row.
-  await run(`
-    CREATE TABLE IF NOT EXISTS tcgplayer_product (
-      card_id TEXT PRIMARY KEY,
-      product_id INTEGER NOT NULL,
-      category_id INTEGER NOT NULL,
-      confidence REAL DEFAULT 1,
-      matched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(card_id) REFERENCES card_cache(id)
-    )
-  `);
-  await run(`CREATE INDEX IF NOT EXISTS idx_tcgplayer_product_pid ON tcgplayer_product(product_id)`);
 
   // Sets the provider LISTS but has no usable card data for — no cards at all, or
   // cards with no artwork, which a scan catalog cannot use either way.
@@ -367,19 +347,6 @@ async function initDb() {
       await run(`ALTER TABLE card_cache ADD COLUMN ${col} TEXT`);
     }
   }
-  // TCGplayer's own product id, which is what turns a link into the actual card.
-  // The stored `tcgplayer_url` above is NOT reliably a product page: Scryfall
-  // hands back a name search whenever it has no product for a printing (6,109 of
-  // 106,163 cached MTG rows). An id is unambiguous — /product/<id> either
-  // resolves or the card is not listed.
-  // collection.printing has allowed '1st Edition' since v1.0, and resolveCardPrice
-  // had no column to read for it — so a 1st Edition Base Set card was valued at the
-  // Unlimited price, which for a Charizard is a difference of thousands. TCGplayer
-  // prices the two separately and always has; this is where that number lands.
-  if (!cardCacheCols.some(c => c.name === 'price_1st_edition')) {
-    await run(`ALTER TABLE card_cache ADD COLUMN price_1st_edition REAL`);
-  }
-
   // Which marketplace a row's prices came from, and in what currency.
   //
   // The price columns have always been unit-less, and until now they mixed
@@ -446,20 +413,26 @@ async function initDb() {
   //   - rows with game = 'pokemon' (and NULL, the pre-column default)
   //   - the game column on sets/card_cache/collection/decks/card_lists
   //   - the graded columns on collection (grader/grade/cert_number/market_value*)
+  //   - card_cache.price_reverse_holofoil / price_1st_edition
+  //     (Pokemon finishes: Magic has only Normal and Holofoil)
   //   - users.psa_api_token / users.graded_price_api_key
   //   - app_settings.pokemon_provider / pokemon_prices_swept_at /
-  //     tcgdex_prices_swept_at / scan_exclude_digital
-  //   - the psa_cert and tcgplayer_catalog tables
-  //   - a 3-column set_data_gaps table
-  // Drop all of it while keeping every MTG row. SQLite 3.52+ allows DROP COLUMN
-  // (3.35+), which this install ships; no column dropped here is named by a
-  // remaining FK, so plain drops are safe. Guarded and idempotent — a database
-  // already in the new shape is a no-op.
+  //     tcgdex_prices_swept_at / tcgcsv_prices_swept_at / scan_exclude_digital
+  //   - the psa_cert, tcgplayer_catalog and tcgplayer_product tables
+  //   - a 3-column set_data_gaps table with a (game, language, set_id) key
+  //   - price_history rows for the deleted Pokemon cards (no FK, orphaned by id)
+  // Drop all of it while keeping every MTG row. The whole block is one
+  // transaction: any newly discovered dependency (a child table, an index, a
+  // constraint) aborts the migration atomically instead of leaving a
+  // half-migrated database the server would keep re-failing on every boot.
+  // Guarded and idempotent — a database already in the new shape is a no-op.
   {
     const hasTable = async (name) => {
       const r = await get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [name]);
       return !!r;
     };
+    const colExists = async (table, col) =>
+      (await all(`PRAGMA table_info(${table})`)).some(c => c.name === col);
     // DROP COLUMN fails when an index still names the column, so dropCol clears
     // any user-created index on the table that references the target column
     // first. Autoindexes (origin 'u'/'pk') cannot be dropped and are skipped.
@@ -475,55 +448,85 @@ async function initDb() {
       }
     };
     const dropCol = async (table, col) => {
-      const cols = await all(`PRAGMA table_info(${table})`);
-      if (cols.some(c => c.name === col)) {
+      if (await colExists(table, col)) {
         await dropIndexesReferencing(table, [col]);
         await run(`ALTER TABLE ${table} DROP COLUMN ${col}`);
       }
     };
 
-    // Pokemon rows reference card_cache ids that are about to go, so the
-    // collection rows must lead; card_cache second; the rest after. On a fresh
-    // database the game column never existed, so these are no-ops.
-    for (const table of ['collection', 'card_cache', 'decks', 'card_lists', 'sets']) {
-      const cols = await all(`PRAGMA table_info(${table})`);
-      if (cols.some(c => c.name === 'game')) {
-        await run(`DELETE FROM ${table} WHERE game = 'pokemon' OR game IS NULL`);
+    await withTransaction(async () => {
+      // 1. Rows, children FIRST. tcgplayer_product.card_id is a real FK to
+      // card_cache without ON DELETE, so the table (not just its Pokemon rows)
+      // must be gone before the card_cache delete — otherwise the delete dies
+      // on the FK. collection has no FK to the cache rows it holds, so it only
+      // needs its own Pokemon rows cleared. On a fresh database none of this
+      // ever existed, so all of it is a no-op.
+      if (await hasTable('tcgplayer_product')) {
+        // (The card_cache.tcgplayer_product_id COLUMN is different: Scryfall
+        // still hands out Magic product ids, and that column is what the
+        // TCGplayer link buttons use.)
+        await run(`DROP INDEX IF EXISTS idx_tcgplayer_product_pid`);
+        await run(`DROP TABLE tcgplayer_product`);
       }
-    }
+      for (const table of ['collection', 'card_cache', 'decks', 'card_lists', 'sets']) {
+        if (await colExists(table, 'game')) {
+          await run(`DELETE FROM ${table} WHERE game = 'pokemon' OR game IS NULL`);
+        }
+      }
 
-    for (const table of ['sets', 'card_cache', 'collection', 'decks', 'card_lists']) {
-      await dropCol(table, 'game');
-    }
+      // price_history has no foreign key — its only tie to card_cache is the
+      // card_id value — so the Pokemon cards' price points would survive the
+      // cache-row delete as orphans.
+      await run(`DELETE FROM price_history WHERE card_id NOT IN (SELECT id FROM card_cache)`);
 
-    // Graded columns. collection has no FKs naming them, so they drop in place.
-    for (const col of ['market_value_source', 'market_value_at', 'market_value',
-      'cert_number', 'grade', 'grader']) {
-      await dropCol('collection', col);
-    }
-    if (await hasTable('psa_cert')) await run(`DROP TABLE psa_cert`);
+      // 2. The game column everywhere it lived.
+      for (const table of ['sets', 'card_cache', 'collection', 'decks', 'card_lists']) {
+        await dropCol(table, 'game');
+      }
 
-    await dropCol('users', 'psa_api_token');
-    await dropCol('users', 'graded_price_api_key');
-    // The user-level provider key was the pokemontcg.io key — with the Pokemon
-    // provider gone it names nothing, so the column goes with it.
-    await dropCol('users', 'tcg_api_key');
+      // 3. Graded columns. collection has no FKs naming them, so they drop in
+      // place.
+      for (const col of ['market_value_source', 'market_value_at', 'market_value',
+        'cert_number', 'grade', 'grader']) {
+        await dropCol('collection', col);
+      }
+      if (await hasTable('psa_cert')) await run(`DROP TABLE psa_cert`);
 
-    // app_settings: drop the Pokemon-specific settings. Idempotent via PRAGMA.
-    for (const col of ['pokemon_provider', 'pokemon_prices_swept_at',
-      'tcgdex_prices_swept_at', 'scan_exclude_digital']) {
-      const cols = await all(`PRAGMA table_info(app_settings)`);
-      if (cols.some(c => c.name === col)) await run(`ALTER TABLE app_settings DROP COLUMN ${col}`);
-    }
+      // card_cache prices for finishes that no longer exist in the app:
+      // reverse holo is a Pokemon finish and 1st Edition pricing was a
+      // Pokemon-era feature. The MTG resolver reads price_normal/price_holofoil.
+      // (price_avg1/7/30 stay: they are the rolling averages behind the
+      // dashboard's value-change stats, and the price-history market anchors.)
+      for (const col of ['price_reverse_holofoil', 'price_1st_edition']) {
+        await dropCol('card_cache', col);
+      }
 
-    // set_data_gaps kept its rows but its PRIMARY KEY changed from
-    // (game, language, set_id) to (language, set_id). SQLite cannot alter a
-    // table's PRIMARY KEY in place, so rebuild it from the surviving rows.
-    if (await hasTable('set_data_gaps')) {
-      const oldCols = await all(`PRAGMA table_info(set_data_gaps)`);
-      if (oldCols.some(c => c.name === 'game')) {
-        const keep = oldCols.map(c => c.name).filter(n => n !== 'game').join(', ');
-        await withTransaction(async () => {
+      await dropCol('users', 'psa_api_token');
+      await dropCol('users', 'graded_price_api_key');
+      // The user-level provider key was the pokemontcg.io key — with the Pokemon
+      // provider gone it names nothing, so the column goes with it.
+      await dropCol('users', 'tcg_api_key');
+
+      // app_settings: drop the Pokemon-era settings. Idempotent via PRAGMA.
+      // (The scan_exclude_* columns stay: cardSets.js still reads them to
+      // filter MTG child sets — tokens, memorabilia, jumpstart, promos.)
+      for (const col of ['pokemon_provider', 'pokemon_prices_swept_at',
+        'tcgdex_prices_swept_at', 'tcgcsv_prices_swept_at', 'scan_exclude_digital']) {
+        if (await colExists('app_settings', col)) {
+          await run(`ALTER TABLE app_settings DROP COLUMN ${col}`);
+        }
+      }
+
+      // 4. set_data_gaps kept its MTG rows but its PRIMARY KEY changed from
+      // (game, language, set_id) to (language, set_id). SQLite cannot alter a
+      // table's PRIMARY KEY in place, so rebuild it — copying only the MTG
+      // rows: the old key allowed the SAME language+set_id in both games (the
+      // Pokemon and Magic worlds shared short ids like 'me1'-'me4'), which would
+      // collide on the new key and abort the migration.
+      if (await hasTable('set_data_gaps')) {
+        const oldCols = await all(`PRAGMA table_info(set_data_gaps)`);
+        if (oldCols.some(c => c.name === 'game')) {
+          const keep = oldCols.map(c => c.name).filter(n => n !== 'game').join(', ');
           await run(`DROP TABLE IF EXISTS set_data_gaps_new`);
           await run(`CREATE TABLE set_data_gaps_new (
             language TEXT NOT NULL,
@@ -532,19 +535,20 @@ async function initDb() {
             seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (language, set_id)
           )`);
-          await run(`INSERT INTO set_data_gaps_new (${keep}) SELECT ${keep} FROM set_data_gaps`);
+          await run(`INSERT INTO set_data_gaps_new (${keep})
+            SELECT ${keep} FROM set_data_gaps WHERE game = 'mtg'`);
           await run(`DROP TABLE set_data_gaps`);
           await run(`ALTER TABLE set_data_gaps_new RENAME TO set_data_gaps`);
-        });
+        }
       }
-    }
 
-    // The TCGplayer product catalogue only existed to name scans against the
-    // ready-made Pokemon catalog; nothing reads it now.
-    if (await hasTable('tcgplayer_catalog')) {
-      await run(`DROP INDEX IF EXISTS idx_tcgplayer_catalog_pid`);
-      await run(`DROP TABLE tcgplayer_catalog`);
-    }
+      // 5. The TCGplayer product catalogue only existed to name scans against
+      // the ready-made Pokemon catalog; nothing reads it now.
+      if (await hasTable('tcgplayer_catalog')) {
+        await run(`DROP INDEX IF EXISTS idx_tcgplayer_catalog_pid`);
+        await run(`DROP TABLE tcgplayer_catalog`);
+      }
+    });
     console.log('Pokemon and graded schema removed; MTG rows preserved.');
   }
 
@@ -607,7 +611,7 @@ async function initDb() {
               card_id TEXT NOT NULL,
               quantity INTEGER DEFAULT 1,
               condition TEXT CHECK(condition IN ('Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged')) DEFAULT 'Near Mint',
-              printing TEXT CHECK(printing IN ('Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo')) DEFAULT 'Normal',
+              printing TEXT CHECK(printing IN ('Normal', 'Holofoil')) DEFAULT 'Normal',
               language TEXT DEFAULT 'English',
               purchase_price REAL,
               favorite INTEGER DEFAULT 0,

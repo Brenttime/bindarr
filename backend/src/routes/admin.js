@@ -55,7 +55,6 @@ router.post('/seed-cards', async (req, res) => {
       const options = [];
       if (card.price_normal > 0) options.push('Normal');
       if (card.price_holofoil > 0) options.push('Holofoil');
-      if (card.price_reverse_holofoil > 0) options.push('Reverse Holofoil');
       return options.length > 0 ? options : ['Normal'];
     };
 
@@ -111,9 +110,7 @@ router.get('/users', async (req, res) => {
         SELECT COUNT(c.id) as unique_cards, SUM(c.quantity) as total_cards,
           SUM(c.quantity * CASE
             WHEN c.printing = 'Holofoil' AND cc.price_holofoil IS NOT NULL AND cc.price_holofoil > 0 THEN cc.price_holofoil
-            WHEN c.printing = 'Reverse Holofoil' AND cc.price_reverse_holofoil IS NOT NULL AND cc.price_reverse_holofoil > 0 THEN cc.price_reverse_holofoil
             WHEN c.printing = 'Normal' AND cc.price_normal IS NOT NULL AND cc.price_normal > 0 THEN cc.price_normal
-            WHEN c.printing = '1st Edition' AND cc.price_1st_edition IS NOT NULL AND cc.price_1st_edition > 0 THEN cc.price_1st_edition
             ELSE cc.price_trend
           END) as total_value
         FROM collection c

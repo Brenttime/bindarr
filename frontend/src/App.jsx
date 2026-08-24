@@ -268,7 +268,7 @@ function App() {
     <div className="app-container">
       {showSetup && (
         <Suspense fallback={null}>
-          <SetupWizard user={user} onUpdateUser={handleUpdateUser} showToast={showToast} onClose={() => setShowSetup(false)} />
+          <SetupWizard user={user} showToast={showToast} onClose={() => setShowSetup(false)} />
         </Suspense>
       )}
       {/* Premium Header */}

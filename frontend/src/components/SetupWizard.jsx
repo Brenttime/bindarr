@@ -37,7 +37,7 @@ const markComplete = () => fetch('/api/settings', {
   body: JSON.stringify({ setup_complete: true }),
 });
 
-export default function SetupWizard({ user, onUpdateUser, onClose, showToast }) {
+export default function SetupWizard({ user, onClose, showToast }) {
   const { t, locale, setLocale } = useT();
   const [step, setStep] = useState(0);
 

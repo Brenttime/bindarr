@@ -184,9 +184,9 @@ router.get('/me', authenticateToken, (req, res) => {
   // An API key is a read-only credential for scripts. Handing it the account's
   // OTHER provider keys would make it a credential-theft tool: it can be pasted
   // into a dashboard config, and what leaks with it must stay read-only data.
-  if (req.user.via_api_key) {
-    return res.json({ user: safe });
-  }
+  // authenticateToken already builds req.user from the safe column list for
+  // both credential kinds (no provider tokens are selected anymore), so the
+  // API-key branch hands back exactly what the session branch does.
   res.json({ user: req.user });
 });
 

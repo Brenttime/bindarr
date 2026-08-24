@@ -465,7 +465,7 @@
   "inspector.errAddDeck": "덱에 추가할 수 없습니다.",
   "inspector.errAddDeckGeneric": "덱에 추가하는 중 오류가 발생했습니다.",
   "inspector.errEdit": "카드를 편집하는 중 오류가 발생했습니다.",
-  "inspector.errFetchValue": "그레이딩 시세를 가져오지 못했습니다.",
+  "inspector.errFetchValue": "시장 시세를 가져오지 못했습니다.",
   "inspector.errUpdate": "카드를 변경할 수 없습니다.",
   "inspector.errUpdateGeneric": "카드를 변경하는 중 오류가 발생했습니다.",
   "inspector.favorite": "즐겨찾기에 추가",

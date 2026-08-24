@@ -125,7 +125,6 @@ function testSynthesizeMoxfieldCard() {
   assert.strictEqual(card.id, 'mtg-7e56f614-cba4-49d9-b5fc-7566abba4a10');
   assert.strictEqual(card.name, 'Sakashima the Impostor');
   assert.strictEqual(card.supertype, 'MTG');
-  assert.strictEqual(card.game, 'mtg');
   assert.deepStrictEqual(card.types, ['Blue', 'Black'], 'color letters become color words');
   assert.deepStrictEqual(card.color_identity, ['Blue', 'Black']);
   assert.deepStrictEqual(card.subtypes, ['Legendary', 'Creature', 'Shapeshifter'], 'type line split into subtypes');

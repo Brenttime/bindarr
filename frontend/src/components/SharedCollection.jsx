@@ -3,7 +3,7 @@ import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Ba
 import { Search, Trophy, Compass, Library, ShieldAlert, Sparkles, X, SlidersHorizontal } from 'lucide-react';
 import Logo from './Logo';
 import { priceText } from '../utils/formatPrice';
-import { PRINTINGS } from '../utils/cardOptions';
+import { PRINTING_OPTIONS } from '../utils/cardOptions';
 import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
 import { useBackGuard } from '../utils/useBackGuard';
 import { sortCardsByOrder } from '../utils/cardSort';
@@ -356,7 +356,7 @@ function SharedCollection({ shareToken }) {
                 <label>{t('card.printing')}</label>
                 <select className="select-control" value={printingFilter} onChange={(e) => setPrintingFilter(e.target.value)}>
                   <option value="">{t('collection.allPrintings')}</option>
-                  {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
+                  {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
               </div>
             </div>

@@ -53,9 +53,7 @@ router.get('/:share_token', async (req, res) => {
         cc.image_url,
         cc.price_trend,
         cc.price_normal,
-        cc.price_holofoil,
-        cc.price_reverse_holofoil,
-        cc.price_1st_edition
+        cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       ${filterSql}

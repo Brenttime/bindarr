@@ -15,18 +15,8 @@ function resolveCardPrice(card) {
   if (card.printing === 'Holofoil' && card.price_holofoil !== null && card.price_holofoil > 0) {
     return card.price_holofoil;
   }
-  if (card.printing === 'Reverse Holofoil' && card.price_reverse_holofoil !== null && card.price_reverse_holofoil > 0) {
-    return card.price_reverse_holofoil;
-  }
   if (card.printing === 'Normal' && card.price_normal !== null && card.price_normal > 0) {
     return card.price_normal;
-  }
-  // '1st Edition' has been a legal printing since v1.0 but had no price of its own,
-  // so it fell through to price_trend — the UNLIMITED price. On a Base Set Charizard
-  // that understates the card by thousands. A backfill writes this column, so the
-  // fallthrough below still covers every row nothing has priced that way.
-  if (card.printing === '1st Edition' && card.price_1st_edition !== null && card.price_1st_edition > 0) {
-    return card.price_1st_edition;
   }
   return card.price_trend || 0;
 }

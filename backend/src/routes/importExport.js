@@ -30,24 +30,22 @@ router.get('/export', async (req, res) => {
         cc.image_url,
         cc.price_trend,
         cc.price_normal,
-        cc.price_holofoil,
-        cc.price_reverse_holofoil,
-        cc.price_1st_edition
+        cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       WHERE c.user_id = ?
     `;
     const raw = await db.all(query, [req.user.id]);
     // market_price used to be cc.price_trend flat, which exported the wrong number
-    // for every foil, every 1st Edition and every reverse holo — the same cases
-    // resolveCardPrice exists to get right. An export that disagrees with the
-    // dashboard is worse than no export: it is a spreadsheet someone will trust.
+    // for every foil — the same case resolveCardPrice exists to get right. An
+    // export that disagrees with the dashboard is worse than no export: it is a
+    // spreadsheet someone will trust.
     // price_trend is destructured OUT along with the per-printing columns: the CSV
     // strategies read `item.price_trend || item.market_price`, so leaving it in
     // would win over the resolved number and export the raw price anyway.
-    const rows = raw.map(({ price_trend, price_normal, price_holofoil, price_reverse_holofoil, price_1st_edition, ...keep }) => ({
+    const rows = raw.map(({ price_trend, price_normal, price_holofoil, ...keep }) => ({
       ...keep,
-      market_price: resolveCardPrice({ price_trend, price_normal, price_holofoil, price_reverse_holofoil, price_1st_edition, ...keep }),
+      market_price: resolveCardPrice({ price_trend, price_normal, price_holofoil, ...keep }),
     }));
 
     if (format.toLowerCase() === 'json') {
@@ -125,6 +123,33 @@ router.post('/import', async (req, res) => {
 
     if (!Array.isArray(rawItems)) {
       return res.status(400).json({ error: 'Invalid data payload' });
+    }
+
+    // This install is MTG-only now, but an export made BEFORE the Pokemon
+    // removal still carries Pokemon cards (game = 'pokemon') and Pokemon-era
+    // finishes (Reverse Holofoil / 1st Edition / Promo). Without this guard such
+    // a file re-imports exactly what the migration just deleted — the collection
+    // INSERT would even fail the new CHECK constraint, but only mid-transaction.
+    // Reject the offending rows up front with a clear message instead.
+    const allowedPrintings = ['Normal', 'Holofoil'];
+    const rejected = [];
+    for (let i = 0; i < rawItems.length; i++) {
+      const item = rawItems[i];
+      const game = String(item.game ?? '').toLowerCase();
+      if (game && game !== 'mtg') {
+        rejected.push({ index: i, reason: `game '${item.game}' is not supported (this install is MTG-only)` });
+        continue;
+      }
+      if (item.printing !== undefined && item.printing !== '' &&
+          !allowedPrintings.includes(item.printing)) {
+        rejected.push({ index: i, reason: `printing '${item.printing}' is not supported` });
+      }
+    }
+    if (rejected.length > 0) {
+      return res.status(400).json({
+        error: `Imported ${rawItems.length - rejected.length} of ${rawItems.length}; ${rejected.length} rejected.`,
+        rejected
+      });
     }
 
     let importedCount = 0;

@@ -422,7 +422,7 @@
   "deck.nothingToBuy": "Nichts zu kaufen — du besitzt jede Karte dieses Decks.",
   "deck.open": "Öffnen",
   "deck.pasteDecklistHint": "Decklisten-Zeilen einfügen (z. B. 4 Lightning Bolt oder 1 Shock):",
-  "deck.pasteDecklistPlaceholder": "Deckliste einfügen (z. B.\n4 Glurak ex\n2 Tauboss ex\n1 Wald-Siegelstein)",
+  "deck.pasteDecklistPlaceholder": "Deckliste einfügen (z. B.\n4 Lightning Bolt\n2 Shock\n1 Fetch Land)",
   "deck.previewArt": "Kartenbild ansehen",
   "deck.removeFromDeck": "Aus dem Deck entfernen",
   "deck.reqQuantity": "Benötigt: {count}",
