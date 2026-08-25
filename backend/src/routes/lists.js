@@ -7,6 +7,16 @@ const { sqlCardKey } = require('../utils/cardIdentity');
 
 const router = express.Router();
 
+async function unresolvedListCardCount(listId) {
+  const row = await db.get(`
+    SELECT COUNT(*) AS count
+    FROM list_cards lc
+    LEFT JOIN card_cache cc ON cc.id = lc.card_id
+    WHERE lc.list_id = ? AND lc.quantity > 0 AND cc.id IS NULL
+  `, [listId]);
+  return Number(row && row.count) || 0;
+}
+
 // Card lists: wishlists, buylists, missing-card lists — cards tracked but not
 // necessarily owned (the ManaBox "lists" concept). Separate entity from decks
 // on purpose: no format, no 4-copy rule, no checkout, no ownership ceiling on
@@ -18,8 +28,11 @@ router.get('/', async (req, res) => {
     const rows = await db.all(
       `SELECT
          l.id, l.name, l.description, l.accent_color, l.created_at,
-         COUNT(DISTINCT CASE WHEN lc.card_id IS NOT NULL THEN ${sqlCardKey('list_cc')} END) AS total_card_types,
-         COALESCE(SUM(lc.quantity), 0) AS total_cards
+         COUNT(DISTINCT CASE
+           WHEN lc.quantity > 0 THEN COALESCE(${sqlCardKey('list_cc')}, 'missing:' || lc.card_id)
+         END) AS total_card_types,
+         COALESCE(SUM(CASE WHEN lc.quantity > 0 THEN lc.quantity ELSE 0 END), 0) AS total_cards,
+         COUNT(DISTINCT CASE WHEN lc.quantity > 0 AND list_cc.id IS NULL THEN lc.card_id END) AS unresolved_card_types
        FROM card_lists l
        LEFT JOIN list_cards lc ON l.id = lc.list_id
        LEFT JOIN card_cache list_cc ON list_cc.id = lc.card_id
@@ -107,6 +120,11 @@ router.get('/:id', async (req, res) => {
     if (!list) {
       return res.status(404).json({ error: 'List not found' });
     }
+    if (await unresolvedListCardCount(id)) {
+      return res.status(422).json({
+        error: 'This list contains cards whose details are unavailable. Remove or re-import them before continuing.'
+      });
+    }
     const cards = await db.all(
       `WITH requested AS (
          SELECT
@@ -115,7 +133,7 @@ router.get('/:id', async (req, res) => {
            SUM(lc.quantity) AS quantity
          FROM list_cards lc
          JOIN card_cache list_cc ON list_cc.id = lc.card_id
-         WHERE lc.list_id = ?
+         WHERE lc.list_id = ? AND lc.quantity > 0
          GROUP BY ${sqlCardKey('list_cc')}
        )
        SELECT
@@ -129,6 +147,7 @@ router.get('/:id', async (req, res) => {
            FROM collection owned
            JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
            WHERE owned.user_id = ?
+             AND owned.quantity > 0
              AND ${sqlCardKey('owned_cc')} = requested.card_key
          ) AS owned_qty
        FROM requested
@@ -154,6 +173,11 @@ router.get('/:id/cardlist', async (req, res) => {
     if (!list) {
       return res.status(404).json({ error: 'List not found' });
     }
+    if (await unresolvedListCardCount(id)) {
+      return res.status(422).json({
+        error: 'This list contains cards whose details are unavailable. Remove or re-import them before exporting.'
+      });
+    }
     const rows = await db.all(
       `WITH requested AS (
          SELECT
@@ -162,7 +186,7 @@ router.get('/:id/cardlist', async (req, res) => {
            SUM(lc.quantity) AS quantity
          FROM list_cards lc
          JOIN card_cache list_cc ON list_cc.id = lc.card_id
-         WHERE lc.list_id = ?
+         WHERE lc.list_id = ? AND lc.quantity > 0
          GROUP BY ${sqlCardKey('list_cc')}
        )
        SELECT requested.quantity, cc.name, cc.set_id, cc.number

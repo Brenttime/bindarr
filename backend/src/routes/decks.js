@@ -8,6 +8,16 @@ const { withAllocationLock } = require('../utils/collectionHelpers');
 
 const router = express.Router();
 
+async function unresolvedDeckCardCount(deckId) {
+  const row = await db.get(`
+    SELECT COUNT(*) AS count
+    FROM deck_cards dc
+    LEFT JOIN card_cache cc ON cc.id = dc.card_id
+    WHERE dc.deck_id = ? AND dc.quantity > 0 AND cc.id IS NULL
+  `, [deckId]);
+  return Number(row && row.count) || 0;
+}
+
 // One printing-agnostic coverage query shared by the checkout guide and the
 // checkout mutation's diagnostics. A deck may contain several printing ids for
 // one card; requirements are summed by canonical English name, collection copies
@@ -71,9 +81,10 @@ router.get('/', async (req, res) => {
         d.checked_out_at,
         d.source,
         COUNT(DISTINCT CASE
-          WHEN deck_cc.id IS NOT NULL AND dc.quantity > 0 THEN ${sqlCardKey('deck_cc')}
+          WHEN dc.quantity > 0 THEN COALESCE(${sqlCardKey('deck_cc')}, 'missing:' || dc.card_id)
         END) as total_card_types,
-        COALESCE(SUM(CASE WHEN dc.quantity > 0 THEN dc.quantity ELSE 0 END), 0) as total_cards
+        COALESCE(SUM(CASE WHEN dc.quantity > 0 THEN dc.quantity ELSE 0 END), 0) as total_cards,
+        COUNT(DISTINCT CASE WHEN dc.quantity > 0 AND deck_cc.id IS NULL THEN dc.card_id END) as unresolved_card_types
       FROM decks d
       LEFT JOIN deck_cards dc ON d.id = dc.deck_id
       LEFT JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
@@ -149,6 +160,11 @@ router.get('/:id', async (req, res) => {
     const deck = await db.get(`SELECT * FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (!deck) {
       return res.status(404).json({ error: 'Deck not found' });
+    }
+    if (await unresolvedDeckCardCount(id)) {
+      return res.status(422).json({
+        error: 'This deck contains cards whose details are unavailable. Remove or re-import them before continuing.'
+      });
     }
 
     const cardsQuery = `

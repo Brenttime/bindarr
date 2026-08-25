@@ -9,6 +9,7 @@ process.env.DB_PATH = tmpDb;
 const port = '3021';
 const projectRoot = path.join(__dirname, '../../../');
 const db = require('../../src/db');
+const moxfieldSync = require('../../src/moxfieldSync');
 
 async function waitForServer() {
   for (let i = 0; i < 150; i++) {
@@ -191,7 +192,53 @@ async function runTests() {
     assert.strictEqual(emptyList.cards.length, 0);
     console.log('PASS: F8-TC6');
 
-    // F8-TC7: deck registration remains additive and printing-specific at the physical collection boundary.
+    // F8-TC7: nonpositive legacy rows are ignored; positive orphan rows are represented in
+    // summaries and fail closed in details/exports instead of silently disappearing.
+    await db.run(`INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, 'bolt-a', 0)`, [listId]);
+    let zeroSummary = (await fetch(api('/lists'), { headers: auth }).then(r => r.json())).find(row => row.id === listId);
+    assert.strictEqual(zeroSummary.total_card_types, 0);
+    assert.strictEqual(zeroSummary.total_cards, 0);
+    await db.run(`INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, 'missing-list-card', 1)`, [listId]);
+    zeroSummary = (await fetch(api('/lists'), { headers: auth }).then(r => r.json())).find(row => row.id === listId);
+    assert.strictEqual(zeroSummary.total_card_types, 1);
+    assert.strictEqual(zeroSummary.unresolved_card_types, 1);
+    assert.strictEqual((await fetch(api(`/lists/${listId}`), { headers: auth })).status, 422);
+    assert.strictEqual((await fetch(api(`/lists/${listId}/cardlist`), { headers: auth })).status, 422);
+    await db.run(`DELETE FROM list_cards WHERE list_id = ? AND card_id = 'missing-list-card'`, [listId]);
+
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'missing-deck-card', 1)`, [legacy]);
+    const deckSummary = (await fetch(api('/decks'), { headers: auth }).then(r => r.json())).find(row => row.id === legacy);
+    assert.strictEqual(deckSummary.unresolved_card_types, 1);
+    assert.strictEqual((await fetch(api(`/decks/${legacy}`), { headers: auth })).status, 422);
+    await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND card_id = 'missing-deck-card'`, [legacy]);
+    console.log('PASS: F8-TC7');
+
+    // F8-TC8: disabling or removing Moxfield tracking cannot discard a checked-out mirror.
+    assert.strictEqual((await fetch(api(`/decks/${deckA}/checkout`), { method: 'PUT', headers: auth })).status, 200);
+    const author = await db.run(
+      `INSERT INTO moxfield_authors (user_id, moxfield_user) VALUES (?, 'identity-test')`,
+      [userId]
+    );
+    await db.run(
+      `INSERT INTO moxfield_decks (author_id, public_id, name, bindarr_deck_id, enabled)
+       VALUES (?, 'identity-public-id', 'Protected mirror', ?, 1)`,
+      [author.lastID, deckA]
+    );
+    await assert.rejects(
+      () => moxfieldSync.setDeckEnabled(userId, 'identity-public-id', false),
+      error => error && error.code === 'ALLOCATION_CONFLICT'
+    );
+    await assert.rejects(
+      () => moxfieldSync.removeAuthor(userId, author.lastID),
+      error => error && error.code === 'ALLOCATION_CONFLICT'
+    );
+    assert.ok(await db.get(`SELECT id FROM moxfield_authors WHERE id = ?`, [author.lastID]));
+    assert.ok(await db.get(`SELECT id FROM decks WHERE id = ? AND checked_out = 1`, [deckA]));
+    assert.strictEqual((await fetch(api(`/decks/${deckA}/return`), { method: 'PUT', headers: auth })).status, 200);
+    await moxfieldSync.removeAuthor(userId, author.lastID);
+    console.log('PASS: F8-TC8');
+
+    // F8-TC9: deck registration remains additive and printing-specific at the physical collection boundary.
     const registrationDeck = await createDeck('Physical printing registration');
     await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'split-b', 2)`, [registrationDeck]);
     const before = await db.get(`SELECT COALESCE(SUM(quantity), 0) AS qty FROM collection WHERE user_id = ? AND card_id = 'split-b'`, [userId]);
@@ -199,7 +246,7 @@ async function runTests() {
     assert.strictEqual(register.status, 201, await register.text());
     const after = await db.get(`SELECT COALESCE(SUM(quantity), 0) AS qty FROM collection WHERE user_id = ? AND card_id = 'split-b'`, [userId]);
     assert.strictEqual(after.qty - before.qty, 2);
-    console.log('PASS: F8-TC7');
+    console.log('PASS: F8-TC9');
   } finally {
     server.kill('SIGTERM');
     await new Promise(resolve => server.once('exit', resolve));

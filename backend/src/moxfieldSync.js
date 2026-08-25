@@ -30,6 +30,12 @@ const moxfieldApi = require('./moxfieldApi');
 const { bulkFetchByIdentifier, cacheCards } = require('./scryfallApi');
 const { sqlCardKey } = require('./utils/cardIdentity');
 const { withAllocationLock } = require('./utils/collectionHelpers');
+
+function allocationConflict(message) {
+  const error = new Error(message);
+  error.code = 'ALLOCATION_CONFLICT';
+  return error;
+}
 const {
   MIRROR_BOARDS,
   extractDeckCards,
@@ -174,7 +180,7 @@ async function retireDeck(author, publicId) {
       WHERE md.author_id = ? AND md.public_id = ?
     `, [author.id, publicId]);
     if (!row) return false;
-    if (row.checked_out) throw new Error('Check this deck in before removing its Moxfield mirror');
+    if (row.checked_out) throw allocationConflict('Check this deck in before removing its Moxfield mirror');
     if (row.bindarr_deck_id) {
       await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
       await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
@@ -363,7 +369,7 @@ async function pullDeckContent(author, publicId, knownRow = null) {
       `SELECT id, checked_out FROM decks WHERE id = ? AND source = 'moxfield'`, [targetDeckId]
     );
     if (alive && alive.checked_out) {
-      throw new Error('Check this deck in before syncing Moxfield changes');
+      throw allocationConflict('Check this deck in before syncing Moxfield changes');
     }
     if (!alive) {
       targetDeckId = null;
@@ -442,7 +448,12 @@ async function pullDeckContent(author, publicId, knownRow = null) {
           AND EXISTS (SELECT 1 FROM decks WHERE id = ? AND checked_out = 0)
       `, [representative, wanted.quantity, targetDeckId, ...existingIds, targetDeckId]);
       if (!updated.changes) throw new Error('Deck was checked out while Moxfield changes were syncing');
-      await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND quantity <= 0`, [targetDeckId]);
+      await db.run(
+        `DELETE FROM deck_cards
+         WHERE deck_id = ? AND quantity <= 0
+           AND card_id IN (${existingIds.map(() => '?').join(',')})`,
+        [targetDeckId, ...existingIds]
+      );
     } else {
       const inserted = await db.run(`
         INSERT INTO deck_cards (deck_id, card_id, quantity)
@@ -521,15 +532,29 @@ async function setDeckEnabled(userId, publicId, enabled) {
     return { ok: true, enabled: true, imported: !!fresh.bindarr_deck_id };
   }
 
-  if (row.bindarr_deck_id) {
-    await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
-    await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
-    await db.run(`UPDATE moxfield_decks SET enabled = 0, bindarr_deck_id = NULL, last_synced_updated_at = NULL, last_error = NULL WHERE id = ?`, [row.id]);
-  } else {
-    await db.run(`UPDATE moxfield_decks SET enabled = 0, last_error = NULL WHERE id = ?`, [row.id]);
-  }
-  console.log(`Moxfield sync: deck "${row.name}" import disabled (mirror removed)`);
-  return { ok: true, enabled: false };
+  return withAllocationLock(async () => {
+    const current = await db.get(`
+      SELECT md.bindarr_deck_id, d.checked_out
+      FROM moxfield_decks md
+      LEFT JOIN decks d ON d.id = md.bindarr_deck_id
+      WHERE md.id = ?
+    `, [row.id]);
+    if (!current) throw new Error('Moxfield deck not found for this user');
+    if (current.checked_out) {
+      const conflict = new Error('Check this deck in before disabling its Moxfield mirror');
+      conflict.code = 'ALLOCATION_CONFLICT';
+      throw conflict;
+    }
+    if (current.bindarr_deck_id) {
+      await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [current.bindarr_deck_id]);
+      await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [current.bindarr_deck_id]);
+      await db.run(`UPDATE moxfield_decks SET enabled = 0, bindarr_deck_id = NULL, last_synced_updated_at = NULL, last_error = NULL WHERE id = ?`, [row.id]);
+    } else {
+      await db.run(`UPDATE moxfield_decks SET enabled = 0, last_error = NULL WHERE id = ?`, [row.id]);
+    }
+    console.log(`Moxfield sync: deck "${row.name}" import disabled (mirror removed)`);
+    return { ok: true, enabled: false };
+  });
 }
 
 // Re-pull one specific deck's contents for a user, regardless of its stamp.
@@ -576,18 +601,30 @@ async function addAuthor(userId, username) {
 
 // Stop tracking an author: remove every mirrored deck this account produced.
 async function removeAuthor(userId, authorId) {
-  const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ? AND user_id = ?`, [authorId, userId]);
-  if (!author) throw new Error('Moxfield author not found');
-  const tracked = await db.all(`SELECT bindarr_deck_id FROM moxfield_decks WHERE author_id = ?`, [author.id]);
-  for (const row of tracked) {
-    if (row.bindarr_deck_id) {
-      await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
-      await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
+  return withAllocationLock(async () => {
+    const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ? AND user_id = ?`, [authorId, userId]);
+    if (!author) throw new Error('Moxfield author not found');
+    const tracked = await db.all(`
+      SELECT md.bindarr_deck_id, d.checked_out
+      FROM moxfield_decks md
+      LEFT JOIN decks d ON d.id = md.bindarr_deck_id
+      WHERE md.author_id = ?
+    `, [author.id]);
+    if (tracked.some(row => row.checked_out)) {
+      const conflict = new Error('Check in every mirrored deck before removing this Moxfield author');
+      conflict.code = 'ALLOCATION_CONFLICT';
+      throw conflict;
     }
-  }
-  // CASCADE removes the moxfield_decks rows.
-  await db.run(`DELETE FROM moxfield_authors WHERE id = ?`, [author.id]);
-  return { ok: true, removed_decks: tracked.filter(r => r.bindarr_deck_id).length };
+    for (const row of tracked) {
+      if (row.bindarr_deck_id) {
+        await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
+        await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
+      }
+    }
+    // CASCADE removes the moxfield_decks rows.
+    await db.run(`DELETE FROM moxfield_authors WHERE id = ?`, [author.id]);
+    return { ok: true, removed_decks: tracked.filter(r => r.bindarr_deck_id).length };
+  });
 }
 
 // Status for the UI: every author this user tracks, with per-deck freshness.

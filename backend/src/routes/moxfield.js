@@ -56,6 +56,7 @@ router.delete('/authors/:id', async (req, res) => {
     const report = await moxfieldSync.removeAuthor(req.user.id, parseInt(req.params.id, 10));
     res.json(report);
   } catch (error) {
+    if (error && error.code === 'ALLOCATION_CONFLICT') return res.status(409).json({ error: error.message });
     if (/not found/i.test(error.message)) return res.status(404).json({ error: error.message });
     console.error(error);
     res.status(500).json({ error: 'Failed to remove Moxfield author' });
@@ -97,6 +98,7 @@ router.post('/decks/:publicId/sync', async (req, res) => {
     const report = await moxfieldSync.pullDeckContentByPublicId(req.user.id, req.params.publicId);
     res.json(report);
   } catch (error) {
+    if (error && error.code === 'ALLOCATION_CONFLICT') return res.status(409).json({ error: error.message });
     if (/not found|not tracked/i.test(error.message)) {
       return res.status(404).json({ error: error.message });
     }
@@ -116,6 +118,7 @@ router.put('/decks/:publicId', async (req, res) => {
     const report = await moxfieldSync.setDeckEnabled(req.user.id, req.params.publicId, enabled);
     res.json(report);
   } catch (error) {
+    if (error && error.code === 'ALLOCATION_CONFLICT') return res.status(409).json({ error: error.message });
     if (/not found/i.test(error.message)) return res.status(404).json({ error: error.message });
     console.error(error);
     res.status(500).json({ error: 'Failed to update Moxfield deck', detail: error.message });
