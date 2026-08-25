@@ -614,18 +614,29 @@ async function fetchAndCacheSets(force = false) {
   }
 }
 
-// Refresh prices for every owned/decked MTG card from Scryfall and record price
-// history. This is their only periodic refresh path.
+// Refresh prices for every owned MTG printing plus every cached printing of a
+// logical card used by a deck. Deck minimum values compare alternate printings,
+// so refreshing only the representative printing stored in deck_cards would
+// leave the supposedly cheapest option stale.
 // `force` bypasses the once-a-day gate (used by the scheduled daily run, which
 // is already on the right cadence by construction).
 async function updateCollectionPrices(force = false) {
   try {
     const cards = await db.all(`
-      SELECT DISTINCT c.card_id, cc.set_id, cc.number, cc.name FROM collection c
+      WITH deck_card_keys AS (
+        SELECT DISTINCT LOWER(TRIM(deck_cc.name)) AS card_key
+        FROM deck_cards dc
+        JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
+        WHERE dc.quantity > 0
+      )
+      SELECT DISTINCT c.card_id, cc.set_id, cc.number, cc.name
+      FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
+      WHERE c.quantity > 0
       UNION
-      SELECT DISTINCT d.card_id, cc.set_id, cc.number, cc.name FROM deck_cards d
-      JOIN card_cache cc ON d.card_id = cc.id
+      SELECT DISTINCT cc.id AS card_id, cc.set_id, cc.number, cc.name
+      FROM card_cache cc
+      JOIN deck_card_keys deck_key ON deck_key.card_key = LOWER(TRIM(cc.name))
     `);
     if (cards.length === 0) return;
     if (!force && !(await shouldSweepPrices('mtg'))) {

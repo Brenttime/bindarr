@@ -895,6 +895,7 @@ async function initDb() {
   await run(`DROP INDEX IF EXISTS idx_collection_user_game`);
   await run(`CREATE INDEX IF NOT EXISTS idx_collection_user ON collection(user_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_set_num ON card_cache(set_id, number)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_logical_name ON card_cache(LOWER(TRIM(name)))`);
   await run(`CREATE INDEX IF NOT EXISTS idx_deck_cards_checkout ON deck_cards(deck_id, checked_out)`);
   // Indexes on the retired tags/audit_logs tables. A fresh database never creates
   // those tables at all now; an upgraded one keeps them (dropping a table is not
