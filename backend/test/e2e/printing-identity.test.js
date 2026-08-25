@@ -54,6 +54,7 @@ async function runTests() {
       ['split-a', 'Fire // Ice', 'apc', '128', 'Instant', '["Instant"]'],
       ['split-b', 'Fire // Ice', 'mh2', '290', 'Instant', '["Instant"]'],
       ['island-a', 'Island', 'lea', '286', 'Land', '["Basic","Land","Island"]'],
+      ['brain-a', 'Brainstorm', 'ice', '61', 'Instant', '["Instant"]'],
     ];
     for (const card of cards) {
       await db.run(
@@ -109,6 +110,30 @@ async function runTests() {
     const removeLocked = await fetch(api(`/collection/${ownedBoltB.id}`), { method: 'DELETE', headers: auth });
     assert.strictEqual(removeLocked.status, 409);
     assert.strictEqual((await fetch(api(`/decks/${checkedId}/return`), { method: 'PUT', headers: auth })).status, 200);
+
+    // A quantity reduction racing checkout is ordered: either the reduction wins
+    // and checkout sees less supply, or checkout wins and the reduction is blocked.
+    const brainEntry = await db.run(`INSERT INTO collection (card_id, user_id, quantity) VALUES ('brain-a', ?, 3)`, [userId]);
+    const brainDeck = await createDeck('Concurrent inventory reduction');
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'brain-a', 3)`, [brainDeck]);
+    const reductionRace = await Promise.all([
+      fetch(api(`/decks/${brainDeck}/checkout`), { method: 'PUT', headers: auth }),
+      fetch(api(`/collection/${brainEntry.lastID}`), {
+        method: 'PUT', headers: json, body: JSON.stringify({ quantity: 2 })
+      }),
+    ]);
+    assert.strictEqual(reductionRace.filter(response => response.status === 200).length, 1);
+    assert.ok(reductionRace.some(response => response.status === 400 || response.status === 409));
+    const brainState = await db.get(`
+      SELECT
+        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE user_id = ? AND card_id = 'brain-a') AS owned,
+        (SELECT COALESCE(SUM(dc.quantity), 0) FROM deck_cards dc JOIN decks d ON d.id = dc.deck_id
+         WHERE d.id = ? AND d.checked_out = 1) AS locked
+    `, [userId, brainDeck]);
+    assert.ok(brainState.locked <= brainState.owned, 'concurrent reduction must never undercut checked-out demand');
+    if (brainState.locked) {
+      assert.strictEqual((await fetch(api(`/decks/${brainDeck}/return`), { method: 'PUT', headers: auth })).status, 200);
+    }
     console.log('PASS: F8-TC3');
 
     // F8-TC4: legacy duplicate printing rows collapse in reads and in later writes.

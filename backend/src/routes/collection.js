@@ -7,7 +7,7 @@ const cardApi = require('../utils/cardApi');
 const { searchLimiter } = require('../middleware/auth');
 const { resolveCardPrice, parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { parseSetList } = require('../utils/setQuery');
-const { checkedOutAllocation, logicalInventoryStatus, setStackQuantity } = require('../utils/collectionHelpers');
+const { checkedOutAllocation, logicalInventoryStatus, withAllocationLock, setStackQuantity } = require('../utils/collectionHelpers');
 const { sqlCardKey } = require('../utils/cardIdentity');
 const { validateDeckAddition } = require('../utils/deckRules');
 const { splitPrice } = require('../utils/splitPrice');
@@ -436,40 +436,50 @@ router.put('/collection/:id', async (req, res) => {
     if (favorite !== undefined) { updates.push('favorite = ?'); params.push(favorite ? 1 : 0); }
     if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
 
-    if (requestedQty !== null) {
-      const stack = await db.get(`
-        SELECT COALESCE(SUM(quantity), 0) AS quantity
-        FROM collection
-        WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ? AND language = ?
-      `, [req.user.id, entry.card_id, entry.condition, entry.printing, entry.language]);
-      const reduction = Math.max(0, Number(stack && stack.quantity) - requestedQty);
-      if (reduction > 0) {
-        const status = await logicalInventoryStatus(db, req.user.id, entry.card_id);
-        if (!status || Number(status.owned_qty) - reduction < Number(status.locked_qty)) {
-          return res.status(409).json({
-            error: 'Check in the deck using this card before reducing the owned quantity.'
-          });
+    const saveEntry = async () => {
+      if (requestedQty !== null) {
+        const stack = await db.get(`
+          SELECT COALESCE(SUM(quantity), 0) AS quantity
+          FROM collection
+          WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ? AND language = ?
+        `, [req.user.id, entry.card_id, entry.condition, entry.printing, entry.language]);
+        const reduction = Math.max(0, Number(stack && stack.quantity) - requestedQty);
+        if (reduction > 0) {
+          const status = await logicalInventoryStatus(db, req.user.id, entry.card_id);
+          if (!status || Number(status.owned_qty) - reduction < Number(status.locked_qty)) {
+            const conflict = new Error('allocation-conflict');
+            conflict.code = 'ALLOCATION_CONFLICT';
+            throw conflict;
+          }
         }
       }
-    }
 
-    if (updates.length > 0) {
-      params.push(id, req.user.id);
-      await db.run(`UPDATE collection SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params);
-    }
+      if (updates.length > 0) {
+        const updateParams = [...params, id, req.user.id];
+        await db.run(`UPDATE collection SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, updateParams);
+      }
 
-    // Quantity is absolute — it is how many copies the user says they own, and
-    // in the stacked collection view the number in the form is the total across
-    // the identical rows, not this row alone. So reconcile the whole stack to
-    // it, up or down. It used to only ever insert (quantity - 1) extra rows,
-    // which made lowering the number a no-op and made every save duplicate the
-    // entry instead of editing it.
-    if (requestedQty !== null) {
-      await setStackQuantity(db, req.user.id, id, requestedQty);
-    }
+      // Quantity is absolute — it is how many copies the user says they own, and
+      // in the stacked collection view the number in the form is the total across
+      // the identical rows, not this row alone. So reconcile the whole stack to
+      // it, up or down. It used to only ever insert (quantity - 1) extra rows,
+      // which made lowering the number a no-op and made every save duplicate the
+      // entry instead of editing it.
+      if (requestedQty !== null) {
+        await setStackQuantity(db, req.user.id, id, requestedQty);
+      }
+    };
+
+    if (requestedQty !== null) await withAllocationLock(saveEntry);
+    else await saveEntry();
 
     res.json({ message: 'Collection entry updated successfully' });
   } catch (error) {
+    if (error && error.code === 'ALLOCATION_CONFLICT') {
+      return res.status(409).json({
+        error: 'Check in the deck using this card before reducing the owned quantity.'
+      });
+    }
     console.error(error);
     res.status(500).json({ error: 'Failed to update entry' });
   }
@@ -479,16 +489,18 @@ router.put('/collection/:id', async (req, res) => {
 router.delete('/collection/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const entry = await db.get(`SELECT id, card_id, quantity FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-    if (!entry) return res.status(404).json({ error: 'Collection entry not found' });
-    const status = await logicalInventoryStatus(db, req.user.id, entry.card_id);
-    if (!status || Number(status.owned_qty) - Number(entry.quantity) < Number(status.locked_qty)) {
-      return res.status(409).json({ error: 'Check in the deck using this card before removing it.' });
-    }
-    const result = await db.run(`DELETE FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Collection entry not found' });
-    }
+    const outcome = await withAllocationLock(async () => {
+      const entry = await db.get(`SELECT id, card_id, quantity FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+      if (!entry) return { status: 404, error: 'Collection entry not found' };
+      const status = await logicalInventoryStatus(db, req.user.id, entry.card_id);
+      if (!status || Number(status.owned_qty) - Number(entry.quantity) < Number(status.locked_qty)) {
+        return { status: 409, error: 'Check in the deck using this card before removing it.' };
+      }
+      const result = await db.run(`DELETE FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+      if (result.changes === 0) return { status: 404, error: 'Collection entry not found' };
+      return { status: 200 };
+    });
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
     res.json({ message: 'Card removed from collection' });
   } catch (error) {
     console.error(error);
@@ -612,23 +624,25 @@ router.post('/collection/bulk', async (req, res) => {
     }
 
     if (action === 'delete') {
-      const removals = await db.all(`
-        SELECT MIN(c.card_id) AS card_id, SUM(c.quantity) AS remove_qty
-        FROM collection c
-        JOIN card_cache selected_cc ON selected_cc.id = c.card_id
-        WHERE c.id IN (${placeholders}) AND c.user_id = ?
-        GROUP BY ${sqlCardKey('selected_cc')}
-      `, [...ids, req.user.id]);
-      for (const removal of removals) {
-        const status = await logicalInventoryStatus(db, req.user.id, removal.card_id);
-        if (!status || Number(status.owned_qty) - Number(removal.remove_qty) < Number(status.locked_qty)) {
-          return res.status(409).json({
-            error: 'Check in the deck using the selected card before removing it.'
-          });
+      const outcome = await withAllocationLock(async () => {
+        const removals = await db.all(`
+          SELECT MIN(c.card_id) AS card_id, SUM(c.quantity) AS remove_qty
+          FROM collection c
+          JOIN card_cache selected_cc ON selected_cc.id = c.card_id
+          WHERE c.id IN (${placeholders}) AND c.user_id = ?
+          GROUP BY ${sqlCardKey('selected_cc')}
+        `, [...ids, req.user.id]);
+        for (const removal of removals) {
+          const status = await logicalInventoryStatus(db, req.user.id, removal.card_id);
+          if (!status || Number(status.owned_qty) - Number(removal.remove_qty) < Number(status.locked_qty)) {
+            return { status: 409, error: 'Check in the deck using the selected card before removing it.' };
+          }
         }
-      }
-      const result = await db.run(`DELETE FROM collection WHERE id IN (${placeholders}) AND user_id = ?`, [...ids, req.user.id]);
-      return res.json({ message: `Deleted ${result.changes} card(s)`, affected: result.changes });
+        const result = await db.run(`DELETE FROM collection WHERE id IN (${placeholders}) AND user_id = ?`, [...ids, req.user.id]);
+        return { status: 200, affected: result.changes };
+      });
+      if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+      return res.json({ message: `Deleted ${outcome.affected} card(s)`, affected: outcome.affected });
     }
 
     if (action === 'trade' || action === 'untrade') {

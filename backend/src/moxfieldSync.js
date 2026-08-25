@@ -29,6 +29,7 @@ const db = require('./db');
 const moxfieldApi = require('./moxfieldApi');
 const { bulkFetchByIdentifier, cacheCards } = require('./scryfallApi');
 const { sqlCardKey } = require('./utils/cardIdentity');
+const { withAllocationLock } = require('./utils/collectionHelpers');
 const {
   MIRROR_BOARDS,
   extractDeckCards,
@@ -165,16 +166,23 @@ async function upsertTrackingRow(author, summary, { enabled = true } = {}) {
 // Retire a tracked deck: drop the local mirror and its tracking row. Cards stay
 // in card_cache (they may be referenced by other decks and by price history).
 async function retireDeck(author, publicId) {
-  const row = await db.get(`SELECT bindarr_deck_id FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
-    [author.id, publicId]);
-  if (!row) return false;
-  if (row.bindarr_deck_id) {
-    await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
-    await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
-  }
-  await db.run(`DELETE FROM moxfield_decks WHERE author_id = ? AND public_id = ?`, [author.id, publicId]);
-  console.log(`Moxfield sync: retired deck "${publicId}" (removed on Moxfield)`);
-  return true;
+  return withAllocationLock(async () => {
+    const row = await db.get(`
+      SELECT md.bindarr_deck_id, d.checked_out
+      FROM moxfield_decks md
+      LEFT JOIN decks d ON d.id = md.bindarr_deck_id
+      WHERE md.author_id = ? AND md.public_id = ?
+    `, [author.id, publicId]);
+    if (!row) return false;
+    if (row.checked_out) throw new Error('Check this deck in before removing its Moxfield mirror');
+    if (row.bindarr_deck_id) {
+      await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
+      await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
+    }
+    await db.run(`DELETE FROM moxfield_decks WHERE author_id = ? AND public_id = ?`, [author.id, publicId]);
+    console.log(`Moxfield sync: retired deck "${publicId}" (removed on Moxfield)`);
+    return true;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +347,12 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   const details = await moxfieldApi.getDeckDetails(publicId);
   const entries = extractDeckCards(details);
 
+  // Fetch/cache provider metadata before taking the allocation lock; network I/O
+  // must never stall checkouts. From the first mirror-deck read through the final
+  // reconciliation write, however, checkout and sync are one ordered operation.
+  await backfillMissingCards(entries);
+  return withAllocationLock(async () => {
+
   // A stored bindarr_deck_id can dangle if the mirror deck was deleted through
   // the generic deck-delete (which doesn't clear the Moxfield pointer). Writing
   // card rows into a nonexistent deck id would leave orphaned data and a bar
@@ -366,8 +380,7 @@ async function pullDeckContent(author, publicId, knownRow = null) {
     await db.run(`UPDATE moxfield_decks SET bindarr_deck_id = ? WHERE id = ?`, [targetDeckId, row.id]);
   }
 
-  // 1. Backfill any cards not in card_cache yet (Scryfall, batched + rate-limited).
-  await backfillMissingCards(entries);
+  // 1. Card metadata was backfilled before taking the allocation lock.
 
   // 2. Reconcile quantities by logical card identity. Moxfield can name more
   // than one printing of the same game card; retain one representative id and
@@ -473,6 +486,7 @@ async function pullDeckContent(author, publicId, knownRow = null) {
     sideboard: counts.sideboard,
     commanders: counts.commanders
   };
+  });
 }
 
 // Flip one deck's import switch. Disabling removes the local mirror (and its

@@ -4,6 +4,7 @@ const cardApi = require('../utils/cardApi');
 const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { validateDeckAddition, isBasicLand } = require('../utils/deckRules');
 const { sqlCardKey, sqlIsBasicLand } = require('../utils/cardIdentity');
+const { withAllocationLock } = require('../utils/collectionHelpers');
 
 const router = express.Router();
 
@@ -273,19 +274,18 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    // Verify ownership
-    const deck = await db.get(`SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-    if (!deck) {
-      return res.status(404).json({ error: 'Deck not found or unauthorized' });
-    }
-    if (deck.checked_out) {
-      return res.status(409).json({ error: 'Check this deck in before changing its cards.' });
-    }
+    const outcome = await withAllocationLock(async () => {
+      const deck = await db.get(`SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+      if (!deck) return { status: 404, error: 'Deck not found or unauthorized' };
+      if (deck.checked_out) return { status: 409, error: 'Check this deck in before changing its cards.' };
 
-    // Manual cascade deletion
-    await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [id]);
-    await db.run(`DELETE FROM decks WHERE id = ?`, [id]);
-
+      // Manual cascade deletion. Checkout uses the same allocation lock, so it
+      // cannot reserve this deck between the checked_out read and these writes.
+      await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [id]);
+      await db.run(`DELETE FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+      return { status: 200 };
+    });
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
     res.json({ message: 'Deck deleted successfully' });
   } catch (error) {
     console.error(error);
@@ -567,12 +567,16 @@ router.put('/:id/checkout', async (req, res) => {
     // checkouts serialize here: once one deck becomes checked out, the next
     // statement sees its same-name reservations. This prevents two clients from
     // both spending the same physical copies after separate preflight reads.
-    const checkedOut = await db.all(`
+    const checkedOut = await withAllocationLock(() => db.all(`
       UPDATE decks AS target
       SET checked_out = 1, checked_out_at = CURRENT_TIMESTAMP
       WHERE target.id = ?
         AND target.user_id = ?
         AND target.checked_out = 0
+        AND EXISTS (
+          SELECT 1 FROM deck_cards present
+          WHERE present.deck_id = target.id AND present.quantity > 0
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM deck_cards unresolved
@@ -621,7 +625,7 @@ router.put('/:id/checkout', async (req, res) => {
             ), 0)
         )
       RETURNING id
-    `, [id, req.user.id]);
+    `, [id, req.user.id]));
 
     if (checkedOut.length) {
       return res.json({ message: 'Deck checked out successfully' });
@@ -638,11 +642,16 @@ router.put('/:id/checkout', async (req, res) => {
     }
 
     const sourceState = await db.get(`
-      SELECT COALESCE(SUM(CASE WHEN cc.id IS NULL THEN 1 ELSE 0 END), 0) AS unresolved
+      SELECT
+        COUNT(*) AS card_types,
+        COALESCE(SUM(CASE WHEN cc.id IS NULL THEN 1 ELSE 0 END), 0) AS unresolved
       FROM deck_cards dc
       LEFT JOIN card_cache cc ON cc.id = dc.card_id
       WHERE dc.deck_id = ? AND dc.quantity > 0
     `, [id]);
+    if (!sourceState.card_types) {
+      return res.status(400).json({ error: 'This deck has no cards to check out.' });
+    }
     if (sourceState.unresolved) {
       return res.status(422).json({
         error: 'This deck contains cards whose details are unavailable. Refresh or re-import it before checkout.'
