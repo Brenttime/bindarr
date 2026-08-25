@@ -186,7 +186,7 @@ function SharedCollection({ shareToken }) {
 
   // Every label on this page changes with the list being shown, so the list kind
   // is part of the key rather than three parallel ternaries.
-  const kind = ['collection', 'wishlist', 'trade'].includes(listType) ? listType : 'collection';
+  const kind = ['collection', 'trade'].includes(listType) ? listType : 'collection';
   const valueLabel = t(`shared.${kind}.valueLabel`);
   const qtyLabel = t(`shared.${kind}.qtyLabel`);
   const listTitle = t(`shared.${kind}.title`);
@@ -230,7 +230,7 @@ function SharedCollection({ shareToken }) {
 
       {/* Public Sub Navigation Tabs */}
       <div className="sub-nav-tabs" style={{ marginBottom: '1.5rem' }}>
-        {['collection', 'wishlist', 'trade'].map((val) => (
+        {['collection', 'trade'].map((val) => (
           <button key={val} className={`sub-nav-tab ${listType === val ? 'active' : ''}`} onClick={() => handleTabChange(val)}>
             {t(`shared.${val}.tab`)}
           </button>

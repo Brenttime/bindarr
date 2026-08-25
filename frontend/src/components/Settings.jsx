@@ -250,7 +250,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
   // scripts, and cardList.test.js proves the two copies agree.
   const handleExportCardList = async (style) => {
     try {
-      const response = await fetch('/api/collection?list_type=collection');
+      const response = await fetch('/api/collection');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const cards = await response.json();
       const text = buildCardListText(cards, style);
@@ -323,9 +323,8 @@ function Settings({ user, onUpdateUser, showToast, target }) {
   const themeQuery = activeTheme !== 'dark' ? `&theme=${encodeURIComponent(activeTheme)}` : '';
   const shareUrl = `${origin}/share/${user?.share_token}${activeTheme !== 'dark' ? `?theme=${encodeURIComponent(activeTheme)}` : ''}`;
   const tradeUrl = `${origin}/share/${user?.share_token}?list=trade${themeQuery}`;
-  const wishlistUrl = `${origin}/share/${user?.share_token}?list=wishlist${themeQuery}`;
 
-  const [copiedType, setCopiedType] = useState(''); // 'collection', 'trade', 'wishlist'
+  const [copiedType, setCopiedType] = useState(''); // 'collection', 'trade'
 
   const copyToClipboard = (url, type) => {
     navigator.clipboard.writeText(url).then(() => {
@@ -420,23 +419,6 @@ function Settings({ user, onUpdateUser, showToast, target }) {
                   />
                   <button className="btn btn-secondary" onClick={() => copyToClipboard(tradeUrl, 'trade')} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
                     {copiedType === 'trade' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
-                    <span>{t('settings.copy')}</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>{t('settings.linkWishlist')}</label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <input 
-                    type="text" 
-                    className="input-control" 
-                    value={wishlistUrl} 
-                    readOnly 
-                    style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)', cursor: 'default' }}
-                  />
-                  <button className="btn btn-secondary" onClick={() => copyToClipboard(wishlistUrl, 'wishlist')} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
-                    {copiedType === 'wishlist' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
                     <span>{t('settings.copy')}</span>
                   </button>
                 </div>

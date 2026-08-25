@@ -29,7 +29,7 @@ async function attachOwnedQty(cards, userId) {
   if (ids.length === 0) return;
   const rows = await db.all(
     `SELECT card_id, SUM(quantity) AS qty FROM collection
-     WHERE user_id = ? AND list_type = 'collection' AND card_id IN (${ids.map(() => '?').join(',')})
+     WHERE user_id = ? AND card_id IN (${ids.map(() => '?').join(',')})
      GROUP BY card_id`,
     [userId, ...ids]
   );
@@ -169,7 +169,7 @@ router.get('/collection/cardlist', async (req, res) => {
       `SELECT c.quantity, cc.name, cc.set_id, cc.number
        FROM collection c
        JOIN card_cache cc ON c.card_id = cc.id
-       WHERE c.user_id = ? AND c.list_type = 'collection'
+       WHERE c.user_id = ?
        ORDER BY c.added_at DESC`,
       [req.user.id]
     );
@@ -183,11 +183,10 @@ router.get('/collection/cardlist', async (req, res) => {
 // 2. Get User's Collection
 router.get('/collection', async (req, res) => {
   try {
-    const listType = req.query.list_type || 'collection';
     const isTrade = req.query.is_trade;
 
-    let filterSql = `WHERE c.user_id = ? AND c.list_type = ?`;
-    let filterParams = [req.user.id, listType];
+    let filterSql = `WHERE c.user_id = ?`;
+    let filterParams = [req.user.id];
 
     if (isTrade !== undefined) {
       filterSql += ` AND c.is_trade = ?`;
@@ -206,7 +205,6 @@ router.get('/collection', async (req, res) => {
         c.added_at,
         c.is_trade,
         c.favorite,
-        c.list_type,
         c.notes,
         cc.name,
         -- The localized name for a non-English printing, so every view that
@@ -268,7 +266,6 @@ async function addCardToCollection(user, body) {
     printing = 'Normal',
     language = 'English',
     purchase_price = 0,
-    list_type = 'collection',
     is_trade = 0,
     stackable = false
   } = body;
@@ -319,11 +316,11 @@ async function addCardToCollection(user, body) {
       const result = await db.run(`
         INSERT INTO collection (
           card_id, user_id, quantity, condition, printing, language, purchase_price,
-          is_trade, list_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          is_trade
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         cardId, req.user.id, count, condition, printing, language, purchase_price || 0,
-        is_trade ? 1 : 0, list_type
+        is_trade ? 1 : 0
       ]);
       lastInsertedId = result.lastID;
     } else {
@@ -331,11 +328,11 @@ async function addCardToCollection(user, body) {
         const result = await db.run(`
           INSERT INTO collection (
             card_id, user_id, quantity, condition, printing, language, purchase_price,
-            is_trade, list_type
-          ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+            is_trade
+          ) VALUES (?, ?, 1, ?, ?, ?, ?, ?)
         `, [
           cardId, req.user.id, condition, printing, language, purchase_price || 0,
-          is_trade ? 1 : 0, list_type
+          is_trade ? 1 : 0
         ]);
         lastInsertedId = result.lastID;
       }
@@ -402,7 +399,7 @@ router.put('/collection/:id', async (req, res) => {
   const { id } = req.params;
   const {
     quantity, condition, printing, language, purchase_price,
-    list_type, is_trade, favorite, notes
+    is_trade, favorite, notes
   } = req.body;
 
   try {
@@ -427,7 +424,6 @@ router.put('/collection/:id', async (req, res) => {
     }
     if (language !== undefined) { updates.push('language = ?'); params.push(language); }
     if (purchase_price !== undefined) { updates.push('purchase_price = ?'); params.push(purchase_price); }
-    if (list_type !== undefined) { updates.push('list_type = ?'); params.push(list_type); }
     if (is_trade !== undefined) { updates.push('is_trade = ?'); params.push(is_trade ? 1 : 0); }
     if (favorite !== undefined) { updates.push('favorite = ?'); params.push(favorite ? 1 : 0); }
     if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
@@ -470,7 +466,7 @@ router.delete('/collection/:id', async (req, res) => {
 });
 
 // 5b. Bulk actions
-const BULK_ACTIONS = ['delete', 'trade', 'untrade', 'list_type', 'condition', 'printing', 'purchase_split', 'add_to_deck'];
+const BULK_ACTIONS = ['delete', 'trade', 'untrade', 'condition', 'printing', 'purchase_split', 'add_to_deck'];
 // Allowed field values mirror the collection table CHECK constraints in db.js.
 const BULK_CONDITIONS = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged'];
 const BULK_PRINTINGS = PRINTING_VALUES;
@@ -529,12 +525,6 @@ router.post('/collection/bulk', async (req, res) => {
     if (action === 'trade' || action === 'untrade') {
       const result = await db.run(`UPDATE collection SET is_trade = ? WHERE id IN (${placeholders}) AND user_id = ?`, [action === 'trade' ? 1 : 0, ...ids, req.user.id]);
       return res.json({ message: `Updated ${result.changes} card(s)`, affected: result.changes });
-    }
-
-    if (action === 'list_type') {
-      if (!['collection', 'wishlist'].includes(value)) return res.status(400).json({ error: 'Invalid list_type' });
-      const result = await db.run(`UPDATE collection SET list_type = ? WHERE id IN (${placeholders}) AND user_id = ?`, [value, ...ids, req.user.id]);
-      return res.json({ message: `Moved ${result.changes} card(s) to ${value}`, affected: result.changes });
     }
 
     if (action === 'condition' || action === 'printing') {

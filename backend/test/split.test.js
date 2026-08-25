@@ -9,8 +9,8 @@ const { splitStackedEntries } = require('../src/utils/collectionHelpers');
 function makeFakeDb() {
   let nextId = 100;
   const rows = [
-    { id: 1, card_id: 'c-A', user_id: 7, quantity: 3, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 2, is_trade: 0, favorite: 0, list_type: 'collection' },
-    { id: 2, card_id: 'c-B', user_id: 7, quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 0, is_trade: 0, favorite: 0, list_type: 'collection' },
+    { id: 1, card_id: 'c-A', user_id: 7, quantity: 3, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 2, is_trade: 0, favorite: 0 },
+    { id: 2, card_id: 'c-B', user_id: 7, quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 0, is_trade: 0, favorite: 0 },
   ];
   return {
     rows,
@@ -20,8 +20,8 @@ function makeFakeDb() {
         rows.find(r => r.id === params[0]).quantity = 1;
       } else if (/INSERT INTO collection/.test(sql)) {
         const [card_id, user_id, condition, printing, language, purchase_price,
-          is_trade, favorite, list_type, game] = params;
-        rows.push({ id: ++nextId, card_id, user_id, quantity: 1, condition, printing, language, purchase_price, is_trade, favorite, list_type, game });
+          is_trade, favorite] = params;
+        rows.push({ id: ++nextId, card_id, user_id, quantity: 1, condition, printing, language, purchase_price, is_trade, favorite });
       }
     },
   };

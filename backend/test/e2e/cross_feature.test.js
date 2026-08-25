@@ -107,7 +107,6 @@ async function runTests() {
       // 3. Query DB to verify the row was saved
       const saved = await db.get(`SELECT * FROM collection WHERE card_id = ?`, ['mtg-lea-232']);
       assert.ok(saved, 'Card must be saved in collection');
-      assert.strictEqual(saved.list_type, 'collection');
       console.log('PASS: F5-TC2');
     } catch (err) {
       console.error('FAIL: F5-TC2 -', err.message);

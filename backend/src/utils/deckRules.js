@@ -34,7 +34,7 @@ async function validateDeckAddition({ deckId, userId, cardId, newQty, dbClient }
 
   const ownedRow = await client.get(
     `SELECT COALESCE(SUM(quantity), 0) AS owned FROM collection
-     WHERE card_id = ? AND user_id = ? AND list_type = 'collection'`, [cardId, userId]
+     WHERE card_id = ? AND user_id = ?`, [cardId, userId]
   );
   const owned = ownedRow ? ownedRow.owned : 0;
   if (qty > owned) {

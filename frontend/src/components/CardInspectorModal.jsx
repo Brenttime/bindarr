@@ -37,7 +37,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
   const [purchasePrice, setPurchasePrice] = useState(0);
   const [isTrade, setIsTrade] = useState(0);
   const [favorite, setFavorite] = useState(0);
-  const [listType, setListType] = useState('collection');
   const [notes, setNotes] = useState('');
   const [isFullScreen, setIsFullScreen] = useState(false);
   const hasToggledRef = useRef(false);
@@ -57,7 +56,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
     setPurchasePrice(card.purchase_price || 0);
     setIsTrade(card.is_trade ? 1 : 0);
     setFavorite(card.favorite ? 1 : 0);
-    setListType(card.list_type || 'collection');
     setNotes(card.notes || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset form only when the entry changes, not on every card mutation
   }, [targetEntryId, startInEdit]);
@@ -92,7 +90,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
           printing,
           language,
           purchase_price: parseFloat(purchasePrice) || 0,
-          list_type: listType,
           is_trade: isTrade ? 1 : 0,
           favorite: favorite ? 1 : 0,
           notes
@@ -104,7 +101,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
         card.printing = printing;
         card.language = language;
         card.purchase_price = parseFloat(purchasePrice) || 0;
-        card.list_type = listType;
         card.is_trade = isTrade ? 1 : 0;
         card.favorite = favorite ? 1 : 0;
         card.notes = notes;
@@ -128,18 +124,15 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
     if (!targetEntryId) return;
     const nextFavorite = field === 'favorite' ? (value ? 1 : 0) : (favorite ? 1 : 0);
     const nextIsTrade = field === 'is_trade' ? (value ? 1 : 0) : (isTrade ? 1 : 0);
-    const nextListType = field === 'list_type' ? value : listType;
 
     // Optimistic UI & prop object updates
     if (field === 'is_trade') { setIsTrade(nextIsTrade); card.is_trade = nextIsTrade; }
     if (field === 'favorite') { setFavorite(nextFavorite); card.favorite = nextFavorite; }
-    if (field === 'list_type') { setListType(nextListType); card.list_type = nextListType; }
 
     // Only the toggled flags. Quantity and placement are deliberately absent:
     // a favourite/trade toggle must never change how many copies you own or
     // where they live, and sending quantity here reconciles the whole stack.
     const payload = {
-      list_type: nextListType,
       is_trade: nextIsTrade,
       favorite: nextFavorite
     };
@@ -157,14 +150,12 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
         // revert on fail
         if (field === 'is_trade') { setIsTrade(isTrade); card.is_trade = isTrade; }
         if (field === 'favorite') { setFavorite(favorite); card.favorite = favorite; }
-        if (field === 'list_type') { setListType(listType); card.list_type = listType; }
         showToast && showToast(t('inspector.errUpdate'));
       }
     } catch (err) {
       console.error(err);
       if (field === 'is_trade') { setIsTrade(isTrade); card.is_trade = isTrade; }
       if (field === 'favorite') { setFavorite(favorite); card.favorite = favorite; }
-      if (field === 'list_type') { setListType(listType); card.list_type = listType; }
       showToast && showToast(t('inspector.errUpdateGeneric'));
     }
   };
@@ -293,11 +284,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
         <div className="ci-info-col" style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', gap: '1.25rem', justifyContent: 'space-between' }}>
           <div>
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-              {card.list_type === 'wishlist' && (
-                <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(6, 182, 212, 0.15)', color: '#06b6d4', border: '1px solid rgba(6, 182, 212, 0.3)' }}>
-                  {t('inspector.wishlistItem')}
-                </span>
-              )}
               {card.is_trade === 1 && (
                 <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(74, 222, 128, 0.15)', color: 'var(--success)', border: '1px solid rgba(74, 222, 128, 0.3)' }}>
                   {t('inspector.forTrade')}
@@ -350,21 +336,12 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
 
           {mode === 'edit' ? (
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {listType === 'wishlist' ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(74,222,128,0.1)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(74,222,128,0.2)' }}>
-                  <input type="checkbox" checked={listType === 'collection'} onChange={(e) => setListType(e.target.checked ? 'collection' : 'wishlist')} id="markOwned" style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
-                  <label htmlFor="markOwned" style={{ cursor: 'pointer', margin: 0, fontWeight: 700, color: 'var(--success)', fontSize: '0.85rem' }}>
-                    {t('inspector.markObtained')}
-                  </label>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
-                  <input type="checkbox" checked={isTrade === 1} onChange={(e) => setIsTrade(e.target.checked ? 1 : 0)} id="isTrade" style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
-                  <label htmlFor="isTrade" style={{ cursor: 'pointer', margin: 0, fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.85rem' }}>
-                    {t('inspector.listedInTrade')}
-                  </label>
-                </div>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
+                <input type="checkbox" checked={isTrade === 1} onChange={(e) => setIsTrade(e.target.checked ? 1 : 0)} id="isTrade" style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
+                <label htmlFor="isTrade" style={{ cursor: 'pointer', margin: 0, fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.85rem' }}>
+                  {t('inspector.listedInTrade')}
+                </label>
+              </div>
 
               <CardEntryFields
                 quantity={q} purchasePrice={purchasePrice} condition={condition} printing={printing} language={language}
@@ -496,17 +473,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
                   placeholder={t('inspector.addToDeck')}
                   style={{ fontSize: '0.8rem', padding: '0.45rem 0.5rem', maxWidth: '140px' }}
                 />
-
-                {card.list_type === 'wishlist' && (
-                  <button
-                    className="btn btn-secondary"
-                    style={{ backgroundColor: 'rgba(74,222,128,0.2)', color: 'var(--success)', border: '1px solid rgba(74,222,128,0.3)', padding: '0 0.75rem', fontSize: '0.8rem' }}
-                    onClick={() => handleQuickToggle('list_type', 'collection')}
-                    title={t('bulk.moveToCollection')}
-                  >
-                    {t('inspector.obtained')}
-                  </button>
-                )}
 
                 <button
                   type="button"

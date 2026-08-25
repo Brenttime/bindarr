@@ -113,7 +113,7 @@ router.get('/:id', async (req, res) => {
         cc.number,
         cc.image_url,
         cc.price_trend,
-        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = cc.id AND user_id = ? AND list_type = 'collection') AS owned_qty
+        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = cc.id AND user_id = ?) AS owned_qty
       FROM deck_cards dc
       JOIN card_cache cc ON dc.card_id = cc.id
       WHERE dc.deck_id = ?
@@ -147,7 +147,7 @@ router.get('/:id/locations', async (req, res) => {
         dc.card_id,
         cc.name, cc.printed_name, cc.set_name, cc.number, cc.image_url,
         dc.quantity AS required_qty,
-        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ? AND list_type = 'collection') AS owned_qty,
+        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ?) AS owned_qty,
         (SELECT COALESCE(SUM(dc2.quantity), 0) FROM deck_cards dc2 JOIN decks d2 ON dc2.deck_id = d2.id WHERE d2.checked_out = 1 AND d2.user_id = ? AND d2.id != ? AND dc2.card_id = dc.card_id) AS locked_qty
       FROM deck_cards dc
       JOIN card_cache cc ON dc.card_id = cc.id
@@ -312,7 +312,7 @@ router.put('/:id/checkout', async (req, res) => {
         dc.card_id, 
         cc.name, cc.printed_name, 
         dc.quantity AS required_qty,
-        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ? AND list_type = 'collection') AS owned_qty,
+        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ?) AS owned_qty,
         (SELECT COALESCE(SUM(dc2.quantity), 0) FROM deck_cards dc2 JOIN decks d2 ON dc2.deck_id = d2.id WHERE d2.checked_out = 1 AND d2.user_id = ? AND d2.id != ? AND dc2.card_id = dc.card_id) AS locked_qty
       FROM deck_cards dc
       JOIN card_cache cc ON dc.card_id = cc.id

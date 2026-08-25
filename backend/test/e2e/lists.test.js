@@ -68,8 +68,8 @@ async function runTests() {
       ['ls-c2', "Gaea's Cradle", 'jup', '431']);
     await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
       ['ls-c3', 'Mox Diamond', 'alpha', '101']);
-    await db.run(`INSERT INTO collection (card_id, quantity, user_id, list_type) VALUES (?, ?, ?, ?)`,
-      ['ls-c1', 2, adminId, 'collection']);
+    await db.run(`INSERT INTO collection (card_id, quantity, user_id) VALUES (?, ?, ?)`,
+      ['ls-c1', 2, adminId]);
 
     // --- Auth gate: /api/lists sits behind the gate like every /api route ---
     const resAuth = await fetch(`http://localhost:${port}/api/lists`);

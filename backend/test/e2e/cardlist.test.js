@@ -63,8 +63,7 @@ async function runTests() {
     );
     const authHeaders = { 'Authorization': `Bearer ${token}` };
 
-    // Seed: one MTG card with set+number, one without, one in a wishlist
-    // entry that must NOT appear in the export.
+    // Seed: one MTG card with set+number, one without, one with a bare name.
     await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
       ['cl-c1', 'Lightning Bolt', 'jud', '124']);
     await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
@@ -72,24 +71,21 @@ async function runTests() {
     await db.run(`INSERT OR IGNORE INTO card_cache (id, name, set_id, number) VALUES (?, ?, ?, ?)`,
       ['cl-c3', 'Unsettled Basic', null, null]);
     await db.run(
-      `INSERT INTO collection (card_id, quantity, user_id, list_type) VALUES (?, ?, ?, ?)`,
-      ['cl-c1', 4, adminId, 'collection']);
+      `INSERT INTO collection (card_id, quantity, user_id) VALUES (?, ?, ?)`,
+      ['cl-c1', 4, adminId]);
     await db.run(
-      `INSERT INTO collection (card_id, quantity, user_id, list_type) VALUES (?, ?, ?, ?)`,
-      ['cl-c2', 1, adminId, 'collection']);
+      `INSERT INTO collection (card_id, quantity, user_id) VALUES (?, ?, ?)`,
+      ['cl-c2', 1, adminId]);
     await db.run(
-      `INSERT INTO collection (card_id, quantity, user_id, list_type) VALUES (?, ?, ?, ?)`,
-      ['cl-c3', 2, adminId, 'collection']);
-    await db.run(
-      `INSERT INTO collection (card_id, quantity, user_id, list_type) VALUES (?, ?, ?, ?)`,
-      ['cl-c1', 9, adminId, 'wishlist']); // must be excluded
+      `INSERT INTO collection (card_id, quantity, user_id) VALUES (?, ?, ?)`,
+      ['cl-c3', 2, adminId]);
 
     const res = await fetch(`http://localhost:${port}/api/collection/cardlist`, { headers: authHeaders });
     assert.strictEqual(res.status, 200, 'cardlist requires a valid token');
     assert.strictEqual(res.headers.get('content-type'), 'text/plain; charset=utf-8');
     const plain = await res.text();
     const plainLines = plain.trim().split('\n');
-    assert.strictEqual(plainLines.length, 3, 'three collection entries, wishlist excluded');
+    assert.strictEqual(plainLines.length, 3, 'three collection entries');
     assert.ok(plainLines.every(l => !l.includes('(')), 'vanilla lines carry no set codes');
     assert.strictEqual(plainLines.find(l => l.startsWith('4 ')), '4 Lightning Bolt');
     assert.strictEqual(plainLines.find(l => l.startsWith('2 ')), '2 Unsettled Basic', 'missing set/number stays bare');

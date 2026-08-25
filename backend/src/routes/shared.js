@@ -18,12 +18,8 @@ router.get('/:share_token', async (req, res) => {
     let filterSql = `WHERE c.user_id = ?`;
     let filterParams = [owner.id];
 
-    if (listType === 'wishlist') {
-      filterSql += ` AND c.list_type = 'wishlist'`;
-    } else if (listType === 'trade') {
-      filterSql += ` AND c.is_trade = 1 AND c.list_type = 'collection'`;
-    } else {
-      filterSql += ` AND c.list_type = 'collection'`;
+    if (listType === 'trade') {
+      filterSql += ` AND c.is_trade = 1`;
     }
 
     // Retrieve their collection without private fields (purchase price, ROI)
@@ -38,7 +34,6 @@ router.get('/:share_token', async (req, res) => {
         c.added_at,
         c.is_trade,
         c.favorite,
-        c.list_type,
         cc.name,
         -- The name as printed on a non-English card, so a shared Japanese
         -- collection reads the way the cards actually look.

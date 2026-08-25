@@ -20,7 +20,7 @@ async function checkedOutAllocation(userId) {
     let need = req;
     const entries = await db.all(`
       SELECT id AS entry_id, quantity FROM collection
-      WHERE user_id = ? AND list_type = 'collection' AND card_id = ?
+      WHERE user_id = ? AND card_id = ?
       ORDER BY added_at DESC
     `, [userId, card_id]);
     for (const e of entries) {
@@ -34,16 +34,16 @@ async function checkedOutAllocation(userId) {
 }
 
 // The rows the collection view stacks together with this one: same card, same
-// printing details, same list. Ordered newest-first so the newest copies are the
+// printing details. Ordered newest-first so the newest copies are the
 // trim candidates. The edited row itself is excluded: it is never the row
 // deleted.
 async function stackSiblings(dbClient, userId, row, entryId) {
   return dbClient.all(`
     SELECT id, quantity FROM collection
     WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ?
-      AND language = ? AND list_type = ? AND id != ?
+      AND language = ? AND id != ?
     ORDER BY id DESC
-  `, [userId, row.card_id, row.condition, row.printing, row.language, row.list_type, entryId]);
+  `, [userId, row.card_id, row.condition, row.printing, row.language, entryId]);
 }
 
 // Make the number of copies this stack represents equal `target`, keeping the
@@ -66,11 +66,11 @@ async function setStackQuantity(database, userId, entryId, target) {
     await dbClient.run(`
       INSERT INTO collection (
         card_id, user_id, quantity, condition, printing, language, purchase_price,
-        is_trade, favorite, list_type
-      ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+        is_trade, favorite
+      ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
     `, [
       row.card_id, userId, row.condition, row.printing, row.language, row.purchase_price,
-      row.is_trade, row.favorite, row.list_type
+      row.is_trade, row.favorite
     ]);
   }
 
@@ -110,11 +110,11 @@ async function splitStackedEntries(database) {
       await dbClient.run(`
         INSERT INTO collection (
           card_id, user_id, quantity, condition, printing, language, purchase_price,
-          is_trade, favorite, list_type
-        ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+          is_trade, favorite
+        ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
       `, [
         e.card_id, e.user_id, e.condition, e.printing, e.language, e.purchase_price,
-        e.is_trade, e.favorite, e.list_type
+        e.is_trade, e.favorite
       ]);
       created++;
     }
