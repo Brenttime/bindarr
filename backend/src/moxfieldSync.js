@@ -200,7 +200,9 @@ async function retireDeck(author, publicId) {
 // deleted ones, refresh the stamp on every tracked row.
 async function syncDecklist(authorId, { user } = {}) {
   const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ?`, [authorId]);
-  if (!author) throw new Error('Moxfield author not found');
+  if (!author || (user && Number(author.user_id) !== Number(user.id))) {
+    throw new Error('Moxfield author not found');
+  }
 
   // Resolve the canonical username (and pick up profile name changes).
   const userInfo = await moxfieldApi.getUser(author.moxfield_user);
@@ -265,7 +267,9 @@ async function syncDecklist(authorId, { user } = {}) {
 // request and touched only its own tracking rows.
 async function runContentSync(authorId, { user } = {}) {
   const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ?`, [authorId]);
-  if (!author) throw new Error('Moxfield author not found');
+  if (!author || (user && Number(author.user_id) !== Number(user.id))) {
+    throw new Error('Moxfield author not found');
+  }
   // No ENABLED tracked decks yet (author just added, decklist sync pending, or
   // every deck unchecked): nothing to check. Unchecked decks cost no Moxfield
   // requests.

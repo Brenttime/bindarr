@@ -69,6 +69,7 @@ router.post('/authors/:id/sync-decklist', async (req, res) => {
     const report = await moxfieldSync.syncDecklist(parseInt(req.params.id, 10), { user: req.user });
     res.json(report);
   } catch (error) {
+    if (/not found/i.test(error.message)) return res.status(404).json({ error: error.message });
     if (error instanceof moxfieldApi.MoxfieldError) {
       return res.status(error.status === 404 ? 404 : 502).json({ error: error.message });
     }
@@ -83,6 +84,7 @@ router.post('/authors/:id/sync-contents', async (req, res) => {
     const report = await moxfieldSync.runContentSync(parseInt(req.params.id, 10), { user: req.user });
     res.json(report);
   } catch (error) {
+    if (/not found/i.test(error.message)) return res.status(404).json({ error: error.message });
     if (error instanceof moxfieldApi.MoxfieldError) {
       return res.status(error.status === 404 ? 404 : 502).json({ error: error.message });
     }

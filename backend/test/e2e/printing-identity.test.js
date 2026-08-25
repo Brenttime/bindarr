@@ -274,6 +274,14 @@ async function runTests() {
       `INSERT INTO moxfield_authors (user_id, moxfield_user) VALUES (?, 'identity-test')`,
       [userId]
     );
+    await assert.rejects(
+      () => moxfieldSync.syncDecklist(author.lastID, { user: { id: userId + 1 } }),
+      /not found/i
+    );
+    await assert.rejects(
+      () => moxfieldSync.runContentSync(author.lastID, { user: { id: userId + 1 } }),
+      /not found/i
+    );
     await db.run(
       `INSERT INTO moxfield_decks (author_id, public_id, name, bindarr_deck_id, enabled)
        VALUES (?, 'identity-public-id', 'Protected mirror', ?, 1)`,
