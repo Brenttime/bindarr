@@ -346,7 +346,7 @@ async function runContentSync(authorId, { user } = {}) {
 
 // Pull one deck's full contents from Moxfield and mirror onto the local deck.
 async function pullDeckContent(author, publicId, knownRow = null) {
-  const row = knownRow || await db.get(`SELECT * FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
+  let row = knownRow || await db.get(`SELECT * FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
     [author.id, publicId]);
   if (!row) throw new Error(`Deck ${publicId} is not tracked for ${author.moxfield_user}`);
 
@@ -358,6 +358,20 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   // reconciliation write, however, checkout and sync are one ordered operation.
   await backfillMissingCards(entries);
   return withAllocationLock(async () => {
+    // A content pull may spend seconds in remote/cache I/O. Re-read tracking
+    // state only after acquiring the same lock used by disable/remove/retire so
+    // stale work can never recreate a mirror that was paused or deleted while
+    // the request was in flight.
+    const liveRow = await db.get(`
+      SELECT md.*
+      FROM moxfield_decks md
+      JOIN moxfield_authors ma ON ma.id = md.author_id
+      WHERE md.author_id = ? AND md.public_id = ? AND ma.user_id = ?
+    `, [author.id, publicId, author.user_id]);
+    if (!liveRow || !liveRow.enabled) {
+      return { ok: true, skipped: true, public_id: publicId, reason: 'tracking-disabled-or-removed' };
+    }
+    row = liveRow;
 
   // A stored bindarr_deck_id can dangle if the mirror deck was deleted through
   // the generic deck-delete (which doesn't clear the Moxfield pointer). Writing

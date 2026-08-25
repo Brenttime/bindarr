@@ -10,6 +10,7 @@ const port = '3021';
 const projectRoot = path.join(__dirname, '../../../');
 const db = require('../../src/db');
 const moxfieldSync = require('../../src/moxfieldSync');
+const moxfieldApi = require('../../src/moxfieldApi');
 
 async function waitForServer() {
   for (let i = 0; i < 150; i++) {
@@ -235,6 +236,40 @@ async function runTests() {
     assert.ok(await db.get(`SELECT id FROM moxfield_authors WHERE id = ?`, [author.lastID]));
     assert.ok(await db.get(`SELECT id FROM decks WHERE id = ? AND checked_out = 1`, [deckA]));
     assert.strictEqual((await fetch(api(`/decks/${deckA}/return`), { method: 'PUT', headers: auth })).status, 200);
+
+    // A pull that started before disable may finish its remote I/O afterward;
+    // it must re-check tracking state under the allocation lock and stay gone.
+    await db.run(`UPDATE decks SET source = 'moxfield' WHERE id = ?`, [deckA]);
+    const originalGetDeckDetails = moxfieldApi.getDeckDetails;
+    let markRemoteStarted;
+    const remoteStarted = new Promise(resolve => { markRemoteStarted = resolve; });
+    let releaseRemote;
+    moxfieldApi.getDeckDetails = async () => {
+      markRemoteStarted();
+      return new Promise(resolve => {
+        releaseRemote = () => resolve({
+          name: 'Protected mirror', format: 'commander', lastUpdatedAtUtc: '2026-08-25T00:00:00Z', boards: {}
+        });
+      });
+    };
+    try {
+      const stalePull = moxfieldSync.pullDeckContentByPublicId(userId, 'identity-public-id');
+      await remoteStarted;
+      await moxfieldSync.setDeckEnabled(userId, 'identity-public-id', false);
+      releaseRemote();
+      const staleResult = await stalePull;
+      assert.strictEqual(staleResult.skipped, true);
+      assert.strictEqual(staleResult.reason, 'tracking-disabled-or-removed');
+      const trackingAfterRace = await db.get(
+        `SELECT enabled, bindarr_deck_id FROM moxfield_decks WHERE author_id = ? AND public_id = 'identity-public-id'`,
+        [author.lastID]
+      );
+      assert.strictEqual(trackingAfterRace.enabled, 0);
+      assert.strictEqual(trackingAfterRace.bindarr_deck_id, null);
+      assert.strictEqual(await db.get(`SELECT id FROM decks WHERE id = ?`, [deckA]), undefined);
+    } finally {
+      moxfieldApi.getDeckDetails = originalGetDeckDetails;
+    }
     await moxfieldSync.removeAuthor(userId, author.lastID);
     console.log('PASS: F8-TC8');
 
