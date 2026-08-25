@@ -858,7 +858,12 @@ async function initDb() {
   if (!mfxDecksCols.some(c => c.name === 'moxfield_public_id')) {
     await run(`ALTER TABLE decks ADD COLUMN moxfield_public_id TEXT`);
   }
-  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_mfx_public_id ON decks(moxfield_public_id) WHERE moxfield_public_id IS NOT NULL`);
+  // A public Moxfield deck may legitimately be mirrored by several Bindarr
+  // users. Uniqueness is per owner, not global. Drop the former global index
+  // before creating its user-scoped replacement under a new stable name.
+  await run(`DROP INDEX IF EXISTS idx_decks_mfx_public_id`);
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_user_mfx_public_id
+    ON decks(user_id, moxfield_public_id) WHERE moxfield_public_id IS NOT NULL`);
 
   // Moxfield sync cadence, per instance: how often the decklist refreshes
   // (author exists? new decks? removed decks? which changed?) and how often

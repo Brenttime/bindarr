@@ -242,16 +242,30 @@ router.delete('/users/:id', async (req, res) => {
   }
 
   try {
-    const targetUser = await db.get(`SELECT id, username FROM users WHERE id = ?`, [id]);
-    if (!targetUser) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    const outcome = await withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+      const targetUser = await tx.get(`SELECT id, username FROM users WHERE id = ?`, [id]);
+      if (!targetUser) return { status: 404, error: 'User not found' };
 
-    await db.run(`DELETE FROM sessions WHERE user_id = ?`, [id]);
-    await db.run(`DELETE FROM collection WHERE user_id = ?`, [id]);
-    await db.run(`DELETE FROM users WHERE id = ?`, [id]);
+      // Deleting a checked-out user would destroy the positive supply backing
+      // active reservations. Require their decks to be checked in first, just
+      // like every other deck lifecycle mutation.
+      const checkedOut = await tx.get(
+        `SELECT COUNT(*) AS count FROM decks WHERE user_id = ? AND checked_out = 1`,
+        [id]
+      );
+      if (checkedOut.count > 0) {
+        return { status: 409, error: 'Check in all of this user\'s decks before deleting their account.' };
+      }
 
-    res.json({ message: `User "${targetUser.username}" and all their card collections have been permanently deleted.` });
+      await tx.run(`DELETE FROM sessions WHERE user_id = ?`, [id]);
+      await tx.run(`DELETE FROM collection WHERE user_id = ?`, [id]);
+      const deleted = await tx.run(`DELETE FROM users WHERE id = ?`, [id]);
+      if (deleted.changes !== 1) throw new Error('User disappeared during deletion');
+      return { status: 200, username: targetUser.username };
+    }));
+
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+    res.json({ message: `User "${outcome.username}" and all their card collections have been permanently deleted.` });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to delete user' });

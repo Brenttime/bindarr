@@ -6,6 +6,9 @@ const { isBasicLand, validateDeckAddition } = require('../src/utils/deckRules');
 
 function testClassification() {
   assert.strictEqual(isBasicLand({ name: 'Forest', supertype: 'Land', subtypes: '["Basic","Forest"]' }), true);
+  assert.strictEqual(isBasicLand({ name: 'Snow-Covered Plains', supertype: 'Land', subtypes: '["Basic","Snow","Plains"]' }), true);
+  assert.strictEqual(isBasicLand({ name: 'Tundra', supertype: 'Land', subtypes: '["Land","Plains","Island"]' }), false,
+    'typed dual lands are not Basic Lands');
   assert.strictEqual(isBasicLand({ name: 'Fabled Passage', supertype: 'Land', subtypes: '["Land"]' }), false);
   assert.strictEqual(isBasicLand({ name: 'Sword of the Meek', supertype: 'Enchantment' }), false);
 }
@@ -40,6 +43,11 @@ async function testValidation() {
   assert.strictEqual((await validateDeckAddition({
     ...base, cardId: island.id, newQty: 20, dbClient: makeFakeDb({ owned: 20, card: island })
   })).ok, true, 'basic lands remain exempt from the four-copy cap');
+
+  const tundra = { id: 'tundra-a', name: 'Tundra', supertype: 'Land', subtypes: '["Land","Plains","Island"]' };
+  assert.strictEqual((await validateDeckAddition({
+    ...base, cardId: tundra.id, newQty: 5, dbClient: makeFakeDb({ owned: 10, card: tundra })
+  })).ok, false, 'typed nonbasic lands remain subject to the four-copy cap');
 }
 
 async function main() {

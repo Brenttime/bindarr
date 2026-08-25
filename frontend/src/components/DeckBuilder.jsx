@@ -17,8 +17,9 @@ import { cardKey, findSameCard, quantityByCardName } from '../utils/cardIdentity
 const isBasicLand = (card) => {
   if (!card) return false;
   const subs = card.subtypes || [];
-  const basicTypes = ['Basic', 'Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes'];
-  return (subs.includes('Land') || card.supertype === 'Land') && basicTypes.some(t => subs.includes(t) || card.name === t);
+  const basicNames = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes'];
+  return (subs.includes('Land') || card.supertype === 'Land') &&
+    (subs.includes('Basic') || basicNames.includes(card.name));
 };
 
 // Total copies of a logical card already in a deck, regardless of printing.

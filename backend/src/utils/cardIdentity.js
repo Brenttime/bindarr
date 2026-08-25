@@ -31,11 +31,11 @@ function sqlIsBasicLand(alias) {
   const key = sqlCardKey(a);
   const subtypes = `LOWER(COALESCE(${a}.subtypes, ''))`;
   const isLand = `(LOWER(COALESCE(${a}.supertype, '')) = 'land' OR INSTR(${subtypes}, '"land"') > 0)`;
+  // A typed dual such as Tundra has Plains/Island subtypes but is not a
+  // Basic Land. Require the Basic subtype, except for the six canonical basic
+  // names retained for compatibility with older cache rows.
   const isBasicType = `(${key} IN ('plains', 'island', 'swamp', 'mountain', 'forest', 'wastes') OR ` +
-    `INSTR(${subtypes}, '"basic"') > 0 OR INSTR(${subtypes}, '"plains"') > 0 OR ` +
-    `INSTR(${subtypes}, '"island"') > 0 OR INSTR(${subtypes}, '"swamp"') > 0 OR ` +
-    `INSTR(${subtypes}, '"mountain"') > 0 OR INSTR(${subtypes}, '"forest"') > 0 OR ` +
-    `INSTR(${subtypes}, '"wastes"') > 0)`;
+    `INSTR(${subtypes}, '"basic"') > 0)`;
   return `(${isLand} AND ${isBasicType})`;
 }
 

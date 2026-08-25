@@ -15,8 +15,9 @@ function parseSubtypes(raw) {
 function isBasicLand(card) {
   if (!card) return false;
   const subs = parseSubtypes(card.subtypes);
-  const basicTypes = ['Basic', 'Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes'];
-  return (subs.includes('Land') || card.supertype === 'Land') && basicTypes.some(t => subs.includes(t) || card.name === t);
+  const basicNames = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes'];
+  return (subs.includes('Land') || card.supertype === 'Land') &&
+    (subs.includes('Basic') || basicNames.includes(card.name));
 }
 
 // Validate setting a deck's copy count of `cardId` to `newQty`.

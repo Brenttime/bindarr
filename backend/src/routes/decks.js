@@ -304,17 +304,16 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const outcome = await withAllocationLock(async () => {
-      const deck = await db.get(`SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    const outcome = await withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+      const deck = await tx.get(`SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
       if (!deck) return { status: 404, error: 'Deck not found or unauthorized' };
       if (deck.checked_out) return { status: 409, error: 'Check this deck in before changing its cards.' };
 
-      // Manual cascade deletion. Checkout uses the same allocation lock, so it
-      // cannot reserve this deck between the checked_out read and these writes.
-      await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [id]);
-      await db.run(`DELETE FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+      await tx.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [id]);
+      const deleted = await tx.run(`DELETE FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+      if (deleted.changes !== 1) throw new Error('Deck disappeared during deletion');
       return { status: 200 };
-    });
+    }));
     if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
     res.json({ message: 'Deck deleted successfully' });
   } catch (error) {

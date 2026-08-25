@@ -449,6 +449,82 @@ async function runTests() {
     const after = await db.get(`SELECT COALESCE(SUM(quantity), 0) AS qty FROM collection WHERE user_id = ? AND card_id = 'split-b'`, [userId]);
     assert.strictEqual(after.qty - before.qty, 2);
     console.log('PASS: F8-TC9');
+
+    // F8-TC10: typed nonbasic lands are allocated normally, destructive
+    // account/deck deletion rolls back on failure, and Moxfield identity is
+    // unique per owner rather than globally.
+    await db.run(
+      `INSERT INTO card_cache (id, name, set_id, number, supertype, subtypes)
+       VALUES ('tundra-a', 'Tundra', 'lea', '285', 'Land', '["Land","Plains","Island"]')`
+    );
+    const tundraDeck = await createDeck('Typed nonbasic allocation');
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'tundra-a', 1)`, [tundraDeck]);
+    const tundraCheckout = await fetch(api(`/decks/${tundraDeck}/checkout`), { method: 'PUT', headers: auth });
+    assert.strictEqual(tundraCheckout.status, 400, 'an unowned Tundra is not an unlimited Basic Land');
+    assert.strictEqual((await db.get(`SELECT checked_out FROM decks WHERE id = ?`, [tundraDeck])).checked_out, 0);
+
+    const victim = await db.run(
+      `INSERT INTO users (username, password_hash, role, share_token)
+       VALUES ('identity-delete-victim', 'test-hash', 'member', 'identity-delete-victim-share')`
+    );
+    await db.run(
+      `INSERT INTO sessions (token, user_id, expires_at) VALUES ('identity-victim-token', ?, ?)`,
+      [victim.lastID, new Date(Date.now() + 86400000).toISOString()]
+    );
+    await db.run(`INSERT INTO collection (card_id, user_id, quantity) VALUES ('bolt-a', ?, 1)`, [victim.lastID]);
+
+    const firstSharedMirror = await db.run(
+      `INSERT INTO decks (user_id, name, source, moxfield_public_id)
+       VALUES (?, 'Shared public deck A', 'moxfield', 'shared-public-id')`,
+      [userId]
+    );
+    const secondSharedMirror = await db.run(
+      `INSERT INTO decks (user_id, name, source, moxfield_public_id)
+       VALUES (?, 'Shared public deck B', 'moxfield', 'shared-public-id')`,
+      [victim.lastID]
+    );
+    await assert.rejects(
+      db.run(
+        `INSERT INTO decks (user_id, name, source, moxfield_public_id)
+         VALUES (?, 'Duplicate same owner', 'moxfield', 'shared-public-id')`,
+        [userId]
+      ),
+      /UNIQUE constraint failed/
+    );
+    await db.run(`DELETE FROM decks WHERE id IN (?, ?)`, [firstSharedMirror.lastID, secondSharedMirror.lastID]);
+
+    const victimDeck = await db.run(
+      `INSERT INTO decks (user_id, name, checked_out) VALUES (?, 'Checked-out victim deck', 1)`,
+      [victim.lastID]
+    );
+    let deleteVictim = await fetch(api(`/admin/users/${victim.lastID}`), { method: 'DELETE', headers: auth });
+    assert.strictEqual(deleteVictim.status, 409, 'checked-out user deletion fails closed');
+    await db.run(`UPDATE decks SET checked_out = 0 WHERE id = ?`, [victimDeck.lastID]);
+
+    await db.run(`CREATE TRIGGER fail_identity_user_delete BEFORE DELETE ON users
+      WHEN OLD.id = ${Number(victim.lastID)} BEGIN SELECT RAISE(ABORT, 'injected user delete failure'); END`);
+    deleteVictim = await fetch(api(`/admin/users/${victim.lastID}`), { method: 'DELETE', headers: auth });
+    assert.strictEqual(deleteVictim.status, 500);
+    assert.ok(await db.get(`SELECT id FROM users WHERE id = ?`, [victim.lastID]));
+    assert.ok(await db.get(`SELECT token FROM sessions WHERE user_id = ?`, [victim.lastID]));
+    assert.strictEqual((await db.get(`SELECT SUM(quantity) AS qty FROM collection WHERE user_id = ?`, [victim.lastID])).qty, 1);
+    await db.run(`DROP TRIGGER fail_identity_user_delete`);
+    deleteVictim = await fetch(api(`/admin/users/${victim.lastID}`), { method: 'DELETE', headers: auth });
+    assert.strictEqual(deleteVictim.status, 200, await deleteVictim.text());
+    assert.strictEqual(await db.get(`SELECT id FROM users WHERE id = ?`, [victim.lastID]), undefined);
+
+    const rollbackDeck = await createDeck('Delete rollback probe');
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'bolt-a', 1)`, [rollbackDeck]);
+    await db.run(`CREATE TRIGGER fail_identity_deck_delete BEFORE DELETE ON decks
+      WHEN OLD.id = ${Number(rollbackDeck)} BEGIN SELECT RAISE(ABORT, 'injected deck delete failure'); END`);
+    let deleteDeck = await fetch(api(`/decks/${rollbackDeck}`), { method: 'DELETE', headers: auth });
+    assert.strictEqual(deleteDeck.status, 500);
+    assert.ok(await db.get(`SELECT id FROM decks WHERE id = ?`, [rollbackDeck]));
+    assert.ok(await db.get(`SELECT deck_id FROM deck_cards WHERE deck_id = ?`, [rollbackDeck]));
+    await db.run(`DROP TRIGGER fail_identity_deck_delete`);
+    deleteDeck = await fetch(api(`/decks/${rollbackDeck}`), { method: 'DELETE', headers: auth });
+    assert.strictEqual(deleteDeck.status, 200, await deleteDeck.text());
+    console.log('PASS: F8-TC10');
   } finally {
     server.kill('SIGTERM');
     await new Promise(resolve => server.once('exit', resolve));
