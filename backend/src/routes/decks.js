@@ -21,6 +21,7 @@ router.get('/', async (req, res) => {
         d.created_at,
         d.checked_out,
         d.checked_out_at,
+        d.source,
         COUNT(dc.card_id) as total_card_types,
         COALESCE(SUM(dc.quantity), 0) as total_cards
       FROM decks d

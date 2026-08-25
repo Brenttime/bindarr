@@ -4,6 +4,7 @@ import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, 
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
 import CheckoutWizardModal from './CheckoutWizardModal';
+import AddDeckChoiceModal from './AddDeckChoiceModal';
 import PreconSearchModal from './PreconSearchModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { buildDeckExport, parseDeckLine } from '../utils/deckText';
@@ -49,6 +50,7 @@ function DeckBuilder({ showToast, onNavigate }) {
     { name: 'Orange', hex: '#f97316' },
   ];
 
+  const [showAddDeckModal, setShowAddDeckModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showPreconModal, setShowPreconModal] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
@@ -703,6 +705,18 @@ function DeckBuilder({ showToast, onNavigate }) {
 
   const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
+  const renderSourceBadge = (source) => {
+    if (source !== 'precon' && source !== 'moxfield') return null;
+    const isPrecon = source === 'precon';
+    const Icon = isPrecon ? PackageOpen : Globe;
+    return (
+      <span className={`deck-source-badge deck-source-${source}`}>
+        <Icon size={10} />
+        {t(isPrecon ? 'deck.sourcePrecon' : 'deck.sourceMoxfield')}
+      </span>
+    );
+  };
+
   // --- SELECTION MENU METRICS & FILTERING ---
   const filteredDecks = decks.filter(deck => {
     const q = deckSearchTerm.trim().toLowerCase();
@@ -742,27 +756,12 @@ function DeckBuilder({ showToast, onNavigate }) {
               </p>
             </div>
             <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => onNavigate?.('settings', 'moxfield')}
-                style={{ padding: '0.6rem 1.1rem', fontSize: '0.9rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                <Globe size={18} /> {t('deck.moxfieldSync')}
-              </button>
               <button 
                 className="btn btn-primary" 
-                onClick={() => setShowCreateModal(true)}
+                onClick={() => setShowAddDeckModal(true)}
                 style={{ padding: '0.6rem 1.25rem', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 14px rgba(234, 179, 8, 0.25)' }}
               >
-                <Plus size={18} /> {t('deck.createDeck')}
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowPreconModal(true)}
-                title={t('precon.buttonHint')}
-                style={{ padding: '0.6rem 1.1rem', fontSize: '0.9rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                <PackageOpen size={18} /> {t('precon.addPrecon')}
+                <Plus size={18} /> {t('deck.addDeck')}
               </button>
             </div>
           </div>
@@ -999,6 +998,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                                 {deck.category}
                               </span>
                             )}
+                            {renderSourceBadge(deck.source)}
                           </div>
                         </div>
 
@@ -1136,8 +1136,9 @@ function DeckBuilder({ showToast, onNavigate }) {
                           </div>
                         </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                             <span style={{ fontWeight: 700, color: 'var(--text-strong)' }}>{deck.name}</span>
+                            {renderSourceBadge(deck.source)}
                             {deck.category && (
                               <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
                                 {deck.category}
@@ -1231,6 +1232,7 @@ function DeckBuilder({ showToast, onNavigate }) {
               <div>
                 <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   {activeDeck.name}
+                  {renderSourceBadge(activeDeck.source)}
                   <span style={{ fontSize: '0.8rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--accent-yellow)', fontWeight: 600 }}>
                     ({totalDeckCardsCount}/{targetDeckCardsCount} cards)
                   </span>
@@ -1642,6 +1644,26 @@ function DeckBuilder({ showToast, onNavigate }) {
       )}
 
       {/* --- POPUPS & MODALS --- */}
+
+      {/* One entry point for every way a deck can enter the vault. */}
+      {showAddDeckModal && (
+        <AddDeckChoiceModal
+          open={showAddDeckModal}
+          onClose={() => setShowAddDeckModal(false)}
+          onCustom={() => {
+            setShowAddDeckModal(false);
+            setShowCreateModal(true);
+          }}
+          onPrecon={() => {
+            setShowAddDeckModal(false);
+            setShowPreconModal(true);
+          }}
+          onMoxfield={() => {
+            setShowAddDeckModal(false);
+            onNavigate?.('settings', 'moxfield');
+          }}
+        />
+      )}
 
       {/* A. Create Deck Modal */}
       {showCreateModal && (
