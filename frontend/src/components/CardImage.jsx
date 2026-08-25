@@ -16,12 +16,12 @@ import { artUrl, useCardArtIndex } from '../utils/cardArt';
 //                         instance or upstream in the repo. First because it is a
 //                         deliberate act: if it exists, it is what was wanted,
 //                         including as an override for provider art judged wrong.
-//   2. provider art     — Scryfall / pokemontcg.io / TCGdex, the normal case.
+//   2. provider art     — Scryfall, the normal case.
 //   3. the card back    — drawn locally, so this step cannot itself fail.
 //
 // Step 3 is why onError chaining is used rather than a plain src: a URL that 404s
 // or a CDN that is unreachable has to degrade the same way an absent one does.
-export default function CardImage({ card, src, alt, game, ...imgProps }) {
+export default function CardImage({ card, src, alt, ...imgProps }) {
   const index = useCardArtIndex();
 
   // Collection rows carry the card's own id in card_id (id is the row's), while
@@ -30,7 +30,7 @@ export default function CardImage({ card, src, alt, game, ...imgProps }) {
   // `src` overrides rather than defaults, so passing src={null} explicitly still
   // means "no provider art" instead of falling through to card.image_url.
   const provider = src !== undefined ? src : card?.image_url;
-  const back = cardBackFor(game ?? card?.game);
+  const back = cardBackFor();
 
   const chain = [
     cardId && index.has(cardId) ? artUrl(cardId) : null,

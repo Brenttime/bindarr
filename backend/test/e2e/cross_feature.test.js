@@ -84,7 +84,7 @@ async function runTests() {
       throw err;
     }
 
-    // F5-TC2: Verify that adding a Scryfall-fetched MTG card to collection writes 'mtg' to game column
+    // F5-TC2: Verify that adding a Scryfall-fetched MTG card to collection persists it
     try {
       // 1. Search card to populate card_cache (might return empty since M3 is not implemented)
       await fetch(`http://localhost:${port}/api/search?game=mtg&name=Lotus`, { headers: authHeaders });
@@ -104,10 +104,10 @@ async function runTests() {
       });
       assert.strictEqual(addRes.status, 200);
       
-      // 3. Query DB to verify game value is mtg
+      // 3. Query DB to verify the row was saved
       const saved = await db.get(`SELECT * FROM collection WHERE card_id = ?`, ['mtg-lea-232']);
       assert.ok(saved, 'Card must be saved in collection');
-      assert.strictEqual(saved.game, 'mtg');
+      assert.strictEqual(saved.list_type, 'collection');
       console.log('PASS: F5-TC2');
     } catch (err) {
       console.error('FAIL: F5-TC2 -', err.message);

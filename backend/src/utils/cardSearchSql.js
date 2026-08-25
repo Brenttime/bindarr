@@ -1,26 +1,26 @@
 // The two card_cache queries every provider runs, built in one place.
 //
-// pokemontcg.io, Scryfall and TCGdex each carried their own copy of both — the
+// Scryfall and the retired providers each carried their own copy of both — the
 // same JOIN, the same name/number/set filter assembly, ~35 lines apiece. They had
 // already drifted in three ways by the time they were merged, and the drift is
-// the point: nobody chose it, and two of the three variants were wrong.
+// the point: nobody chose it, and two of the variants were wrong.
 //
 // Where they disagreed, and why this file resolves it the way it does:
 //
-//  1. LANGUAGE IN COLLECTION SCOPE. tcgdexApi filtered `cc.language`; the other
-//     two deliberately did not, both carrying a comment explaining that filtering
+//  1. LANGUAGE IN COLLECTION SCOPE. One provider filtered `cc.language`; the
+//     others deliberately did not, carrying a comment explaining that filtering
 //     would hide a user's Japanese copies from a deck search. Not filtering wins:
 //     collection scope answers "what do I own", and you own the card whatever
 //     language you own it in. The old behaviour also made results depend on the
 //     UI language for no reason a user could see — the same collection search
 //     returned different rows in English and Japanese.
 //
-//  2. LEADING ZEROS. tcgApi matched a zero-stripped form of the number as well
+//  2. LEADING ZEROS. One provider matched a zero-stripped form of the number as well
 //     ("004" also matching a stored "4"); the other two did not. Matching wins:
 //     it is a pure OR, so it can only ever find more, and collector numbers are
 //     written both ways depending on where they were typed.
 //
-//  3. LOCALIZED NAMES IN THE LOCAL CACHE. tcgApi searched `name` only; the others
+//  3. LOCALIZED NAMES IN THE LOCAL CACHE. One provider searched `name` only; the others
 //     searched `printed_name` too. Searching both wins, and costs nothing where
 //     printed_name is NULL (a NULL LIKE is not true, so the OR just falls through).
 //
@@ -65,16 +65,15 @@ function nameClause(prefix, name) {
   };
 }
 
-// What the user OWNS, across every language they own it in. `game` is bound, not
-// interpolated, so a caller cannot widen the query by passing something odd.
-function collectionQuery(game, { userId, name, number, setList = [], limit, offset }) {
+// What the user OWNS, across every language they own it in.
+function collectionQuery({ userId, name, number, setList = [], limit, offset }) {
   let sql = `
     SELECT cc.*, SUM(c.quantity) AS owned_qty
     FROM collection c
     JOIN card_cache cc ON c.card_id = cc.id
-    WHERE c.user_id = ? AND c.list_type = 'collection' AND cc.game = ?
+    WHERE c.user_id = ? AND c.list_type = 'collection'
   `;
-  const params = [userId, game];
+  const params = [userId];
   for (const part of [nameClause('cc.', name), numberClause('cc.number', number), setSqlFilter(setList, 'cc')]) {
     if (!part) continue;
     sql += ` AND ${part.clause}`;
@@ -87,9 +86,9 @@ function collectionQuery(game, { userId, name, number, setList = [], limit, offs
 
 // The cached rows for ONE language — see the note above on why language is
 // filtered here and not in collection scope.
-function localCacheQuery(game, { language, name, number, setList = [], limit, offset }) {
-  let sql = `SELECT * FROM card_cache WHERE game = ? AND language = ?`;
-  const params = [game, language];
+function localCacheQuery({ language, name, number, setList = [], limit, offset }) {
+  let sql = `SELECT * FROM card_cache WHERE language = ?`;
+  const params = [language];
   for (const part of [nameClause('', name), numberClause('number', number), setSqlFilter(setList)]) {
     if (!part) continue;
     sql += ` AND ${part.clause}`;

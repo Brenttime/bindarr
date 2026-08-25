@@ -9,8 +9,8 @@ const { splitStackedEntries } = require('../src/utils/collectionHelpers');
 function makeFakeDb() {
   let nextId = 100;
   const rows = [
-    { id: 1, card_id: 'c-A', user_id: 7, quantity: 3, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 2, is_trade: 0, favorite: 0, list_type: 'collection', game: 'pokemon' },
-    { id: 2, card_id: 'c-B', user_id: 7, quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 0, is_trade: 0, favorite: 0, list_type: 'collection', game: 'pokemon' },
+    { id: 1, card_id: 'c-A', user_id: 7, quantity: 3, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 2, is_trade: 0, favorite: 0, list_type: 'collection' },
+    { id: 2, card_id: 'c-B', user_id: 7, quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 0, is_trade: 0, favorite: 0, list_type: 'collection' },
   ];
   return {
     rows,

@@ -102,8 +102,8 @@ async function ensureLocalDeck(author, summary) {
   if (existing) return existing.id;
 
   const result = await db.run(
-    `INSERT INTO decks (name, description, game, format, category, accent_color, target_size, user_id, source, moxfield_public_id)
-     VALUES (?, ?, 'mtg', ?, 'Moxfield Sync', '#22d3ee', ?, ?, 'moxfield', ?)`,
+    `INSERT INTO decks (name, description, format, category, accent_color, target_size, user_id, source, moxfield_public_id)
+     VALUES (?, ?, ?, 'Moxfield Sync', '#22d3ee', ?, ?, 'moxfield', ?)`,
     [
       summary.name || summary.publicId,
       summary.description || '',

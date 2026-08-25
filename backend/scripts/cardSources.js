@@ -10,7 +10,7 @@ const { Readable } = require('stream');
 const { version } = require('../package.json');
 // Scryfall asks callers to identify themselves and rate-limits generic agents
 // harder, so send something traceable rather than a bare product name.
-const USER_AGENT = `Bindarr/${version} (+https://github.com/thenotoriousJeremy/bindarr)`;
+const USER_AGENT = `Bindarr/${version} (+https://github.com/Brenttime/bindarr)`;
 
 function makeHttp() {
   return axios.create({
@@ -123,60 +123,8 @@ async function gatherMtg(http, opts = {}) {
   return out;
 }
 
-// --- Pokémon -------------------------------------------------------------
-
-// How long to wait after a 429, preferring the server's own Retry-After.
-function retryAfterMs(err, attempt) {
-  const raw = err?.response?.headers?.['retry-after'];
-  const secs = Number(raw);
-  if (Number.isFinite(secs) && secs > 0) return Math.min(secs * 1000, 60000);
-  return 2000 * Math.pow(2, attempt);
-}
-
-// Pokémon: page pokemontcg.io /cards (no bulk file). Uses POKEMON_TCG_API_KEY
-// if set. Retries each page with backoff (the API is slow/flaky under load).
-async function gatherPokemon(http, delay, limit) {
-  const key = process.env.POKEMON_TCG_API_KEY || '';
-  const headers = key ? { 'X-Api-Key': key } : {};
-  if (!key) console.warn('No POKEMON_TCG_API_KEY set — paging may throttle.');
-  console.log(`Paging pokemontcg.io /cards${key ? ' (with API key)' : ' (no key)'}...`);
-  const out = [];
-  let page = 1;
-  let total = Infinity;
-  while ((page - 1) * 250 < total) {
-    let data = null;
-    const MAX_ATTEMPTS = 5;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS && data === null; attempt++) {
-      try {
-        const r = await http.get('https://api.pokemontcg.io/v2/cards', {
-          params: { page, pageSize: 250, select: 'id,name,number,set,images' },
-          headers,
-          timeout: 30000,
-        });
-        total = r.data.totalCount || 0;
-        data = r.data.data || [];
-      } catch (e) {
-        if (attempt === MAX_ATTEMPTS - 1) throw e;
-        const wait = retryAfterMs(e, attempt);
-        console.warn(`  page ${page} attempt ${attempt + 1} failed (${e.message}); retrying in ${Math.round(wait / 1000)}s...`);
-        await sleep(wait);
-      }
-    }
-    if (data.length === 0) break;
-    for (const c of data) {
-      const img = c.images?.large || c.images?.small;
-      if (img) out.push({ name: c.name || '', set: c.set?.id || '', number: c.number || '', img });
-    }
-    console.log(`  page ${page} (${out.length}/${total})`);
-    if (limit && out.length >= limit) break;
-    page++;
-    await sleep(delay);
-  }
-  return out;
-}
-
 module.exports = {
-  makeHttp, gatherMtg, gatherPokemon, sleep, USER_AGENT,
+  makeHttp, gatherMtg, sleep, USER_AGENT,
   // exported for backend/test/cardsources.test.js
   resolveBulkEntry, maybeGunzip, streamCardObjects,
 };

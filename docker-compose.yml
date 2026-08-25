@@ -17,7 +17,6 @@ services:
       # - HTTPS_PORT=3443               # Image default. Set to "" to serve plain HTTP only (no camera scanning off-localhost)
       # - SSL_CERT_PATH=                # Your own certificate, e.g. /app/database/certs/fullchain.pem. Omit for an auto-generated self-signed one
       # - SSL_KEY_PATH=                 # Its private key
-      # - POKEMON_TCG_API_KEY=          # Pokemon TCG API key to raise rate limits
       # - PUBLIC_BASE_URL=              # External URL behind a reverse proxy, e.g. https://cards.example.com. Used for share links AND auto-allowed as a CORS origin (so proxied logins work with just this set)
       # - DEFAULT_ADMIN_PASSWORD=       # Create the admin account with this password instead of creating the owner account on first visit
       # - ALLOW_REGISTRATION=           # "true" = open self-registration. Unset = invite-only

@@ -1,1 +1,110 @@
-{"id":4,"name":"Demo Deck","description":"Sample deck for the demo","game":"pokemon","format":"Standard","category":"Showcase","accent_color":"#eab308","target_size":60,"created_at":"2026-07-11 20:05:43","checked_out":0,"checked_out_at":null,"total_card_types":8,"total_cards":11,"user_id":1,"cards":[{"quantity":1,"id":"sv9-70","name":"Dhelmise","supertype":"Pokémon","subtypes":["Basic"],"types":["Psychic"],"rarity":"Common","set_id":"sv9","set_name":"Journey Together","number":"70","image_url":"https://images.pokemontcg.io/sv9/70.png","price_trend":0.64,"owned_qty":1,"color_identity":[]},{"quantity":1,"id":"mtg-686d43eb-ea91-4ae1-bdc4-dcd885688acd","name":"Dragon Fodder","supertype":"MTG","subtypes":["Sorcery"],"types":["Red"],"rarity":"Common","set_id":"j22","set_name":"Jumpstart 2022","number":"76","image_url":"https://cards.scryfall.io/normal/front/6/8/686d43eb-ea91-4ae1-bdc4-dcd885688acd.jpg?1782699315","price_trend":1.02,"owned_qty":1,"color_identity":["Red"]},{"quantity":2,"id":"fossil-20","name":"Gengar","supertype":"Pokémon","subtypes":["Basic"],"types":["Psychic"],"rarity":"Rare","set_id":"fossil","set_name":"Fossil","number":"20","image_url":"https://images.pokemontcg.io/fossil/20.png","price_trend":4.66,"owned_qty":1,"color_identity":[]},{"quantity":1,"id":"mtg-67a76010-d932-4727-8b5e-b8e2d14e1362","name":"Adult Gold Dragon","supertype":"MTG","subtypes":["Creature","Dragon"],"types":["Red","White"],"rarity":"Rare","set_id":"afr","set_name":"Adventures in the Forgotten Realms","number":"216","image_url":"https://cards.scryfall.io/normal/front/6/7/67a76010-d932-4727-8b5e-b8e2d14e1362.jpg?1782704314","price_trend":2.71,"owned_qty":1,"color_identity":["Red","White"]},{"quantity":1,"id":"jungle-51","name":"Eevee","supertype":"Pokémon","subtypes":["Basic"],"types":["Colorless"],"rarity":"Common","set_id":"jungle","set_name":"Jungle","number":"51","image_url":"https://images.pokemontcg.io/jungle/51.png","price_trend":1.05,"owned_qty":1,"color_identity":[]},{"quantity":1,"id":"mtg-750ea219-b62d-49bd-9b30-8e0a62e75553","name":"Angel of Light","supertype":"MTG","subtypes":["Creature","Angel"],"types":["White"],"rarity":"Uncommon","set_id":"s99","set_name":"Starter 1999","number":"1","image_url":"https://cards.scryfall.io/normal/front/7/5/750ea219-b62d-49bd-9b30-8e0a62e75553.jpg?1782754960","price_trend":1.57,"owned_qty":1,"color_identity":["White"]},{"quantity":2,"id":"ex3-102","name":"Rayquaza","supertype":"Pokémon","subtypes":["Basic"],"types":["Colorless"],"rarity":"Rare Holo Star","set_id":"ex3","set_name":"EX Deoxys","number":"102","image_url":"https://images.pokemontcg.io/ex3/102.png","price_trend":25.19,"owned_qty":1,"color_identity":[]},{"quantity":2,"id":"mtg-3ff8fbcd-5db9-4cde-9f56-243b1f4924f8","name":"Angel of Flight Alabaster","supertype":"MTG","subtypes":["Creature","Angel"],"types":["White"],"rarity":"Rare","set_id":"voc","set_name":"Crimson Vow Commander","number":"77","image_url":"https://cards.scryfall.io/normal/front/3/f/3ff8fbcd-5db9-4cde-9f56-243b1f4924f8.jpg?1782703279","price_trend":8.08,"owned_qty":1,"color_identity":["White"]}]}
+{
+  "id": 4,
+  "name": "Demo Deck",
+  "description": "Sample deck for the demo",
+  "format": "Standard",
+  "category": "Showcase",
+  "accent_color": "#eab308",
+  "target_size": 60,
+  "created_at": "2026-07-11 20:05:43",
+  "checked_out": 0,
+  "checked_out_at": null,
+  "total_card_types": 4,
+  "total_cards": 5,
+  "user_id": 1,
+  "cards": [
+    {
+      "quantity": 1,
+      "id": "mtg-686d43eb-ea91-4ae1-bdc4-dcd885688acd",
+      "name": "Dragon Fodder",
+      "supertype": "MTG",
+      "subtypes": [
+        "Sorcery"
+      ],
+      "types": [
+        "Red"
+      ],
+      "rarity": "Common",
+      "set_id": "j22",
+      "set_name": "Jumpstart 2022",
+      "number": "76",
+      "image_url": "https://cards.scryfall.io/normal/front/6/8/686d43eb-ea91-4ae1-bdc4-dcd885688acd.jpg?1782699315",
+      "price_trend": 1.02,
+      "owned_qty": 1,
+      "color_identity": [
+        "Red"
+      ]
+    },
+    {
+      "quantity": 1,
+      "id": "mtg-67a76010-d932-4727-8b5e-b8e2d14e1362",
+      "name": "Adult Gold Dragon",
+      "supertype": "MTG",
+      "subtypes": [
+        "Creature",
+        "Dragon"
+      ],
+      "types": [
+        "Red",
+        "White"
+      ],
+      "rarity": "Rare",
+      "set_id": "afr",
+      "set_name": "Adventures in the Forgotten Realms",
+      "number": "216",
+      "image_url": "https://cards.scryfall.io/normal/front/6/7/67a76010-d932-4727-8b5e-b8e2d14e1362.jpg?1782704314",
+      "price_trend": 2.71,
+      "owned_qty": 1,
+      "color_identity": [
+        "Red",
+        "White"
+      ]
+    },
+    {
+      "quantity": 1,
+      "id": "mtg-750ea219-b62d-49bd-9b30-8e0a62e75553",
+      "name": "Angel of Light",
+      "supertype": "MTG",
+      "subtypes": [
+        "Creature",
+        "Angel"
+      ],
+      "types": [
+        "White"
+      ],
+      "rarity": "Uncommon",
+      "set_id": "s99",
+      "set_name": "Starter 1999",
+      "number": "1",
+      "image_url": "https://cards.scryfall.io/normal/front/7/5/750ea219-b62d-49bd-9b30-8e0a62e75553.jpg?1782754960",
+      "price_trend": 1.57,
+      "owned_qty": 1,
+      "color_identity": [
+        "White"
+      ]
+    },
+    {
+      "quantity": 2,
+      "id": "mtg-3ff8fbcd-5db9-4cde-9f56-243b1f4924f8",
+      "name": "Angel of Flight Alabaster",
+      "supertype": "MTG",
+      "subtypes": [
+        "Creature",
+        "Angel"
+      ],
+      "types": [
+        "White"
+      ],
+      "rarity": "Rare",
+      "set_id": "voc",
+      "set_name": "Crimson Vow Commander",
+      "number": "77",
+      "image_url": "https://cards.scryfall.io/normal/front/3/f/3ff8fbcd-5db9-4cde-9f56-243b1f4924f8.jpg?1782703279",
+      "price_trend": 8.08,
+      "owned_qty": 1,
+      "color_identity": [
+        "White"
+      ]
+    }
+  ]
+}

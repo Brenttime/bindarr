@@ -31,7 +31,6 @@ function AdminPanel({ showToast }) {
 
   // Instance Settings States
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
-  const [pokemonProvider, setPokemonProvider] = useState('pokemontcg');
   const [settingsLoading, setSettingsLoading] = useState(false);
   const mountedRef = useRef(true);
 
@@ -160,7 +159,6 @@ function AdminPanel({ showToast }) {
         const data = await response.json();
         if (!mountedRef.current) return;
         setPublicBaseUrl(data.public_base_url || '');
-        setPokemonProvider(data.pokemon_provider || 'pokemontcg');
       }
     } catch (err) {
       console.error(err);
@@ -174,13 +172,12 @@ function AdminPanel({ showToast }) {
       const response = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ public_base_url: publicBaseUrl, pokemon_provider: pokemonProvider })
+        body: JSON.stringify({ public_base_url: publicBaseUrl })
       });
 
       if (response.ok) {
         const data = await response.json();
         setPublicBaseUrl(data.public_base_url || '');
-        setPokemonProvider(data.pokemon_provider || 'pokemontcg');
         showToast(t('admin.settingsUpdated'));
       } else {
         const data = await response.json();
@@ -347,7 +344,7 @@ function AdminPanel({ showToast }) {
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', height: '34px' }}>
             <Users size={16} style={{ color: 'var(--accent-red)' }} />
-            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t('admin.totalTrainers', { count: users.length })}</span>
+            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t('admin.totalUsers', { count: users.length })}</span>
           </div>
         </div>
       </div>
@@ -427,36 +424,14 @@ function AdminPanel({ showToast }) {
                 disabled={settingsLoading}
               />
             </div>
-            {/* Which Pokémon API this install speaks to. It has always been a column
-                in app_settings and a branch in utils/pokemonProvider, with no way
-                to set it — so every install ran on pokemontcg.io whether or not it
-                suited them. The two are not interchangeable: they number the same
-                sets differently, so switching re-syncs the set table and rebuilds
-                the TCGplayer product map behind it. */}
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="admin-pokemon-provider">{t('admin.pokemonProvider')}</label>
-              <select
-                id="admin-pokemon-provider"
-                className="select-control"
-                value={pokemonProvider}
-                onChange={(e) => setPokemonProvider(e.target.value)}
-                disabled={settingsLoading}
-              >
-                <option value="pokemontcg">{t('admin.providerPokemontcg')}</option>
-                <option value="tcgdex">{t('admin.providerTcgdex')}</option>
-              </select>
-              <p style={{ margin: '0.4rem 0 0', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                {t('admin.pokemonProviderHint')}
-              </p>
-            </div>
             <button type="submit" className="btn btn-primary" style={{ padding: '0.6rem', fontWeight: 700, alignSelf: 'flex-start' }} disabled={settingsLoading}>
               {settingsLoading ? <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div> : t('admin.saveSettings')}
             </button>
           </form>
         </div>
 
-        {/* Scan catalogs. One build per game+language: download the cards, then index
-            their artwork. Replaced the per-set / whole-game ORB index panel. */}
+        {/* Scan catalogs. One build per language: download the cards, then index
+            their artwork. Replaced the older multi-step ORB index panel. */}
         <div className="glass-panel">
           <CatalogPanel showToast={showToast} />
         </div>
@@ -532,8 +507,8 @@ function AdminPanel({ showToast }) {
               <input
                 type="text"
                 className="input-control"
-                placeholder={t('admin.filterTrainers')}
-                aria-label={t('admin.filterTrainers')}
+                placeholder={t('admin.filterUsers')}
+                aria-label={t('admin.filterUsers')}
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
                 style={{ width: '100%', paddingLeft: '2rem', paddingVertical: '0.35rem', fontSize: '0.85rem' }}
@@ -546,7 +521,7 @@ function AdminPanel({ showToast }) {
             <div className="spinner"></div>
           ) : filteredUsers.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-              {t('admin.noTrainerMatch')}
+              {t('admin.noUserMatch')}
             </div>
           ) : (
             <div className="collection-table-wrapper" style={{ overflowX: 'auto' }}>

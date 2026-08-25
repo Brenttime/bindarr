@@ -34,7 +34,7 @@ function CardProgress({ deck }) {
   if (count == null || !target) return null;
   const pct = Math.max(0, Math.min(100, Math.round((count / target) * 100)));
   const complete = count >= target;
-  const activeColor = complete ? 'var(--type-grass, #4ade80)' : 'var(--accent-red, #ff4747)';
+  const activeColor = complete ? 'var(--success, #4ade80)' : 'var(--accent-red, #ff4747)';
   const color = deck.enabled ? activeColor : 'var(--text-muted)';
   const hint = deck.enabled
     ? complete ? t('mfx.completeHint', { target }) : t('mfx.shortHint', { missing: target - count, target })
@@ -69,7 +69,7 @@ function StatusBadge({ deck }) {
   }
   if (deck.current) {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: 'var(--type-grass, #4ade80)', fontSize: '0.78rem', fontWeight: 600 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: 'var(--success, #4ade80)', fontSize: '0.78rem', fontWeight: 600 }}>
         <CheckCircle2 size={13} /> {t('mfx.statusCurrent')}
       </span>
     );
@@ -115,7 +115,7 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
             @{author.moxfield_user} · {t('mfx.deckCount', { count: author.tracked_decks })}
             {author.tracked_decks > author.total_decks && (
               <span title={t('mfx.pausedHint')} style={{ color: 'var(--text-muted)' }}>
-                {' '}· <span style={{ color: 'var(--type-grass, #4ade80)', fontWeight: 600 }}>{t('mfx.syncingCount', { count: author.total_decks })}</span>
+                {' '}· <span style={{ color: 'var(--success, #4ade80)', fontWeight: 600 }}>{t('mfx.syncingCount', { count: author.total_decks })}</span>
               </span>
             )}
           </div>
@@ -155,7 +155,7 @@ function AuthorCard({ author, onRemove, onSyncDecklist, onSyncContents, onSyncDe
       {/* Sync state line */}
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
         <span>{t('mfx.lastDecklist')}: <strong style={{ color: 'var(--text-primary)' }}>{lastDecklist || t('mfx.never')}</strong></span>
-        <span title={t('mfx.contentCheckHint')}>{t('mfx.lastContentCheck')}: <strong style={{ color: 'var(--type-grass, #4ade80)' }}>{lastContentCheck || t('mfx.never')}</strong></span>
+        <span title={t('mfx.contentCheckHint')}>{t('mfx.lastContentCheck')}: <strong style={{ color: 'var(--success, #4ade80)' }}>{lastContentCheck || t('mfx.never')}</strong></span>
         <span title={t('mfx.lastPullHint')}>{t('mfx.lastContent')}: <strong style={{ color: 'var(--text-primary)' }}>{lastContent || t('mfx.never')}</strong></span>
         {author.last_error && (
           <span style={{ color: 'var(--accent-red)', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>

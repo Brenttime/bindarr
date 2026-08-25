@@ -6,7 +6,7 @@ import { useT } from '../utils/i18n';
 // Selectable chart windows. Default is 1 Year so price movement is visible; a
 // 30-day window is usually too short to show meaningful change.
 // Only two windows, because only two can be filled. 30 days comes from
-// Cardmarket's real rolling averages (Pokémon); "All" is whatever Bindarr has
+// Cardmarket's real rolling averages; "All" is whatever Bindarr has
 // recorded itself. No card API sells back-history — Scryfall returns current
 // prices only — so 1Y/5Y buttons could never show anything the 30-day one
 // didn't already.

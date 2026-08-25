@@ -39,10 +39,6 @@ router.get('/:share_token', async (req, res) => {
         c.is_trade,
         c.favorite,
         c.list_type,
-        -- The owner's own valuation for this copy (a graded slab, usually), which
-        -- resolveCardPrice prefers. Without it a shared collection prices every
-        -- slab as if it were raw, and its total disagrees with the owner's.
-        c.market_value,
         cc.name,
         -- The name as printed on a non-English card, so a shared Japanese
         -- collection reads the way the cards actually look.
@@ -57,9 +53,7 @@ router.get('/:share_token', async (req, res) => {
         cc.image_url,
         cc.price_trend,
         cc.price_normal,
-        cc.price_holofoil,
-        cc.price_reverse_holofoil,
-        cc.price_1st_edition
+        cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       ${filterSql}

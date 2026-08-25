@@ -1,14 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick } from 'lucide-react';
-import { getCardDisplayName, translateJapaneseName } from '../utils/langHelper';
+import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
-import { CONDITIONS, PRINTINGS, GRADERS } from '../utils/cardOptions';
-import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass } from '../utils/cardPrinting';
+import { CONDITIONS, PRINTING_OPTIONS } from '../utils/cardOptions';
+import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass, getPrintingLabel } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { buildCardListText } from '../utils/cardList';
 import { useMultiSelect } from '../utils/useMultiSelect';
-import { defaultGameFilter, gameOptions, isGameEnabled, showGamePicker } from '../utils/games';
 import { useT } from '../utils/i18n';
 import CardInspectorModal from './CardInspectorModal';
 import AddToDeckSelect from './AddToDeckSelect';
@@ -18,7 +17,8 @@ import CardImage from './CardImage';
 const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' };
 
 // Maps each Sort By option to sortCardsByOrder criteria so ordering remains
-// consistent (set = chronological via setsList, type = POKEMON_TYPE_ORDER).
+// consistent (set = chronological via setsList, type = name order — there is no
+// 'type' comparator in sortCardsByOrder, so the scheme falls back to name).
 // 'qty-desc' isn't a card-order scheme, handled separately.
 const SORT_CRITERIA = {
   'added-newest': [{ by: 'added_at', dir: 'desc' }, { by: 'entry_id', dir: 'desc' }],
@@ -70,12 +70,8 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
 
   // Search & Filter state
   const [searchFilter, setSearchFilter] = useState('');
-  // '' | 'pokemon' | 'mtg'. Falls back to a visible game if the Settings default
-  // has since been hidden.
-  const [gameFilter, setGameFilter] = useState(() => (isGameEnabled(localStorage.getItem('default_game')) ? localStorage.getItem('default_game') : defaultGameFilter()));
   const [rarityFilter, setRarityFilter] = useState('');
   const [conditionFilter, setConditionFilter] = useState('');
-  const [graderFilter, setGraderFilter] = useState('');
   const [printingFilter, setPrintingFilter] = useState('');
   const [setFilter, setSetFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -219,35 +215,27 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   );
 
   const activeFilterCount = [
-    gameFilter, rarityFilter, conditionFilter, printingFilter,
-    setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, graderFilter,
+    rarityFilter, conditionFilter, printingFilter,
+    setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter,
     minPriceFilter, maxPriceFilter
   ].filter(v => v !== '').length + (tradeOnly ? 1 : 0) + (favoriteOnly ? 1 : 0);
 
   const clearAllFilters = () => {
     setSearchFilter('');
-    setGameFilter(''); setRarityFilter(''); setConditionFilter('');
+    setRarityFilter(''); setConditionFilter('');
     setPrintingFilter(''); setSetFilter(''); setTypeFilter(''); setSupertypeFilter('');
-    setCmcFilter(''); setLanguageFilter(''); setGraderFilter(''); setMinPriceFilter('');
+    setCmcFilter(''); setLanguageFilter(''); setMinPriceFilter('');
     setMaxPriceFilter(''); setTradeOnly(false); setFavoriteOnly(false);
   };
 
   // Filter + sort
   const filteredCollection = useMemo(() => {
-    const translatedSearch = searchFilter ? (translateJapaneseName(searchFilter) || searchFilter).toLowerCase() : '';
-    // The raw query is matched against the localized name as well as the
-    // translated one: a Japanese Magic card is stored under its English `name`,
-    // so typing 稲妻 only finds it via printed_name.
-    const rawSearch = searchFilter.toLowerCase();
+    const searchLower = searchFilter ? searchFilter.toLowerCase() : '';
     const result = collection.filter(item => {
-      const matchesSearch = item.name.toLowerCase().includes(translatedSearch) ||
-                            (item.printed_name || '').toLowerCase().includes(rawSearch) ||
-                            (item.set_name || '').toLowerCase().includes(translatedSearch) ||
+      const matchesSearch = item.name.toLowerCase().includes(searchLower) ||
+                            (item.printed_name || '').toLowerCase().includes(searchLower) ||
+                            (item.set_name || '').toLowerCase().includes(searchLower) ||
                             (item.number || '').includes(searchFilter);
-      // "All games" still means only the games the user has chosen to see: a hidden
-      // game's cards stay in the collection (and in exports) but are out of view.
-      const itemGame = item.game || 'pokemon';
-      const matchesGame = gameFilter === '' ? isGameEnabled(itemGame) : itemGame === gameFilter;
       const matchesRarity = rarityFilter === '' ? true : item.rarity === rarityFilter;
       const matchesCondition = conditionFilter === '' ? true : item.condition === conditionFilter;
       const matchesPrinting = printingFilter === '' ? true : item.printing === printingFilter;
@@ -257,20 +245,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       const matchesCmc = cmcFilter === '' ? true : String(item.cmc) === cmcFilter;
       const matchesLanguage = languageFilter === '' ? true : item.language === languageFilter;
       const matchesFavorite = favoriteOnly ? item.favorite === 1 : true;
-      // Rows written before grading existed have a NULL grader, which means raw —
-      // so the comparison defaults rather than treating NULL as its own category.
-      const itemGrader = item.grader || 'Raw';
-      const matchesGrader = graderFilter === '' ? true
-        : graderFilter === '__graded' ? itemGrader !== 'Raw'
-        : itemGrader === graderFilter;
 
       const price = item.price_trend || 0;
       const matchesMinPrice = minPriceFilter === '' ? true : price >= parseFloat(minPriceFilter);
       const matchesMaxPrice = maxPriceFilter === '' ? true : price <= parseFloat(maxPriceFilter);
 
-      return matchesSearch && matchesGame && matchesRarity && matchesCondition &&
+      return matchesSearch && matchesRarity && matchesCondition &&
              matchesPrinting && matchesSet && matchesType && matchesSupertype &&
-             matchesCmc && matchesLanguage && matchesFavorite && matchesGrader && matchesMinPrice && matchesMaxPrice;
+             matchesCmc && matchesLanguage && matchesFavorite && matchesMinPrice && matchesMaxPrice;
     });
 
     if (sortBy === 'qty-desc') {
@@ -279,7 +261,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       sortCardsByOrder(result, SORT_CRITERIA[sortBy] || SORT_CRITERIA['added-newest'], undefined, setsList);
     }
     return result;
-  }, [collection, searchFilter, gameFilter, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, graderFilter, minPriceFilter, maxPriceFilter, sortBy, setsList]);
+  }, [collection, searchFilter, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, minPriceFilter, maxPriceFilter, sortBy, setsList]);
 
   // Group duplicate cards if stack option is active
   const processedCollection = useMemo(() => {
@@ -438,16 +420,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>
             {/* Selector filters grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.75rem' }}>
-              {/* Nothing to filter when only one game is shown. */}
-              {showGamePicker() && (
-                <Field label={t('collection.fGame')}>
-                  <select className="select-control" value={gameFilter} onChange={(e) => setGameFilter(e.target.value)}>
-                    <option value="">{t('collection.allGames')}</option>
-                    {gameOptions().map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-                  </select>
-                </Field>
-              )}
-
               <Field label={t('collection.fSet')}>
                 <select className="select-control" value={setFilter} onChange={(e) => setSetFilter(e.target.value)}>
                   <option value="">{t('collection.allSets')}</option>
@@ -488,18 +460,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               <Field label={t('card.printing')}>
                 <select className="select-control" value={printingFilter} onChange={(e) => setPrintingFilter(e.target.value)}>
                   <option value="">{t('collection.allPrintings')}</option>
-                  {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </Field>
-
-              {/* 'Any graded' earns its own entry above the per-company options:
-                  "show me my slabs" is the question people actually ask, and
-                  answering it otherwise means selecting each grader in turn. */}
-              <Field label={t('card.grader')}>
-                <select className="select-control" value={graderFilter} onChange={(e) => setGraderFilter(e.target.value)}>
-                  <option value="">{t('collection.allGraders')}</option>
-                  <option value="__graded">{t('collection.anyGraded')}</option>
-                  {GRADERS.map(g => <option key={g} value={g}>{g === 'Raw' ? t('card.graderRaw') : g}</option>)}
+                  {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
               </Field>
 
@@ -607,7 +568,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           </select>
           <select className="select-control" value="" disabled={!selectedIds.size} onChange={(e) => { if (e.target.value) runBulk('printing', e.target.value); e.target.value = ''; }} style={{ fontSize: '0.72rem', maxWidth: '150px', padding: '0.3rem 0.4rem' }}>
             <option value="">{t('bulk.setPrinting')}</option>
-            {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
+            {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
           </select>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <PackPriceSplitter
@@ -687,41 +648,21 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                     gap: '4px',
                     pointerEvents: 'none'
                   }}>
-                    {/* One badge in this slot, not two: a slab's grade replaces the
-                        condition rather than sitting beside it, because they answer
-                        the same question and the grader's answer is the one that
-                        counts. Coloured, because 'PSA 10' in the same grey as 'NM'
-                        would bury the distinction that matters most in a grid. */}
-                    {item.grader && item.grader !== 'Raw' ? (
-                      <span style={{
-                        fontSize: '0.6rem',
-                        fontWeight: 800,
-                        padding: '2px 5px',
-                        borderRadius: '3px',
-                        background: 'rgba(250, 204, 21, 0.9)',
-                        color: '#1a1a1a',
-                        border: '1px solid rgba(255, 255, 255, 0.25)',
-                        textTransform: 'uppercase'
-                      }}>
-                        {item.grader}{item.grade != null ? ` ${item.grade}` : ''}
-                      </span>
-                    ) : (
-                      <span style={{
-                        fontSize: '0.6rem',
-                        fontWeight: 800,
-                        padding: '2px 5px',
-                        borderRadius: '3px',
-                        background: 'rgba(0, 0, 0, 0.75)',
-                        color: 'var(--text-strong)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        textTransform: 'uppercase'
-                      }}>
-                        {item.condition === 'Near Mint' ? 'NM' :
-                         item.condition === 'Lightly Played' ? 'LP' :
-                         item.condition === 'Moderately Played' ? 'MP' :
-                         item.condition === 'Heavily Played' ? 'HP' : 'DMG'}
-                      </span>
-                    )}
+                    <span style={{
+                      fontSize: '0.6rem',
+                      fontWeight: 800,
+                      padding: '2px 5px',
+                      borderRadius: '3px',
+                      background: 'rgba(0, 0, 0, 0.75)',
+                      color: 'var(--text-strong)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      textTransform: 'uppercase'
+                    }}>
+                      {item.condition === 'Near Mint' ? 'NM' :
+                       item.condition === 'Lightly Played' ? 'LP' :
+                       item.condition === 'Moderately Played' ? 'MP' :
+                       item.condition === 'Heavily Played' ? 'HP' : 'DMG'}
+                    </span>
                     {item.printing !== 'Normal' && (
                       <span style={{
                         fontSize: '0.6rem',
@@ -793,7 +734,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                             </span>
                           </div>
                           <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
-                            {item.printing} • {item.condition}
+                            {getPrintingLabel(item.printing)} • {item.condition}
                           </div>
                           {!selectMode && (
                             <div style={{ display: 'flex', gap: '0.35rem', marginTop: '2px' }}>

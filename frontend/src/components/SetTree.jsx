@@ -17,7 +17,7 @@ import { useT } from '../utils/i18n';
 // filters on. The tree is a VIEW of that list, not a second format: a family is
 // "on" when its parent code is present, a subset when its own code is.
 export default function SetTree({
-  sets,                 // [{ id, name, ptcgo_code, children: [{code,name,type,cardCount}] }]
+  sets,                 // [{ id, name, set_code, children: [{code,name,type,cardCount}] }]
   codeOf,               // (set) => the catalog set code for this game
   selected,             // array of selected codes
   onToggleCode,         // (code) => void
@@ -43,7 +43,7 @@ export default function SetTree({
   const visible = sets
     .filter(s => !onlyWithCounts || familyEmbedded(s) > 0)
     .filter(s => !q
-      || [s.id, s.ptcgo_code, s.name].some(v => (v || '').toLowerCase().includes(q))
+      || [s.id, s.set_code, s.name].some(v => (v || '').toLowerCase().includes(q))
       || (s.children || []).some(c => [c.code, c.name].some(v => (v || '').toLowerCase().includes(q))));
 
   const toggleExpand = (code) => setExpanded(prev => {
@@ -87,20 +87,20 @@ export default function SetTree({
                   // unticked. Says so instead of reading as "the whole box".
                   ref={(el) => { if (el) el.indeterminate = on && kids.length > 0 && kidsOn < kids.length; }}
                   onChange={() => onToggleFamily(s)}
-                  style={{ accentColor: 'var(--type-grass)', flexShrink: 0 }}
+                  style={{ accentColor: 'var(--success)', flexShrink: 0 }}
                 />
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
                 <code style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', flexShrink: 0 }}>{code}</code>
               </label>
               {kids.length > 0 && (
-                <span style={{ fontSize: '0.62rem', color: on && kidsOn ? 'var(--type-grass)' : 'var(--text-muted)', flexShrink: 0 }}>
+                <span style={{ fontSize: '0.62rem', color: on && kidsOn ? 'var(--success)' : 'var(--text-muted)', flexShrink: 0 }}>
                   {on ? `${kidsOn}/${kids.length}` : `+${kids.length}`}
                 </span>
               )}
               {/* What the scanner actually holds for this family. A set with nothing
                   embedded cannot be scanned no matter how confidently it is listed. */}
               {showCounts && (
-                <span style={{ fontSize: '0.62rem', flexShrink: 0, color: familyEmbedded(s) ? 'var(--type-grass)' : 'var(--accent-yellow)' }}>
+                <span style={{ fontSize: '0.62rem', flexShrink: 0, color: familyEmbedded(s) ? 'var(--success)' : 'var(--accent-yellow)' }}>
                   {familyEmbedded(s)
                     ? t('scan.setIndexedCount', { count: familyEmbedded(s) })
                     : t('scan.setNotBuilt')}
@@ -113,7 +113,7 @@ export default function SetTree({
                   type="checkbox"
                   checked={has(c.code)}
                   onChange={() => onToggleCode(c.code)}
-                  style={{ accentColor: 'var(--type-grass)', flexShrink: 0 }}
+                  style={{ accentColor: 'var(--success)', flexShrink: 0 }}
                 />
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
                 <code style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', flexShrink: 0 }}>{c.code}</code>

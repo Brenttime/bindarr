@@ -3,8 +3,8 @@ import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Ba
 import { Search, Trophy, Compass, Library, ShieldAlert, Sparkles, X, SlidersHorizontal } from 'lucide-react';
 import Logo from './Logo';
 import { priceText } from '../utils/formatPrice';
-import { PRINTINGS } from '../utils/cardOptions';
-import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
+import { PRINTING_OPTIONS } from '../utils/cardOptions';
+import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle, getPrintingLabel } from '../utils/cardPrinting';
 import { useBackGuard } from '../utils/useBackGuard';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { displayName } from '../utils/languages';
@@ -16,10 +16,8 @@ const COLORS = [
   '#ec4899', '#14b8a6', '#f43f5e', '#a855f7', '#6366f1'
 ];
 
+// MTG color pips for the per-color chips in the shared-catalog chart.
 const TYPE_COLORS = {
-  'Grass': '#4ade80', 'Fire': '#f87171', 'Water': '#60a5fa', 'Lightning': '#facc15',
-  'Psychic': '#c084fc', 'Fighting': '#f97316', 'Darkness': '#475569', 'Metal': '#94a3b8',
-  'Dragon': '#a855f7', 'Fairy': '#f472b6', 'Colorless': '#cbd5e1',
   'White': '#fef08a', 'Blue': '#3b82f6', 'Black': '#334155', 'Red': '#ef4444',
   'Green': '#10b981', 'Land': '#d97706'
 };
@@ -358,7 +356,7 @@ function SharedCollection({ shareToken }) {
                 <label>{t('card.printing')}</label>
                 <select className="select-control" value={printingFilter} onChange={(e) => setPrintingFilter(e.target.value)}>
                   <option value="">{t('collection.allPrintings')}</option>
-                  {PRINTINGS.map(p => <option key={p} value={p}>{p}</option>)}
+                  {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
               </div>
             </div>
@@ -397,35 +395,31 @@ function SharedCollection({ shareToken }) {
         </div>
       ) : (
         <div className="card-grid">
-          {processedCollection.map(card => {
-            const rarity = (card.rarity || '').toLowerCase();
-            const isUltra = rarity.includes('rare') || rarity.includes('secret') || rarity.includes('promo') || rarity.includes('ultra');
-            return (
-              <div key={card.entry_id} className="tcg-card tilt-card-wrapper" onClick={() => setActiveCard(card)}>
-                <div className={`tcg-card-inner ${isUltra ? 'rarity-glow-ultra' : ''}`}>
-                  <CardImage card={card} className="tcg-card-image" loading="lazy" />
-                  {getFoilOverlayClass(card.printing) && (
-                    <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: 'var(--radius-sm)' }} />
-                  )}
-                  {getPrintingBadgeLabel(card.printing) && (
-                    <span style={{ position: 'absolute', top: '6px', left: '6px', fontSize: '0.6rem', fontWeight: 800, padding: '2px 5px', borderRadius: '3px', zIndex: 6, ...getPrintingBadgeStyle(card.printing) }}>
-                      {getPrintingBadgeLabel(card.printing)}
-                    </span>
-                  )}
-                  {card.quantity > 1 && (
-                    <div className="tcg-card-quantity-tag">x{card.quantity}</div>
-                  )}
-                </div>
-                <div className="tcg-card-info">
-                  <div className="tcg-card-name">{displayName(card)}</div>
-                  <div className="tcg-card-meta">
-                    <span style={{ fontSize: '0.7rem' }}>{card.set_name} • #{card.number}</span>
-                    <span className="tcg-card-price">{priceText(card.price_trend, card.price_currency)}</span>
-                  </div>
+          {processedCollection.map(card => (
+            <div key={card.entry_id} className="tcg-card tilt-card-wrapper" onClick={() => setActiveCard(card)}>
+              <div className="tcg-card-inner">
+                <CardImage card={card} className="tcg-card-image" loading="lazy" />
+                {getFoilOverlayClass(card.printing) && (
+                  <div className={getFoilOverlayClass(card.printing)} style={{ borderRadius: 'var(--radius-sm)' }} />
+                )}
+                {getPrintingBadgeLabel(card.printing) && (
+                  <span style={{ position: 'absolute', top: '6px', left: '6px', fontSize: '0.6rem', fontWeight: 800, padding: '2px 5px', borderRadius: '3px', zIndex: 6, ...getPrintingBadgeStyle(card.printing) }}>
+                    {getPrintingBadgeLabel(card.printing)}
+                  </span>
+                )}
+                {card.quantity > 1 && (
+                  <div className="tcg-card-quantity-tag">x{card.quantity}</div>
+                )}
+              </div>
+              <div className="tcg-card-info">
+                <div className="tcg-card-name">{displayName(card)}</div>
+                <div className="tcg-card-meta">
+                  <span style={{ fontSize: '0.7rem' }}>{card.set_name} • #{card.number}</span>
+                  <span className="tcg-card-price">{priceText(card.price_trend, card.price_currency)}</span>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
 
@@ -470,7 +464,7 @@ function SharedCollection({ shareToken }) {
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', marginTop: '0.25rem' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{t('inspector.specCondition')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.condition}</span>
-                  <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.printing}</span>
+                  <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specPrinting')}</span> <span style={{ color: 'var(--text-strong)' }}>{getPrintingLabel(activeCard.printing)}</span>
                   <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{t('inspector.specLanguage')}</span> <span style={{ color: 'var(--text-strong)' }}>{activeCard.language}</span>
                 </div>
               </div>

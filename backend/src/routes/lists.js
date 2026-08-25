@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
   try {
     const rows = await db.all(
       `SELECT
-         l.id, l.name, l.description, l.game, l.accent_color, l.created_at,
+         l.id, l.name, l.description, l.accent_color, l.created_at,
          COUNT(lc.card_id) AS total_card_types,
          COALESCE(SUM(lc.quantity), 0) AS total_cards
        FROM card_lists l
@@ -39,17 +39,16 @@ router.get('/', async (req, res) => {
 // knows (collection, decks, scans). Uncached names are reported back so the
 // client can say exactly what it could not place.
 router.post('/', async (req, res) => {
-  const { name, description = '', game = 'pokemon', accent_color = '#10b981', list_text = '' } = req.body;
+  const { name, description = '', accent_color = '#10b981', list_text = '' } = req.body;
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: 'List name is required' });
   }
-  const listGame = ['pokemon', 'mtg'].includes(game) ? game : 'pokemon';
   const accent = typeof accent_color === 'string' && accent_color.startsWith('#') ? accent_color : '#10b981';
 
   try {
     const result = await db.run(
-      `INSERT INTO card_lists (name, description, game, accent_color, user_id) VALUES (?, ?, ?, ?, ?)`,
-      [String(name).trim(), description || '', listGame, accent, req.user.id]
+      `INSERT INTO card_lists (name, description, accent_color, user_id) VALUES (?, ?, ?, ?)`,
+      [String(name).trim(), description || '', accent, req.user.id]
     );
     const listId = result.lastID;
 
@@ -74,8 +73,8 @@ router.post('/', async (req, res) => {
         }
         if (!cardName) continue;
         const card = await db.get(
-          `SELECT id FROM card_cache WHERE LOWER(name) = LOWER(?) AND game = ? LIMIT 1`,
-          [cardName, listGame]
+          `SELECT id FROM card_cache WHERE LOWER(name) = LOWER(?) LIMIT 1`,
+          [cardName]
         );
         if (!card) {
           unmatched.push(setRef ? `${cardName} (${setRef})` : cardName);
@@ -220,8 +219,7 @@ router.post('/:id/cards', async (req, res) => {
     let card = await db.get(`SELECT id FROM card_cache WHERE id = ?`, [card_id]);
     if (!card) {
       console.log(`Card ${card_id} not in cache. Fetching...`);
-      const tcgApiKey = req.user.tcg_api_key;
-      const apiCard = await cardApi.getCardById(card_id, { tcgApiKey });
+      const apiCard = await cardApi.getCardById(card_id);
       if (!apiCard) {
         return res.status(404).json({ error: `Card ${card_id} not found on any card provider.` });
       }

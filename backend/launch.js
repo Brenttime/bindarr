@@ -20,7 +20,7 @@ function fatal(err) {
   if (err && err.code === 'MODULE_NOT_FOUND') {
     console.error(
       '\nA file the server needs is missing from this download. Please report this at\n' +
-      'https://github.com/thenotoriousJeremy/bindarr/issues with the text above.'
+      'https://github.com/Brenttime/bindarr/issues with the text above.'
     );
   }
   console.error('\nPress any key to close...');

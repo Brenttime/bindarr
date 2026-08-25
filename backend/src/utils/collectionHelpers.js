@@ -66,11 +66,11 @@ async function setStackQuantity(database, userId, entryId, target) {
     await dbClient.run(`
       INSERT INTO collection (
         card_id, user_id, quantity, condition, printing, language, purchase_price,
-        is_trade, favorite, list_type, game
-      ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_trade, favorite, list_type
+      ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
     `, [
       row.card_id, userId, row.condition, row.printing, row.language, row.purchase_price,
-      row.is_trade, row.favorite, row.list_type, row.game
+      row.is_trade, row.favorite, row.list_type
     ]);
   }
 
@@ -110,11 +110,11 @@ async function splitStackedEntries(database) {
       await dbClient.run(`
         INSERT INTO collection (
           card_id, user_id, quantity, condition, printing, language, purchase_price,
-          is_trade, favorite, list_type, game
-        ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+          is_trade, favorite, list_type
+        ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
       `, [
         e.card_id, e.user_id, e.condition, e.printing, e.language, e.purchase_price,
-        e.is_trade, e.favorite, e.list_type, e.game
+        e.is_trade, e.favorite, e.list_type
       ]);
       created++;
     }

@@ -12,34 +12,19 @@ function parseSqliteUtc(str) {
 
 function resolveCardPrice(card) {
   if (!card) return 0;
-  // A value set on the copy wins over every provider price. It is either what the
-  // owner typed or what a graded-price provider returned for this exact slab, and
-  // both know something card_cache cannot: a PSA 10 is worth a multiple of the raw
-  // price, and the raw price is all the card APIs quote. Only rows selected with
-  // collection.market_value carry it, so a bare card_cache row is unaffected.
-  if (card.market_value > 0) return card.market_value;
   if (card.printing === 'Holofoil' && card.price_holofoil !== null && card.price_holofoil > 0) {
     return card.price_holofoil;
   }
-  if (card.printing === 'Reverse Holofoil' && card.price_reverse_holofoil !== null && card.price_reverse_holofoil > 0) {
-    return card.price_reverse_holofoil;
-  }
   if (card.printing === 'Normal' && card.price_normal !== null && card.price_normal > 0) {
     return card.price_normal;
-  }
-  // '1st Edition' has been a legal printing since v1.0 but had no price of its own,
-  // so it fell through to price_trend — the UNLIMITED price. On a Base Set Charizard
-  // that understates the card by thousands. Only TCGCSV fills this column, so the
-  // fallthrough below still covers every row nothing has priced that way.
-  if (card.printing === '1st Edition' && card.price_1st_edition !== null && card.price_1st_edition > 0) {
-    return card.price_1st_edition;
   }
   return card.price_trend || 0;
 }
 
 // Hydrate a raw card_cache row: its array columns are stored as JSON strings,
-// so parse them back to arrays. Missing columns (e.g. color_identity on a
-// Pokémon row) become []. Returns a shallow copy; the raw row is untouched.
+// so parse them back to arrays. Missing columns (e.g. color_identity on a row
+// cached before it existed) become []. Returns a shallow copy; the raw row is
+// untouched.
 function parseCardRow(row) {
   if (!row) return row;
   return {
@@ -52,10 +37,12 @@ function parseCardRow(row) {
 
 const isVintageSet = (setId) => {
   const id = (setId || '').toLowerCase();
-  return id.startsWith('base') || id.startsWith('gym') || id.startsWith('neo') ||
-         id.startsWith('lc') || id.startsWith('ecard') || id.startsWith('ex') ||
-         id.startsWith('pop') || id.startsWith('promo1') || id.startsWith('si') ||
-         id.startsWith('xy12') || id.startsWith('cel25');
+  // MTG's vintage era: the core sets, expansions and masters released before
+  // 2000 (per Scryfall). Everything from March 2000 (Onslaught) onward is
+  // modern-era.
+  return ['lea', 'leb', '2ed', 'arn', 'atq', '3ed', 'leg', 'drk', 'fem', '4bb', '4ed',
+    'ice', 'bchr', 'chr', 'ren', 'rin', 'hml', 'all', 'mir', 'vis', '5ed', 'wth',
+    'tmp', 'sth', 'exo', 'ugl', 'usg', 'ulg', '6ed', 'uds', 'mmq'].includes(id);
 };
 
 // Record a price point, but only when it actually moved. The price sweep runs
@@ -87,20 +74,14 @@ async function recordPrice(cardId, price) {
 // Scryfall: "We only update prices for cards once per day. Fetching card data
 // more frequently than 24 hours will not yield new prices."
 // (https://scryfall.com/docs/api/rate-limits). Sweeping more often than daily
-// is pure load for zero new data, so both providers gate on this.
+// is pure load for zero new data, so the sweep gates on this.
 const PRICE_SWEEP_INTERVAL_MS = 1000 * 60 * 60 * 24;
-// tcgdex gets its own clock: it serves the non-English Pokémon cards that
-// pokemontcg.io has no rows for, so the two sweep different cards and letting
-// either one mark the other's gate would silently skip a whole language.
 // Every provider that sweeps needs an entry here, and an unknown key is treated as
 // "do not sweep" — so a provider added to server.js but forgotten here goes quiet
 // instead of loud: shouldSweepPrices returns false, the boot catch-up skips, and
-// markPricesSwept no-ops. That is exactly what happened to tcgcsv on first run.
+// markPricesSwept no-ops.
 const SWEEP_COLUMN = {
   mtg: 'mtg_prices_swept_at',
-  pokemon: 'pokemon_prices_swept_at',
-  tcgdex: 'tcgdex_prices_swept_at',
-  tcgcsv: 'tcgcsv_prices_swept_at',
 };
 
 // Has this game's price sweep gone stale enough to be worth running again?

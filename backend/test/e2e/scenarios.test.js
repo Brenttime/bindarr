@@ -72,21 +72,23 @@ async function runTests() {
       'Authorization': `Bearer ${token}`
     };
 
-    // F6-TC2: Mixed-game collection sorting (Pokémon type-name vs MTG WUBRG)
+    // F6-TC2: Collection sorting by color (WUBRG order)
     try {
       const { sortCards } = require('../../src/utils/cardSort');
       const cards = [
-        { name: 'Swamp', types: ['Black'], game: 'mtg' },
-        { name: 'Charmander', types: ['Fire'], game: 'pokemon' },
-        { name: 'Plains', types: ['White'], game: 'mtg' },
-        { name: 'Bulbasaur', types: ['Grass'], game: 'pokemon' }
+        { name: 'Swamp', types: ['Black'], color_identity: ['B'] },
+        { name: 'Swords to Plowdown', types: ['Red'], color_identity: ['R'] },
+        { name: 'Plains', types: ['White'], color_identity: ['W'] },
+        { name: 'Llanowar Elves', types: ['Green'], color_identity: ['G'] },
+        { name: 'Island', types: ['Blue'], color_identity: ['U'] }
       ];
-      const sorted = sortCards(cards, 'type-name', 'normals_first');
-      // Bulbasaur (Grass) -> Charmander (Fire) -> Plains (White) -> Swamp (Black)
-      assert.strictEqual(sorted[0].name, 'Bulbasaur');
-      assert.strictEqual(sorted[1].name, 'Charmander');
-      assert.strictEqual(sorted[2].name, 'Plains');
-      assert.strictEqual(sorted[3].name, 'Swamp');
+      const sorted = sortCards(cards, '[{"by":"color","dir":"asc"},{"by":"name","dir":"asc"}]', 'normals_first');
+      // WUBRG: White -> Blue -> Black -> Red -> Green
+      assert.strictEqual(sorted[0].name, 'Plains');
+      assert.strictEqual(sorted[1].name, 'Island');
+      assert.strictEqual(sorted[2].name, 'Swamp');
+      assert.strictEqual(sorted[3].name, 'Swords to Plowdown');
+      assert.strictEqual(sorted[4].name, 'Llanowar Elves');
       console.log('PASS: F6-TC2');
     } catch (err) {
       console.error('FAIL: F6-TC2 -', err.message);

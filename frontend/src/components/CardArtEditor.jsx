@@ -124,7 +124,6 @@ export default function CardArtEditor({ card, hasProviderArt, showToast, onChang
         `- **Name**: ${card.name || ''}`,
         `- **Set**: ${card.set_name || ''} (${card.set_id || '?'})`,
         `- **Number**: ${card.number || ''}`,
-        `- **Game**: ${card.game || ''}`,
         `- **Language**: ${card.language || ''}`,
         '',
         t('art.issueAttach', { file: `${cardId}.png` }),

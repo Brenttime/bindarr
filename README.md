@@ -4,36 +4,29 @@
 
 # Bindarr
 
-**Self-hosted collection manager for Pokémon and Magic: The Gathering cards.**
+**Self-hosted collection manager for Magic: The Gathering cards.**
 
 Identify cards with your phone camera, track prices, and pull decks back out of your collection again.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/thenotoriousJeremy/bindarr/docker-build.yml?branch=main&label=CI&logo=github)](https://github.com/thenotoriousJeremy/bindarr/actions/workflows/docker-build.yml)
-[![Docker image](https://img.shields.io/badge/ghcr.io-bindarr-2496ED?logo=docker&logoColor=white)](https://github.com/thenotoriousJeremy/bindarr/pkgs/container/bindarr)
-[![License: MIT](https://img.shields.io/github/license/thenotoriousJeremy/bindarr?color=blue)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/thenotoriousJeremy/bindarr?style=flat&logo=github)](https://github.com/thenotoriousJeremy/bindarr/stargazers)
-[![Issues](https://img.shields.io/github/issues/thenotoriousJeremy/bindarr)](https://github.com/thenotoriousJeremy/bindarr/issues)
+[![CI](https://img.shields.io/github/actions/workflow/status/Brenttime/bindarr/docker-build.yml?branch=main&label=CI&logo=github)](https://github.com/Brenttime/bindarr/actions/workflows/docker-build.yml)
+[![Docker image](https://img.shields.io/badge/ghcr.io-bindarr-2496ED?logo=docker&logoColor=white)](https://github.com/Brenttime/bindarr/pkgs/container/bindarr)
+[![License: MIT](https://img.shields.io/github/license/Brenttime/bindarr?color=blue)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Brenttime/bindarr?style=flat&logo=github)](https://github.com/Brenttime/bindarr/stargazers)
+[![Issues](https://img.shields.io/github/issues/Brenttime/bindarr)](https://github.com/Brenttime/bindarr/issues)
 
-[Live demo](https://thenotoriousjeremy.github.io/bindarr/) · [Install](#install) · [Features](#features) · [How it works](PROJECT.md) · [Report a bug](https://github.com/thenotoriousJeremy/bindarr/issues/new)
+[Install](#install) · [Features](#features) · [How it works](PROJECT.md) · [Report a bug](https://github.com/Brenttime/bindarr/issues/new)
 
 </div>
 
 ---
 
-https://github.com/user-attachments/assets/4ee6c23f-a024-499b-9fc3-3d144c42ba61
-
-Try it without installing anything at **[thenotoriousjeremy.github.io/bindarr](https://thenotoriousjeremy.github.io/bindarr/)**. The demo runs the real frontend against sample data, so edits aren't saved and scanning is off (it needs a server).
-
----
-
 ## Features
 
-- **Camera scanning** — photograph a card and the server identifies it from the image alone. Works for Magic and Pokémon.
+- **Camera scanning** — photograph a card and the server identifies it from the image alone.
 - **Deck checkout** — reserve a deck's cards and see, card by card, how many you own, how many other checked-out decks have locked, and how many are still missing; the same checklist in reverse when you put them back.
 - **Card lists** — ManaBox-style wishlists, buylists and missing-card lists: named lists of cards you track without owning, with per-card wanted quantities, an owned-vs-missing readout, and the same text export the collection uses (`qty Name` / `qty Name (SET) num`). Create one from a pasted list or grow it by searching.
 - **Search and bulk add** — search or browse a whole set with multi-select; pin a set and add by collector number one keystroke at a time.
 - **Dashboard** — collection value, 7/30-day trends, rarity and type breakdowns, set completion.
-- **Graded slabs** — record grader, grade and cert number per copy (PSA cert lookup fills them in), and give a slab its own value instead of the raw card's price.
 - **Cards in 11 languages** — search, scan and record Japanese, Korean, Chinese, German, French, Spanish, Italian, Portuguese and Russian printings. A copy references the printing it actually is, so it shows the name and artwork on the card while staying searchable by its English name.
 - **Exports and API** — CSV (TCGplayer-compatible) or JSON, a text card list (`qty Name` or `qty Name (SET) num`, for ManaBox / Moxfield / TCGplayer Mass Entry), plus a read-only API key for reading net worth from elsewhere.
 - **Multi-user** — session-token auth, admin panel for users and roles, optional public share links.
@@ -52,7 +45,7 @@ No clone, no build. Create a `docker-compose.yml`:
 ```yaml
 services:
   bindarr:
-    image: ghcr.io/thenotoriousjeremy/bindarr:latest
+    image: ghcr.io/brenttime/bindarr:edge
     container_name: bindarr
     restart: unless-stopped
     ports:
@@ -60,7 +53,6 @@ services:
       - "3443:3443"   # HTTPS — use this directly if you have no proxy (scanning needs it)
     environment: {}
       # All optional — see the table below.
-      # - POKEMON_TCG_API_KEY=
       # - PUBLIC_BASE_URL=
       # - DEFAULT_ADMIN_PASSWORD=
       # - TRUST_PROXY=1
@@ -105,9 +97,8 @@ The HTTPS certificate is self-signed and generated on first start into the volum
 
 | Tag | Points at |
 | --- | --- |
-| `latest` | newest release — use this |
-| `1.8`, `1.8.1` | a specific release, if you want to control upgrades |
-| `edge` | newest `main` commit, including unreleased work |
+| `edge` | newest `main` commit — use this until the first MTG-only release |
+| `latest` | newest tagged release, once one has been published |
 | `sha-<short>` | one exact commit |
 
 #### Environment variables
@@ -121,7 +112,6 @@ All optional.
 | `SSL_CERT_PATH` / `SSL_KEY_PATH` | — | Your own certificate instead of the generated self-signed one. |
 | `DB_PATH` | `/app/database/bindarr.db` | SQLite file location. |
 | `DEFAULT_ADMIN_PASSWORD` | — | Create the `admin` account with this password at startup instead of letting the first browser visit create the owner account. Only applied while the `users` table is empty — changing it later does nothing to an existing account. |
-| `POKEMON_TCG_API_KEY` | — | Free key from [dev.pokemontcg.io](https://dev.pokemontcg.io/). Raises the Pokémon rate limit from 1,000 to 20,000 requests/day. |
 | `PUBLIC_BASE_URL` | — | External URL behind a proxy, e.g. `https://cards.example.com`. Used for share links and auto-allowed as a CORS origin, so proxied logins work with just this. Also editable in the Admin panel. |
 | `CORS_ORIGIN` | — | Extra allowed origins, comma-separated. Localhost and private-LAN origins are always allowed. |
 | `ALLOW_REGISTRATION` | unset | `true` allows self-registration. Unset means invite-only: admins create accounts. |
@@ -135,7 +125,7 @@ All optional.
 
 ### Prebuilt server binary
 
-If you'd rather not run Docker, every release ships a self-contained server. Download it from the [latest release](https://github.com/thenotoriousJeremy/bindarr/releases/latest), unpack, run, then open `http://localhost:3001`.
+If you'd rather not run Docker, every release ships a self-contained server. Download it from the [latest release](https://github.com/Brenttime/bindarr/releases/latest), unpack, run, then open `http://localhost:3001`.
 
 | OS | File | Run |
 |----|------|-----|
@@ -169,22 +159,21 @@ docker exec bindarr node scripts/fetch-models.mjs
 startup and scanning returns a clear error instead of guesses.
 
 **2. A catalog.** The fingerprint has to be compared against something. Build one
-per game and language from **Settings → Scan catalogs**: it downloads that game's card
-list and fingerprints every card's artwork — hours for a full English game, and
-about 5 MB of output per 10,000 cards. Progress is live, stopping keeps what it
-has, and resuming reuses it. `--catalogs` on the fetch command above grabs
-prebuilt English Magic and Pokémon catalogs instead, which answer immediately but
-only resolve cards your install has already seen.
+per language from **Settings → Scan catalogs**: it fingerprints the artwork of
+every card in your local card cache — hours for a full English build, and about
+5 MB of output per 10,000 cards. Progress is live, stopping keeps what it has,
+and resuming reuses it. `--catalogs` on the fetch command above grabs a
+prebuilt English catalog instead, which answers immediately but only resolves
+cards your install has already seen.
 
 Scanning is then the same whether or not you tell it which set you are feeding.
 Naming the set just restricts the comparison to that set's cards, which is faster
 and more accurate, and needs no preparation.
 
-Coverage is only as good as the card data available for a language: the panel shows
-what a catalog holds against what the provider claims exists, e.g. *3,297 of
-16,192* for Japanese Pokémon, where the upstream data simply stops. A card outside
-the catalog is reported as missing rather than guessed at, with the nearest matches
-offered underneath.
+Coverage is only as good as the card data available for a language: the panel
+shows what a catalog holds against what the provider claims exists. A card
+outside the catalog is reported as missing rather than guessed at, with the
+nearest matches offered underneath.
 
 The pipeline, its accuracy numbers, and the measurement harness are documented in
 [PROJECT.md](PROJECT.md#image-identification-pipeline).
@@ -193,25 +182,17 @@ The pipeline, its accuracy numbers, and the measurement harness are documented i
 
 ## Card values
 
-Every price source Bindarr talks to — TCGplayer, Scryfall, Cardmarket — quotes the **raw** card. A PSA 10 sells for a multiple of that, so a graded copy needs its own number, and each copy can carry one: open the card, edit it, and set **Value for this copy**. That value replaces the market price everywhere — net worth, set totals, sorting by price, exports. Clear the field to go back to the card's own price.
+Prices come from Scryfall, which quotes two marketplaces: TCGplayer's USD price
+for printings it lists, and Cardmarket's EUR price for everything else (most
+non-English printings). Prices are stored in the currency they were quoted in
+and never converted — an exchange rate is a live number Bindarr has no source
+for — so each card shows its own symbol (`$4.50`, `€4.50`) and the card
+inspector names the marketplace. Collection totals sum the currencies as-is;
+`currencies` in the API response says when a total is mixed.
 
-For Pokémon slabs it can also be fetched. Put a [PokemonPriceTracker](https://www.pokemonpricetracker.com/api) key in **Settings → API Keys** and a **Fetch graded price** button appears on graded copies. It fills in what that card sells for on eBay at that grade — PSA, BGS or CGC, half grades included — and says how many sales the figure rests on. If the grade has no recorded sales it tells you which grades do, rather than guessing.
-
-One card per press, never a background sweep: each lookup spends 2 of the free tier's 100 daily credits, and a sweep over a collection would spend a week's worth on one boot. Magic slabs have no source, so they stay hand-entered.
-
-### Cards in other languages
-
-Which marketplace can price a printing depends on where it is sold, so the source follows the card:
-
-| Card | Priced from |
-| --- | --- |
-| Magic, any language | Scryfall — TCGplayer's USD price, or Cardmarket's EUR one when TCGplayer has no listing (most non-English printings) |
-| Pokémon, English or Japanese | TCGplayer, via TCGCSV, in USD |
-| Pokémon, other languages | the **English** printing's TCGplayer price, labelled as such — TCGplayer runs no German, Korean or Chinese catalogue |
-
-Prices are stored in the currency they were quoted in and never converted — an exchange rate is a live number Bindarr has no source for — so each card shows its own symbol (`$4.50`, `€4.50`) and the card inspector names the marketplace. Collection totals sum the currencies as-is; `currencies` in the API response says when a total is mixed.
-
-A price only exists once something fetched it. The Pokémon price sweep covers the sets you own cards from, so browsing a set you own nothing in shows `0.00` until a card from it lands in your collection.
+A price only exists once something fetched it. The daily price sweep covers the
+cards you own or run in decks, so browsing a set you own nothing in shows
+`0.00` until a card from it lands in your collection.
 
 ## API access
 
@@ -224,11 +205,10 @@ curl -H "Authorization: Bearer <key>" http://localhost:3001/api/stats/networth
 ```json
 { "totalValue": 4210.55, "totalSpent": 2980.00, "gain": 1230.55, "gainPct": 41.3,
   "totalCards": 812, "uniqueEntries": 604,
-  "byGame": { "pokemon": { "cards": 500, "value": 3100.20 }, "mtg": { "cards": 312, "value": 1110.35 } },
   "currencies": ["USD"], "asOf": "2026-08-17T17:55:40.898Z" }
 ```
 
-The key never expires and is **read-only**: any request that is not a GET is refused, and admin endpoints are refused outright. Add `?game=pokemon` to scope the figures. `/api/stats` returns the full dashboard payload if you want the breakdowns too, and `/api/collection` returns every card. More than one entry in `currencies` means providers quoted in different currencies and the total sums them as-is.
+The key never expires and is **read-only**: any request that is not a GET is refused, and admin endpoints are refused outright. `/api/stats` returns the full dashboard payload if you want the breakdowns too, and `/api/collection` returns every card. More than one entry in `currencies` means the collection mixes cards quoted in different currencies and the total sums them as-is.
 
 Revoking is one click in the same panel; anything using the old key stops immediately.
 

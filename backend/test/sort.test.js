@@ -3,7 +3,8 @@
 // `node test/sort.test.js`.
 const assert = require('assert');
 
-const { sortCards, getSortCategory } = require('../src/utils/cardSort');
+const { sortCards, getSortCategory, rarityRank } = require('../src/utils/cardSort');
+const cardOrder = require('../../shared/cardOrder.json');
 
 // Pure test (no DB): the 'language' filing scheme orders by language rank
 // (English, Japanese, ...) then by name, and buckets cards by language.
@@ -67,6 +68,20 @@ function testFoilOrdering() {
   console.log('PASS: foil ordering honours the foil_sorting option');
 }
 
+function testMtgOnlyCategories() {
+  assert.deepStrictEqual(Object.keys(cardOrder.printingNormalsFirst), ['Normal', 'Holofoil']);
+  assert.deepStrictEqual(Object.keys(cardOrder.printingFoilsFirst), ['Holofoil', 'Normal']);
+  assert.deepStrictEqual(
+    ['common', 'uncommon', 'rare', 'mythic', 'special', 'bonus'].map(rarityRank),
+    [1, 2, 3, 4, 5, 6],
+    'rarity sorting must use the complete Scryfall vocabulary'
+  );
+  for (const unsupported of ['rare holo', 'ultra rare', 'promo', 'illustration rare', 'secret rare']) {
+    assert.strictEqual(rarityRank(unsupported), 0, `${unsupported} is not a Scryfall rarity`);
+  }
+  console.log('PASS: printing and rarity categories are MTG-only');
+}
+
 main();
 
 async function main() {
@@ -74,5 +89,6 @@ async function main() {
   testFavoriteScheme();
   testNameScheme();
   testFoilOrdering();
+  testMtgOnlyCategories();
   console.log('sort tests: OK');
 }

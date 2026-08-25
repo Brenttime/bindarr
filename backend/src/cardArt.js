@@ -15,6 +15,7 @@ const db = require('./db');
 // can replace bundled art they think is wrong without editing the image.
 const BUNDLED_DIR = path.join(__dirname, '../../shared/card-art');
 const USER_DIR = path.join(path.dirname(db.dbPath), 'card-art');
+const MODEL_DIR = process.env.CV_MODEL_DIR || path.join(__dirname, '..', 'data', 'models');
 
 // The widest the app ever displays a card (the inspector's zoom). Scryfall's own
 // `png` size is 745x1040, so this matches the sharpest art the rest of the
@@ -22,8 +23,8 @@ const USER_DIR = path.join(path.dirname(db.dbPath), 'card-art');
 const MAX_WIDTH = 745;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
-// Card ids come from three providers and mix case and separators
-// (`tcgdex-ja-SV2a-004`, `sv3pt5-25`, a Scryfall uuid), but none of them contain
+// Card ids mix case and separators (a bare set-code form like `sv3pt5-25`,
+// a prefixed `mtg-<uuid>`), but none of them contain
 // a path separator or a dot-segment. Anything else is refused rather than
 // escaped: the id becomes a filename, so a permissive rule here is a directory
 // traversal.
@@ -102,7 +103,56 @@ function remove(cardId) {
 // which is what decides whether the UI offers "remove" and "contribute".
 const isUserArt = (cardId) => isValidId(cardId) && fs.existsSync(fileFor(USER_DIR, cardId));
 
+// Remove only known retired scan-catalog names and orphaned user PNGs. The
+// shared cornelius/milo models, MTG catalogs, bundled art, backups and unknown
+// files are deliberately outside this sweep. Re-running is a no-op.
+async function cleanupRetiredData() {
+  let removedModels = 0;
+  let removedArt = 0;
+  // Language suffixes were display names (including spaces/parentheses for the
+  // Chinese variants), so bound this by the exact prefix and known extensions
+  // rather than pretending every old suffix was a slug.
+  const retiredCatalog = /^milo-pokemon(?:-.*)?\.(?:npz|bin|json)(?:\.tmp)?$/i;
+  let modelNames = [];
+  try { modelNames = fs.readdirSync(MODEL_DIR); } catch { /* absent = clean */ }
+  for (const name of modelNames) {
+    if (!retiredCatalog.test(name)) continue;
+    const target = path.join(MODEL_DIR, name);
+    try {
+      if (fs.statSync(target).isFile()) {
+        fs.unlinkSync(target);
+        removedModels++;
+      }
+    } catch { /* raced with another startup or already gone */ }
+  }
+
+  const retained = new Set((await db.all(`
+    SELECT id FROM card_cache
+    UNION
+    SELECT card_id AS id FROM collection
+  `)).map(r => String(r.id)));
+  let artNames = [];
+  try { artNames = fs.readdirSync(USER_DIR); } catch { /* absent = clean */ }
+  for (const name of artNames) {
+    if (!name.toLowerCase().endsWith('.png')) continue;
+    const id = name.slice(0, -4);
+    if (retained.has(id)) continue;
+    const target = path.join(USER_DIR, name);
+    try {
+      if (fs.statSync(target).isFile()) {
+        fs.unlinkSync(target);
+        removedArt++;
+      }
+    } catch { /* raced with an upload/removal */ }
+  }
+  if (removedModels || removedArt) {
+    invalidate();
+    console.log(`Removed ${removedModels} retired scan artifact(s) and ${removedArt} orphan custom-art file(s).`);
+  }
+  return { removedModels, removedArt };
+}
+
 module.exports = {
-  BUNDLED_DIR, USER_DIR, MAX_WIDTH, MAX_UPLOAD_BYTES,
-  isValidId, resolve, listIds, invalidate, save, remove, isUserArt,
+  BUNDLED_DIR, USER_DIR, MODEL_DIR, MAX_WIDTH, MAX_UPLOAD_BYTES,
+  isValidId, resolve, listIds, invalidate, save, remove, isUserArt, cleanupRetiredData,
 };

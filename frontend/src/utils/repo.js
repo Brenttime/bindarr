@@ -5,7 +5,7 @@
 // Submit themselves, which is the point — nothing leaves the browser until they
 // decide it should.
 
-export const REPO_URL = 'https://github.com/thenotoriousJeremy/bindarr';
+export const REPO_URL = 'https://github.com/Brenttime/bindarr';
 
 export const issueUrl = ({ labels = '', title = '', body = '' }) =>
   `${REPO_URL}/issues/new?labels=${encodeURIComponent(labels)}`

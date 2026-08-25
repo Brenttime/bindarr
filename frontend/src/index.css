@@ -1,7 +1,7 @@
 :root {
   --font-main: 'Outfit', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   
-  /* Theme Colors: Sleek Dark Cyberpunk Pokédex */
+  /* Theme colors: sleek dark card catalog */
   --bg-primary: #0a0f1d;
   --bg-secondary: #131b2e;
   --bg-glass: rgba(20, 28, 47, 0.65);
@@ -19,18 +19,8 @@
   --accent-yellow: #eab308;
   --accent-yellow-glow: rgba(234, 179, 8, 0.4);
   
-  /* Pokémon Type Colors for Visual Coding */
-  --type-grass: #4ade80;
-  --type-fire: #f87171;
-  --type-water: #60a5fa;
-  --type-lightning: #facc15;
-  --type-psychic: #c084fc;
-  --type-fighting: #f97316;
-  --type-darkness: #475569;
-  --type-metal: #94a3b8;
-  --type-dragon: #a855f7;
-  --type-fairy: #f472b6;
-  --type-colorless: #cbd5e1;
+  /* Semantic colors (green = positive/complete) */
+  --success: #4ade80;
 
   /* Semantic surface/foreground tokens. These back the values components used
      to hardcode (#fff text, white overlay fills, dark input bg) so themes can
@@ -325,15 +315,6 @@ button, input, select, textarea {
   border-color: var(--border-glass-hover);
 }
 
-/* Glow Cards based on Pokemon Types */
-.type-glow-fire { border-color: rgba(248, 113, 113, 0.4); box-shadow: 0 4px 20px rgba(248, 113, 113, 0.15); }
-.type-glow-water { border-color: rgba(96, 165, 250, 0.4); box-shadow: 0 4px 20px rgba(96, 165, 250, 0.15); }
-.type-glow-grass { border-color: rgba(74, 222, 128, 0.4); box-shadow: 0 4px 20px rgba(74, 222, 128, 0.15); }
-.type-glow-lightning { border-color: rgba(250, 204, 21, 0.4); box-shadow: 0 4px 20px rgba(250, 204, 21, 0.15); }
-.type-glow-psychic { border-color: rgba(192, 132, 252, 0.4); box-shadow: 0 4px 20px rgba(192, 132, 252, 0.15); }
-.type-glow-dragon { border-color: rgba(168, 85, 247, 0.4); box-shadow: 0 4px 20px rgba(168, 85, 247, 0.15); }
-.type-glow-normal { border-color: var(--border-glass); }
-
 /* Header & Title Component */
 .app-header {
   display: flex;
@@ -617,9 +598,9 @@ button, input, select, textarea {
 .metric-card {
   --card-accent: var(--accent-red);
 }
-.metric-card.accent-networth { --card-accent: var(--type-grass); }
+.metric-card.accent-networth { --card-accent: var(--success); }
 .metric-card.accent-invested { --card-accent: var(--accent-yellow); }
-.metric-card.accent-gain-up  { --card-accent: var(--type-grass); }
+.metric-card.accent-gain-up  { --card-accent: var(--success); }
 .metric-card.accent-gain-down{ --card-accent: var(--accent-red); }
 .metric-card.accent-cards    { --card-accent: var(--accent-blue); }
 
@@ -674,7 +655,7 @@ button, input, select, textarea {
   margin-top: 0.5rem;
 }
 
-.metric-footer.positive { color: var(--type-grass); }
+.metric-footer.positive { color: var(--success); }
 .metric-footer.negative { color: #f87171; }
 
 /* Clickable list rows (Top Valuable, Recent Additions) */
@@ -765,7 +746,7 @@ button, input, select, textarea {
 .tcg-card-inner {
   position: relative;
   width: 100%;
-  aspect-ratio: 0.718; /* Pokemon Card Aspect Ratio */
+  aspect-ratio: 0.718; /* Standard trading card aspect ratio */
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   transform-style: preserve-3d;
   border-radius: var(--radius-sm);
@@ -1414,22 +1395,16 @@ button, input, select, textarea {
 }
 
 /* ==========================================================================
-   FOIL FINISHES — Holofoil vs Reverse Holofoil are intentionally distinct.
-   Holofoil  = full rainbow prism that drifts continuously (screen blend).
-   Reverse   = cool silver sheen band sweeping over a subtle pinstripe.
-   The continuous motion lives on ::after pseudo-elements so it never fights
-   the JS tilt handler, which drives the element's own background-position.
+   FOIL FINISH — a full rainbow prism that drifts continuously (screen blend).
+   The continuous motion lives on ::after so it never fights the JS tilt
+   handler, which drives the element's own background-position.
    ========================================================================== */
 
-@keyframes holoDrift {
+@keyframes foilDrift {
   to { transform: rotate(360deg); }
 }
-@keyframes foilSweep {
-  0%   { transform: translateX(-120%) skewX(-18deg); }
-  60%, 100% { transform: translateX(320%) skewX(-18deg); }
-}
 
-.holo-shine-overlay {
+.foil-shine-overlay {
   /* Default center so the rainbow sits still until a pointer drives --px/--py
      (set by the delegated handler in App.jsx). */
   --px: 50%;
@@ -1460,9 +1435,9 @@ button, input, select, textarea {
   opacity: 0.5;
   transition: opacity 0.3s ease, background-position 0.08s ease-out;
 }
-.holo-shine-overlay.foil-active,
-.foil-active .holo-shine-overlay { opacity: 0.85; }
-.holo-shine-overlay::after {
+.foil-shine-overlay.foil-active,
+.foil-active .foil-shine-overlay { opacity: 0.85; }
+.foil-shine-overlay::after {
   content: '';
   position: absolute;
   inset: -60%;
@@ -1470,56 +1445,11 @@ button, input, select, textarea {
     #ff0080, #8b00ff, #0080ff, #00ffcc, #ffee00, #ff6a00, #ff0080);
   mix-blend-mode: color-dodge;
   opacity: 0.22;
-  animation: holoDrift 7s linear infinite;
-}
-
-.reverse-holo-shine-overlay {
-  --px: 50%;
-  --py: 50%;
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  /* Stripe alpha was 0.06 at container opacity 0.55 (~0.03 effective) — nearly
-     invisible against card art at rest, making it hard to tell apart from
-     Holofoil. Raised so the silver stripe texture reads without needing hover
-     or waiting for the sweep animation to pass over. Pointer-tracked silver
-     glare sits above the pinstripes so it reads as brushed foil, not rainbow. */
-  background:
-    radial-gradient(circle at var(--px) var(--py),
-      rgba(235, 245, 255, 0.55) 0%,
-      rgba(235, 245, 255, 0) 42%),
-    repeating-linear-gradient(112deg,
-      rgba(220, 240, 255, 0.22) 0px,
-      rgba(220, 240, 255, 0.22) 6px,
-      rgba(0, 0, 0, 0) 6px,
-      rgba(0, 0, 0, 0) 13px
-    );
-  pointer-events: none;
-  z-index: 5;
-  mix-blend-mode: overlay;
-  opacity: 0.75;
-  transition: opacity 0.3s ease, background-position 0.05s ease-out;
-}
-.foil-active .reverse-holo-shine-overlay { opacity: 0.95; }
-.reverse-holo-shine-overlay::after {
-  content: '';
-  position: absolute;
-  top: -20%; bottom: -20%;
-  left: 0;
-  width: 45%;
-  background: linear-gradient(90deg,
-    transparent,
-    rgba(190, 225, 255, 0.55) 45%,
-    rgba(255, 255, 255, 0.65) 50%,
-    rgba(190, 225, 255, 0.55) 55%,
-    transparent);
-  animation: foilSweep 4s ease-in-out infinite;
+  animation: foilDrift 7s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .holo-shine-overlay::after,
-  .reverse-holo-shine-overlay::after { animation: none; }
+  .foil-shine-overlay::after { animation: none; }
 }
 
 /* 3D Card Hover Tilt Effects */
@@ -1535,11 +1465,7 @@ button, input, select, textarea {
   z-index: 15;
 }
 
-.tilt-card-wrapper:hover .holo-shine-overlay {
-  opacity: 0.8 !important;
-}
-
-.tilt-card-wrapper:hover .reverse-holo-shine-overlay {
+.tilt-card-wrapper:hover .foil-shine-overlay {
   opacity: 0.8 !important;
 }
 

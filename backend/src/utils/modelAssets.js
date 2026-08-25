@@ -11,13 +11,12 @@
 //   your own install is your call, which is why this is a button and not a
 //   background task.
 //
-//   PUBLISHED CATALOGS (~70 MB) — precomputed embeddings for a whole game,
-//   published by the model's author. Instant, but a dated snapshot: they are keyed
-//   by PROVIDER ids (Scryfall ids, TCGplayer product ids) rather than this
-//   install's card_cache ids, so a hit still has to be mapped back to a card the
-//   install knows — and for Pokemon only ~24% of those product ids map to a cached
-//   card. They also cannot be updated: a card printed after the snapshot date is
-//   simply not in them, and never will be.
+//   PUBLISHED CATALOG (~56 MB) — precomputed embeddings for the whole MTG card
+//   pool, published by the model's author. Instant, but a dated snapshot: it is
+//   keyed by Scryfall ids rather than this install's card_cache ids, so a hit
+//   still has to be mapped back to a card the install knows. It also cannot be
+//   updated: a card printed after the snapshot date is simply not in it, and
+//   never will be.
 //
 //   LOCAL BUILDS (catalog.js) — embeddings computed here from card_cache. Slower
 //   to create (minutes per set, hours for a whole game) but keyed by card_cache
@@ -45,10 +44,6 @@ const CATALOGS = [
   {
     name: 'milo-mtg.npz', repo: 'HanClinto/milo', game: 'mtg',
     file: 'catalogs/milo1-scryfall-mtg-2026-07-09.npz', bytes: 56252182, snapshot: '2026-07-09',
-  },
-  {
-    name: 'milo-pokemon.npz', repo: 'HanClinto/milo', game: 'pokemon',
-    file: 'catalogs/milo1-tcgplayer-pokemon-2026-05-07.npz', bytes: 13236761, snapshot: '2026-05-07',
   },
 ];
 
@@ -147,16 +142,8 @@ function start(what) {
       // A newly installed catalog or model has to be picked up without a restart.
       try {
         const cvScan = require('../cvScan');
-        for (const game of ['mtg', 'pokemon']) cvScan.reload(game);
+        cvScan.reload('mtg');
       } catch { /* nothing loaded yet is fine — the next scan loads it */ }
-      // The published Pokémon catalog is keyed by TCGplayer product id, and a
-      // product id names no card without the product map. Downloading one without
-      // the other is a scanner that matches and then says nothing, so the download
-      // pulls its own second half rather than leaving it as a step to discover.
-      if (what === 'catalog:pokemon') {
-        try { require('../tcgplayerCatalog').start(); }
-        catch (e) { console.warn(`product map not started: ${e.message}`); }
-      }
     } catch (e) {
       job.phase = 'error';
       job.message = e.message;

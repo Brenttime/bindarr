@@ -5,6 +5,5 @@
   "price-desc": [{ "by": "price", "dir": "desc" }],
   "set-number": [{ "by": "set", "dir": "asc" }],
   "set-number-printing": [{ "by": "set", "dir": "asc" }, { "by": "printing", "dir": "asc" }],
-  "type-name": [{ "by": "type", "dir": "asc" }, { "by": "name", "dir": "asc" }],
   "language": [{ "by": "language", "dir": "asc" }, { "by": "name", "dir": "asc" }]
 }

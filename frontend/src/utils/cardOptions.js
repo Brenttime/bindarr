@@ -4,32 +4,27 @@
 import { LANGUAGE_NAMES } from './languages';
 
 export const CONDITIONS = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged'];
-export const PRINTINGS = ['Normal', 'Holofoil', 'Reverse Holofoil', '1st Edition', 'Promo'];
+// The legal collection.printing values — Magic cards are Nonfoil or Foil only.
+// These match the CHECK constraint in db.js, so anything the UI can pick is
+// something the database accepts.
+export const PRINTINGS = ['Normal', 'Holofoil'];
 // Re-exported from the language registry so the entry forms, the search language
 // picker and the backend can never drift out of sync.
 export const LANGUAGES = LANGUAGE_NAMES;
 
-// MTG cards are only Nonfoil or Foil, never the Pokémon finishes. The foil
-// price is stored under the 'Holofoil' value (scryfall usd_foil), so we keep
-// that stored value (also what the DB CHECK allows) and just relabel it "Foil".
-const MTG_PRINTINGS = [{ value: 'Normal', label: 'Nonfoil' }, { value: 'Holofoil', label: 'Foil' }];
+// Magic cards are only Nonfoil or Foil. The foil price is stored under the
+// 'Holofoil' value (scryfall usd_foil), so we keep that stored value (also what
+// the DB CHECK allows) and just relabel it "Foil".
+export const PRINTING_OPTIONS = [
+  { value: 'Normal', label: 'Nonfoil' },
+  { value: 'Holofoil', label: 'Foil' },
+];
 
-// Printing/finish {value,label} options for a card's game. Value stays within
-// the collection.printing CHECK constraint; only the label is game-specific.
-export function getPrintings(game) {
-  if (String(game).toLowerCase() === 'mtg') return MTG_PRINTINGS;
-  return PRINTINGS.map(p => ({ value: p, label: p }));
+// Printing/finish options. Values stay within the collection.printing CHECK
+// constraint; this is the single MTG finish list.
+export function getPrintings() {
+  return PRINTING_OPTIONS;
 }
-
-// Grading companies, mirroring the collection.grader CHECK constraint in
-// backend/src/db.js. 'Raw' is the default and means ungraded — not unknown, so it
-// is a real option in the picker rather than an empty one.
-export const GRADERS = ['Raw', 'PSA', 'BGS', 'CGC', 'SGC', 'TAG'];
-
-// Grades a slab can carry, highest first because that is the order a collector
-// reads them in. PSA issues whole numbers plus 10; BGS and CGC add half grades, so
-// the list is the union and the picker is shared.
-export const GRADES = [10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5, 5, 4, 3, 2, 1];
 
 // A binder-family container lays out fixed pockets (Pages); other container
 // types (boxes, deck boxes) are continuous (Rows). Kept here so the several
@@ -46,7 +41,6 @@ const CONTAINER_TYPE_KEYS = {
   'Toploader Binder': 'toploaderBinder',
   'Box': 'box',
   'Toploader Box': 'toploaderBox',
-  'Graded Slab Box': 'gradedSlabBox',
   'Display Shelf / Stand': 'displayShelf',
   'Deck Box': 'deckBox',
   'Tin / Case': 'tinCase',

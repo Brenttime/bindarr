@@ -10,8 +10,8 @@ const router = express.Router();
 // backend/package.json is what the release workflow bumps, so it is the running
 // build's version. The repo-root package.json is not bumped and would lie.
 const APP_VERSION = require('../../package.json').version;
-const RELEASES_API = 'https://api.github.com/repos/thenotoriousJeremy/bindarr/releases/latest';
-const RELEASES_PAGE = 'https://github.com/thenotoriousJeremy/bindarr/releases';
+const RELEASES_API = 'https://api.github.com/repos/Brenttime/bindarr/releases/latest';
+const RELEASES_PAGE = 'https://github.com/Brenttime/bindarr/releases';
 // GitHub allows 60 unauthenticated calls/hour per IP, shared by every user of
 // this instance. Cache hard: a new release is not urgent to the minute.
 const UPDATE_CACHE_MS = 1000 * 60 * 60 * 6;
@@ -61,21 +61,17 @@ router.get('/version', async (req, res) => {
 
 async function getEffectiveSettings() {
   const row = await db.get(`
-    SELECT public_base_url, pokemon_provider,
+    SELECT public_base_url,
            scan_exclude_tokens, scan_exclude_art_cards, scan_exclude_jumpstart, scan_exclude_promos,
-           scan_exclude_digital, setup_complete,
+           setup_complete,
            moxfield_decklist_interval_min, moxfield_content_interval_min
     FROM app_settings WHERE id = 1
   `);
   const public_base_url = (row && row.public_base_url) || process.env.PUBLIC_BASE_URL || '';
-  const pokemon_provider = (row && row.pokemon_provider) || 'pokemontcg';
   const scan_exclude_tokens = !!(row && row.scan_exclude_tokens);
   const scan_exclude_art_cards = !!(row && row.scan_exclude_art_cards);
   const scan_exclude_jumpstart = !!(row && row.scan_exclude_jumpstart);
   const scan_exclude_promos = !!(row && row.scan_exclude_promos);
-  // Defaults ON, so a missing row (or a read before the migration lands) must
-  // read as excluded rather than as included — see the column comment in db.js.
-  const scan_exclude_digital = row ? !!row.scan_exclude_digital : true;
   const setup_complete = !!(row && row.setup_complete);
   // Moxfield sync cadence. The defaults mirror the migration (60 / 1) so a
   // pre-migration read never looks like "off".
@@ -83,12 +79,10 @@ async function getEffectiveSettings() {
   const moxfield_content_interval_min = row ? (row.moxfield_content_interval_min || 1) : 1;
   return {
     public_base_url,
-    pokemon_provider,
     scan_exclude_tokens,
     scan_exclude_art_cards,
     scan_exclude_jumpstart,
     scan_exclude_promos,
-    scan_exclude_digital,
     setup_complete,
     moxfield_decklist_interval_min,
     moxfield_content_interval_min,
@@ -109,40 +103,15 @@ router.get('/', async (req, res) => {
 router.put('/', requireAdmin, async (req, res) => {
   const {
     public_base_url,
-    pokemon_provider,
     scan_exclude_tokens,
     scan_exclude_art_cards,
     scan_exclude_jumpstart,
     scan_exclude_promos,
-    scan_exclude_digital,
     setup_complete,
     moxfield_decklist_interval_min,
     moxfield_content_interval_min,
   } = req.body;
 
-  if (pokemon_provider !== undefined) {
-    const want = pokemon_provider === 'tcgdex' ? 'tcgdex' : 'pokemontcg';
-    const before = await db.get(`SELECT pokemon_provider FROM app_settings WHERE id = 1`);
-    await db.run(`UPDATE app_settings SET pokemon_provider = ? WHERE id = 1`, [want]);
-    // Switching provider re-numbers everything downstream of it, and leaving the
-    // old numbering in place is worse than the switch itself: the `sets` table
-    // would list one provider's ids while new cards cache under the other's, and
-    // the TCGplayer product map resolves scans through set ids it took FROM that
-    // table. Both are rebuilt here, in the background — the set walk is one
-    // request plus a detail pass, the map is ~30 seconds.
-    if ((before && before.pokemon_provider ? before.pokemon_provider : 'pokemontcg') !== want) {
-      console.log(`Pokémon provider changed to ${want} — re-syncing sets and the TCGplayer product map.`);
-      (async () => {
-        try {
-          const source = want === 'tcgdex' ? require('../tcgdexApi') : require('../tcgApi');
-          await source.fetchAndCacheSets(true);
-          require('../tcgplayerCatalog').start();
-        } catch (e) {
-          console.error(`Provider switch follow-up failed: ${e.message}`);
-        }
-      })();
-    }
-  }
   if (scan_exclude_tokens !== undefined) {
     await db.run(`UPDATE app_settings SET scan_exclude_tokens = ? WHERE id = 1`, [scan_exclude_tokens ? 1 : 0]);
   }
@@ -154,9 +123,6 @@ router.put('/', requireAdmin, async (req, res) => {
   }
   if (scan_exclude_promos !== undefined) {
     await db.run(`UPDATE app_settings SET scan_exclude_promos = ? WHERE id = 1`, [scan_exclude_promos ? 1 : 0]);
-  }
-  if (scan_exclude_digital !== undefined) {
-    await db.run(`UPDATE app_settings SET scan_exclude_digital = ? WHERE id = 1`, [scan_exclude_digital ? 1 : 0]);
   }
   // Moxfield cadence: minutes, clamped to [1, 1440]. A non-numeric value is
   // rejected rather than coerced to the default, so a typo can't silently

@@ -1,14 +1,12 @@
 // Catalog builds: the one job that makes scanning work.
 //
-// A catalog is one (game, language) pair. Building it has two phases, and the
-// first is the one that was missing for years:
+// A catalog is one language. Building it has two phases, and the first is the
+// one that was missing for years:
 //
-//   1. CACHE — walk every set the provider lists and pull its cards into
+//   1. CACHE — walk every set Scryfall lists and pull its cards into
 //      card_cache. This used to happen only as a side effect of building an ORB
 //      scan index, so a set nobody indexed, searched or browsed simply was not
-//      there. Measured before this existed: Pokemon held 7,118 of 20,460 English
-//      cards (35%), with 104 of 174 sets holding a handful each — the ones the
-//      user happened to own.
+//      there.
 //   2. EMBED — run every cached card's artwork through milo and write the
 //      embedding table the scanner searches.
 //
@@ -23,13 +21,11 @@ const db = require('./db');
 const cardSets = require('./cardSets');
 const languages = require('./utils/languages');
 const cvScan = require('./cvScan');
-const pokemonProvider = require('./utils/pokemonProvider');
 
 const MODEL_DIR = process.env.CV_MODEL_DIR || path.join(__dirname, '..', 'data', 'models');
 const SIZE = 448;
 const MEAN = [0.485, 0.456, 0.406];
 const STD = [0.229, 0.224, 0.225];
-const GAMES = ['mtg', 'pokemon'];
 
 const suffix = (lang) => (!lang || lang === 'en' || lang === 'English' ? '' : `-${String(lang).toLowerCase()}`);
 const binPath = (game, lang) => path.join(MODEL_DIR, `milo-${game}${suffix(lang)}-local.bin`);
@@ -58,67 +54,24 @@ function stop() {
 // What exists, and how complete it is. The counts come from card_cache and the
 // set catalogue, so the UI can say "9,604 of 20,460 cards" rather than only
 // "built" — a catalog can be perfectly built and still cover a third of the game.
-// How many cards exist to cache for one (game, language) — the denominator behind
-// "21,844 of N cards downloaded".
-//
-// It has to come from whichever source actually FILLS card_cache, or the fraction
-// compares two different universes. Pokemon English read the `sets` table and
-// reported "21,844 of 20,460 known cards downloaded": that table is
-// pokemontcg.io's 174 sets while the cards came from TCGdex's 218, so the panel
-// claimed 107% coverage while also warning that 46 sets had no cards at all.
-//
-// Null when it cannot be asked — a missing number reads better than a wrong one.
-async function claimedFor(game, lang) {
-  if (game !== 'pokemon') return null;
-  // Which provider owns the ids in card_cache for this language. Asking the other
-  // one is exactly the mistake above.
-  if (!(await pokemonProvider.usesTcgdex(lang))) return null;
-  try {
-    const sets = await require('./tcgdexApi').listSets(lang);
-    return sets.reduce((n, s) => n + (s.total || s.printed_total || 0), 0) || null;
-  } catch {
-    return null;
-  }
-}
-
 // How many sets exist that this install has no cards for at all — a newly released
 // set, in other words. The weekly refresh keeps the set list current (server.js
 // calls fetchAndCacheSets with force), so a release surfaces here on its own.
 //
-// The comparison has to be done in the SAME id namespace as card_cache, and that
-// differs per game, which is the whole reason this is not one query:
-//
-//   MTG — the `sets` table stores ids prefixed ("mtg-fdn") while card_cache stores
-//   the bare Scryfall code ("fdn"). Comparing them raw reports every set as new;
-//   the first version of this function did exactly that and claimed 1047 of 1047.
-//
-//   Pokemon — the `sets` table is pokemontcg.io's numbering (base1, gym1) while
-//   card_cache holds whichever provider cached the card, usually TCGdex (A1,
-//   me02.5). There is no reliable mapping between them, so the set table cannot
-//   answer this at all: ask the provider that owns the ids instead.
+// The comparison has to be done in the SAME id namespace as card_cache: the
+// `sets` table stores ids prefixed ("mtg-fdn") while card_cache stores the bare
+// Scryfall code ("fdn"). Comparing them raw reports every set as new; the first
+// version of this function did exactly that and claimed 1047 of 1047.
 async function newSetCount(game, lang = 'English') {
   try {
     // Sets a build already found to have no usable data upstream. Counting them as
-    // "not built yet" told the user to build sets that cannot be built: measured on
-    // a real install, ALL 46 uncached English Pokemon sets were of this kind
-    // (Miscellaneous Promos, Jumbo cards, Sample, EX trainer kits...), so the number
-    // could never drop and the weekly auto-update would have rebuilt forever.
+    // "not built yet" told the user to build sets that cannot be built, so the
+    // number could never drop and the weekly auto-update would have rebuilt
+    // forever.
     const gaps = new Set((await db.all(
-      `SELECT set_id FROM set_data_gaps WHERE game = ? AND language = ?`, [game, lang]
+      `SELECT set_id FROM set_data_gaps WHERE language = ?`, [lang]
     ).catch(() => [])).map(r => String(r.set_id).toLowerCase()));
 
-    if (game === 'pokemon') {
-      const provider = require('./tcgdexApi');
-      const sets = await provider.listSets(lang);
-      if (!sets.length) return null;
-      const cached = new Set((await db.all(
-        `SELECT DISTINCT LOWER(set_id) sid FROM card_cache WHERE game = 'pokemon' AND language = ?`,
-        [lang]
-      )).map(r => r.sid));
-      return sets.filter(s => (s.total || s.printed_total || 0) > 0
-        && !cached.has(String(s.id).toLowerCase())
-        && !gaps.has(String(s.id).toLowerCase())).length;
-    }
     // Scoped to the language, or a Spanish catalog would be measured against the
     // ENGLISH cache and report whatever English happens to be missing: measured
     // 98 for both mtg/English and mtg/Spanish while the Spanish cache held 1,205
@@ -126,16 +79,16 @@ async function newSetCount(game, lang = 'English') {
     // catalog exists to ask, which is exactly how it would have shipped.
     const row = await db.get(
       `SELECT COUNT(*) n FROM sets s
-        WHERE s.game = ? AND COALESCE(s.total, 0) > 0
+        WHERE COALESCE(s.total, 0) > 0
           AND LOWER(CASE WHEN s.id LIKE 'mtg-%' THEN SUBSTR(s.id, 5) ELSE s.id END) NOT IN (
-            SELECT set_id FROM set_data_gaps WHERE game = s.game AND language = ?
+            SELECT set_id FROM set_data_gaps WHERE language = ?
           )
           AND NOT EXISTS (
             SELECT 1 FROM card_cache c
-             WHERE c.game = s.game AND c.language = ?
+             WHERE c.language = ?
                AND LOWER(c.set_id) = LOWER(CASE WHEN s.id LIKE 'mtg-%' THEN SUBSTR(s.id, 5) ELSE s.id END)
           )`,
-      [game, lang, lang]
+      [lang, lang]
     );
     return row ? row.n : null;
   } catch {
@@ -145,17 +98,16 @@ async function newSetCount(game, lang = 'English') {
 
 async function list() {
   const out = [];
-  for (const game of GAMES) {
+  for (const game of ['mtg']) {
     const langs = await db.all(
       `SELECT language, COUNT(*) cached,
               SUM(CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 1 ELSE 0 END) withArt
-         FROM card_cache WHERE game = ? GROUP BY language`,
-      [game]
+         FROM card_cache GROUP BY language`
     );
     // Always offer English even with an empty cache — that is exactly the state a
     // fresh install is in, and it is the case the build button exists for.
     if (!langs.some(l => l.language === 'English')) langs.unshift({ language: 'English', cached: 0, withArt: 0 });
-    const claimed = await db.get(`SELECT SUM(total) t FROM sets WHERE game = ?`, [game]);
+    const claimed = await db.get(`SELECT SUM(total) t FROM sets`);
     for (const l of langs) {
       const lang = l.language || 'English';
       let built = null;
@@ -172,15 +124,9 @@ async function list() {
       out.push({
         game, lang,
         cached: l.cached, withArt: l.withArt,
-        // A denominator, because "built, 3,297 cards" reads as complete and is not:
-        // TCGdex serves card data for 28 of the 177 Japanese Pokemon sets it lists,
-        // so the Japanese catalog covers ~3.3k of ~20k cards and every card outside
-        // it used to come back as the nearest wrong one. The `sets` table is a
-        // single English catalogue, so a non-English total has to come from the
-        // provider's own set list for that language.
-        // Provider-owned denominator first (Pokemon via TCGdex), falling back to the
-        // `sets` table, which is Scryfall-derived for MTG and so does match card_cache.
-        claimed: (await claimedFor(game, lang)) ?? (lang === 'English' ? (claimed?.t || 0) : null),
+        // A denominator, because "built, 3,297 cards" reads as complete and is not.
+        // The `sets` table is Scryfall-derived, so it matches card_cache.
+        claimed: lang === 'English' ? (claimed?.t || 0) : null,
         built,
         // Sets that exist and have NOTHING cached — which is what a newly released
         // set looks like. The panel's other warning compares cached against
@@ -190,8 +136,7 @@ async function list() {
         //
         // Only for a catalog that EXISTS: a language with nothing built has nothing
         // to have fallen behind, and asking anyway cost a provider round-trip per
-        // language on a list() the panel polls every second during a build — which
-        // made this function take longer than its own 120s test harness allowed.
+        // language on a list() the panel polls every second during a build.
         newSets: built ? await newSetCount(game, lang) : null,
         // The published fallback still answers when nothing local is built.
         published: !built && cvScan.isBuilt(game, lang),
@@ -201,51 +146,6 @@ async function list() {
   return out;
 }
 
-// Which non-English catalogs can actually be built, and the numbers that decide
-// whether one is worth the hours.
-//
-// Pokémon only, deliberately. Magic is printed in every language this app knows
-// (see utils/languages) and Scryfall serves all of them — but a non-English MTG
-// catalog would be a copy of the English one. Localized Magic printings are the
-// SAME sets with the SAME artwork, and the scanner matches artwork, so the English
-// catalog already identifies a Japanese card; the route re-expresses the hit by set
-// and number afterwards (cvScan.loadAll). Japanese Pokémon is the opposite case:
-// whole sets that never released in English, which nothing in the English catalog
-// can match.
-//
-// `claimed` counts every card the provider LISTS for that language, which is not
-// the same as what it will serve — TCGdex lists 177 Japanese sets and has card
-// records for 28 — so it is a ceiling, not a target. `withArt` is the honest
-// numerator: a card with no artwork can never be embedded.
-async function listLanguages(game = 'pokemon') {
-  if (game !== 'pokemon') return [];
-  const rows = await db.all(
-    `SELECT language, COUNT(*) cached,
-            SUM(CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 1 ELSE 0 END) withArt
-       FROM card_cache WHERE game = 'pokemon' GROUP BY language`
-  );
-  const have = new Map(rows.map(r => [r.language || 'English', r]));
-  const out = [];
-  for (const l of languages.LANGUAGES) {
-    if (languages.isEnglish(l.code)) continue;   // English is a row of its own
-    const name = languages.toName(l.code);
-    let sets = [];
-    try {
-      sets = await require('./tcgdexApi').listSets(l.code);
-    } catch { continue; }                        // provider unreachable: say nothing
-    const claimed = sets.reduce((n, s) => n + (s.total || s.printed_total || 0), 0);
-    if (!claimed) continue;                      // nothing published in this language
-    const h = have.get(name) || { cached: 0, withArt: 0 };
-    let built = null;
-    try {
-      if (fs.existsSync(metaPath(game, name))) {
-        built = { rows: JSON.parse(fs.readFileSync(metaPath(game, name), 'utf8')).ids.length };
-      }
-    } catch { built = null; }
-    out.push({ game, lang: name, code: l.code, sets: sets.length, claimed, cached: h.cached, withArt: h.withArt, built });
-  }
-  return out;
-}
 
 // Per-set counts for one (game, language): how many cards are cached, and how many
 // of those are actually IN the catalog the scanner searches.
@@ -253,9 +153,9 @@ async function listLanguages(game = 'pokemon') {
 // This exists because "which sets can I scan?" had no answer anywhere. Two
 // consequences, both silent before:
 //
-//   · The set filter lists the `sets` table, which for Pokemon is pokemontcg.io's
-//     numbering (base1, gym1) while card_cache holds TCGdex's (A1, me02.5, sv02) —
-//     51 of 172 cached set ids are not in that table at all. Picking one of those
+//   · The set filter lists the `sets` table, whose ids are the prefixed
+//     "mtg-<code>" form while card_cache holds the bare Scryfall code — 51 of
+//     172 cached set ids were not in that table at all. Picking one of those
 //     matched zero catalog rows, and cvScan fails OPEN, so the user got a
 //     full unscoped scan with no indication the filter had done nothing.
 //   · A set can be cached but not embedded (a build stopped, or a set released
@@ -265,9 +165,9 @@ async function listLanguages(game = 'pokemon') {
 async function setCounts(game, lang = 'English') {
   const rows = await db.all(
     `SELECT id, LOWER(set_id) sid FROM card_cache
-      WHERE game = ? AND language = ? AND set_id IS NOT NULL AND set_id != ''
+      WHERE language = ? AND set_id IS NOT NULL AND set_id != ''
         AND image_url IS NOT NULL AND image_url != ''`,
-    [game, lang]
+    [lang]
   );
   let embedded = null;
   try {
@@ -310,7 +210,7 @@ async function cachePhase(job) {
   // "the whole game" are one code path with a different list, not two builders.
   const sets = job.sets && job.sets.length
     ? job.sets
-    : await cardSets.listAllSets(job.game, job.lang);
+    : await cardSets.listAllSets(job.lang);
   job.phase = 'cache';
   job.total = sets.length;
   job.done = 0;
@@ -319,12 +219,12 @@ async function cachePhase(job) {
     if (job.cancelled) return { cards, failed, gaps, stopped: true };
     job.message = `${set}`;
     try {
-      const got = await cardSets.cacheSetCards(job.game, set, job.lang);
+      const got = await cardSets.cacheSetCards(set, job.lang);
       cards += got.length;
       // Data appeared for a set previously recorded as empty: forget the gap so it
       // counts as a normal set again.
-      await db.run(`DELETE FROM set_data_gaps WHERE game = ? AND language = ? AND set_id = ?`,
-        [job.game, job.lang, String(set).toLowerCase()]).catch(() => {});
+      await db.run(`DELETE FROM set_data_gaps WHERE language = ? AND set_id = ?`,
+        [job.lang, String(set).toLowerCase()]).catch(() => {});
     } catch (e) {
       // A set with no cards in this language is an expected gap, not a failure —
       // provider coverage is patchy per language and treating gaps as errors
@@ -335,8 +235,8 @@ async function cachePhase(job) {
         // Remember it, so the panel stops telling the user to build a set the
         // provider cannot serve and the auto-update stops chasing it.
         await db.run(
-          `INSERT OR REPLACE INTO set_data_gaps (game, language, set_id, reason) VALUES (?, ?, ?, ?)`,
-          [job.game, job.lang, String(set).toLowerCase(), e.message.slice(0, 200)]
+          `INSERT OR REPLACE INTO set_data_gaps (language, set_id, reason) VALUES (?, ?, ?)`,
+          [job.lang, String(set).toLowerCase(), e.message.slice(0, 200)]
         ).catch(() => {});
       }
     }
@@ -377,10 +277,10 @@ async function embedPhase(job) {
   const scoped = job.sets && job.sets.length;
   const rows = await db.all(
     `SELECT id, image_url FROM card_cache
-      WHERE game = ? AND language = ? AND image_url IS NOT NULL AND image_url != ''
+      WHERE language = ? AND image_url IS NOT NULL AND image_url != ''
         ${scoped ? `AND LOWER(set_id) IN (${job.sets.map(() => '?').join(',')})` : ''}
       ORDER BY id`,
-    scoped ? [job.game, job.lang, ...job.sets.map(s => String(s).toLowerCase())] : [job.game, job.lang]
+    scoped ? [job.lang, ...job.sets.map(s => String(s).toLowerCase())] : [job.lang]
   );
   job.phase = 'embed';
   job.total = rows.length;
@@ -411,22 +311,14 @@ async function embedPhase(job) {
   const inflight = new Map();
   const CONCURRENCY = 8;
 
-  // The image the SCANNER should match against, which is not always the one the UI
-  // displays. TCGdex's cached url is `/low.png` — 245x337, chosen so card grids do
-  // not pull 312 KB per thumbnail — and this resizes to 448, so every TCGdex row was
-  // embedded from an upscaled blur while the camera hands over a sharp 448 crop.
-  // The same asset at `/high.png` is 600x825.
-  //
-  // Swapped here rather than in tcgdexApi.imageUrl on purpose: card_cache's url is
-  // what the frontend renders, and making every grid thumbnail high-res would cost
-  // the whole app bandwidth to fix one pipeline.
-  const embedUrl = (row) => row.image_url.replace(/\/low\.png$/, '/high.png');
+  // The image the SCANNER should match against. Scryfall's url is a full-size
+  // render; nothing to swap.
+  const embedUrl = (row) => row.image_url;
 
   // Scryfall's image CDN rejects a request with no User-Agent — 400, not 403, which
-  // reads like a bad URL. Version comes from package.json rather than a literal: the
-  // one in tcgcsvApi said 1.6.1 through two releases.
+  // reads like a bad URL. Version comes from package.json rather than a literal.
   const HEADERS = {
-    'User-Agent': `Bindarr/${require('../package.json').version} (+https://github.com/thenotoriousJeremy/bindarr)`,
+    'User-Agent': `Bindarr/${require('../package.json').version} (+https://github.com/Brenttime/bindarr)`,
     Accept: 'image/*',
   };
   const fetchOne = async (row) => {
@@ -503,9 +395,40 @@ async function embedPhase(job) {
   return { built, reused, failed, wrote: true, rows: ids.length };
 }
 
+// Which non-English languages a catalog could be built for, and how much is
+// already cached for each. For MTG every language is available (Scryfall serves
+// them all), so this is just the card_cache counts per language — no provider
+// round-trip needed. A language with nothing cached yet is still a candidate:
+// building starts from an empty cache and fetches from the provider, so hiding
+// the unbuilt ones would make every non-English catalog unreachable on a fresh
+// install.
+async function listLanguages(game = 'mtg') {
+  if (game !== 'mtg') return [];
+  const rows = await db.all(
+    `SELECT language, COUNT(*) cached,
+            SUM(CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 1 ELSE 0 END) withArt
+       FROM card_cache GROUP BY language`
+  );
+  const have = new Map(rows.map(r => [r.language || 'English', r]));
+  const out = [];
+  for (const l of languages.LANGUAGES) {
+    if (languages.isEnglish(l.code)) continue;   // English is a row of its own
+    const name = languages.toName(l.code);
+    const h = have.get(name) || { cached: 0, withArt: 0 };
+    let built = null;
+    try {
+      if (fs.existsSync(metaPath(game, name))) {
+        built = { rows: JSON.parse(fs.readFileSync(metaPath(game, name), 'utf8')).ids.length };
+      }
+    } catch { built = null; }
+    out.push({ game, lang: name, code: l.code, cached: h.cached, withArt: h.withArt, built });
+  }
+  return out;
+}
+
 function start(game, lang = 'English', opts = {}) {
   if (current) throw new Error('a catalog build is already running');
-  if (!GAMES.includes(game)) throw new Error(`unknown game ${game}`);
+  if (game !== 'mtg') throw new Error(`unknown game ${game}`);
   const job = {
     game, lang: languages.toName(lang) || 'English',
     // Which sets this build covers, or empty for the whole game. Lowercased once
@@ -544,4 +467,4 @@ function start(game, lang = 'English', opts = {}) {
 let last = null;
 const lastResult = () => last;
 
-module.exports = { list, listLanguages, setCounts, keptFromPrev, start, stop, state, lastResult, binPath, metaPath };
+module.exports = { list, setCounts, keptFromPrev, start, stop, state, lastResult, listLanguages, binPath, metaPath };

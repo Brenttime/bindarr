@@ -4,7 +4,6 @@ import { TrendingUp, Coins, Library, Trophy, Plus, ArrowUpRight } from 'lucide-r
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
 import { getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
-import { defaultGameFilter, gameOptions, showGamePicker, gameLabel } from '../utils/games';
 import { useT } from '../utils/i18n';
 import CardInspectorModal from './CardInspectorModal';
 import CardImage from './CardImage';
@@ -15,17 +14,6 @@ const COLORS = [
 ];
 
 const TYPE_COLORS = {
-  'Grass': '#4ade80',
-  'Fire': '#f87171',
-  'Water': '#60a5fa',
-  'Lightning': '#facc15',
-  'Psychic': '#c084fc',
-  'Fighting': '#f97316',
-  'Darkness': '#475569',
-  'Metal': '#94a3b8',
-  'Dragon': '#a855f7',
-  'Fairy': '#f472b6',
-  'Colorless': '#cbd5e1',
   'White': '#fef08a',
   'Blue': '#3b82f6',
   'Black': '#334155',
@@ -43,9 +31,6 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [timePeriod, setTimePeriod] = useState('30d');
-  // '' | 'pokemon' | 'mtg'. Collapses to the only visible game when the other is
-  // hidden in Settings, so the totals never include cards the user cannot see.
-  const [gameFilter, setGameFilter] = useState(() => defaultGameFilter());
   
   // Timeline Chart State
   const [historyData, setHistoryData] = useState([]);
@@ -57,19 +42,19 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
   useEffect(() => {
     fetchStats();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statsTrigger, gameFilter]);
+  }, [statsTrigger]);
 
   useEffect(() => {
     if (stats && stats.summary.totalCards > 0) {
       fetchTimelineHistory();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timePeriod, stats, gameFilter]);
+  }, [timePeriod, stats]);
 
   const fetchStats = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/stats${gameFilter ? `?game=${gameFilter}` : ''}`);
+      const response = await fetch('/api/stats');
       if (!response.ok) {
         throw new Error(t('dash.errStats'));
       }
@@ -86,7 +71,7 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
   const fetchTimelineHistory = async () => {
     try {
       setLoadingHistory(true);
-      const response = await fetch(`/api/stats/history?period=${timePeriod}${gameFilter ? `&game=${gameFilter}` : ''}`);
+      const response = await fetch(`/api/stats/history?period=${timePeriod}`);
       if (response.ok) {
         const data = await response.json();
         setHistoryData(data);
@@ -96,29 +81,6 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
     } finally {
       setLoadingHistory(false);
     }
-  };
-
-  const renderGameTabs = () => {
-    // One game shown: "All" and that game are the same list, so there is nothing
-    // to switch between.
-    if (!showGamePicker()) return null;
-    return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-        <div className="sub-nav-tabs" style={{ margin: 0 }}>
-          {[['', t('dash.allGames')], ...gameOptions().map(g => [g.value, g.short])].map(([val, label]) => (
-            <button
-              key={val || 'all'}
-              type="button"
-              className={`sub-nav-tab ${gameFilter === val ? 'active' : ''}`}
-              style={{ padding: '0.35rem 0.85rem', fontSize: '0.75rem' }}
-              onClick={() => setGameFilter(val)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-    );
   };
 
   if (loading) {
@@ -135,23 +97,18 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
   }
 
   if (!stats || stats.summary.totalCards === 0) {
-    const isFiltered = Boolean(gameFilter);
-    const gameName = isFiltered ? gameLabel(gameFilter, true) : '';
     return (
-      <div>
-        {renderGameTabs()}
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-secondary)' }}>
-          <TrendingUp size={48} style={{ color: 'var(--accent-red)', marginBottom: '1.5rem', opacity: 0.8 }} />
-          <h2 style={{ color: 'var(--text-strong)', marginBottom: '0.5rem' }}>
-            {isFiltered ? t('dash.emptyFilteredTitle', { game: gameName }) : t('dash.emptyTitle')}
-          </h2>
-          <p style={{ maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
-            {isFiltered ? t('dash.emptyFilteredBody', { game: gameName }) : t('dash.emptyBody')}
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-            <div style={{ display: 'inline-block' }}>
-              <button className="btn btn-primary" onClick={() => onNavigate && onNavigate('add-cards')}>{t('dash.goToAddCards')}</button>
-            </div>
+      <div className="glass-panel" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-secondary)' }}>
+        <TrendingUp size={48} style={{ color: 'var(--accent-red)', marginBottom: '1.5rem', opacity: 0.8 }} />
+        <h2 style={{ color: 'var(--text-strong)', marginBottom: '0.5rem' }}>
+          {t('dash.emptyTitle')}
+        </h2>
+        <p style={{ maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
+          {t('dash.emptyBody')}
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+          <div style={{ display: 'inline-block' }}>
+            <button className="btn btn-primary" onClick={() => onNavigate && onNavigate('add-cards')}>{t('dash.goToAddCards')}</button>
           </div>
         </div>
       </div>
@@ -173,8 +130,6 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
 
   return (
     <div>
-      {renderGameTabs()}
-
       {/* Metrics Summary Grid */}
       <div className="metrics-grid">
         {/* Net Worth Card with historical switcher */}
@@ -195,7 +150,7 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
                     fontSize: '0.65rem',
                     border: 'none',
                     borderRadius: '3px',
-                    background: timePeriod === p ? 'var(--type-grass)' : 'transparent',
+                    background: timePeriod === p ? 'var(--success)' : 'transparent',
                     color: 'var(--text-strong)',
                     cursor: 'pointer',
                     fontWeight: 700,
@@ -297,8 +252,8 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
               <AreaChart data={historyData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--type-grass)" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="var(--type-grass)" stopOpacity={0.0}/>
+                    <stop offset="5%" stopColor="var(--success)" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="var(--success)" stopOpacity={0.0}/>
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="date" stroke="var(--text-secondary)" style={{ fontSize: '0.7rem' }} />
@@ -308,7 +263,7 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
                   labelStyle={{ color: 'var(--text-primary)' }}
                   formatter={(v) => [`$${v}`, t('dash.portfolioValue')]}
                 />
-                <Area type="monotone" dataKey="value" stroke="var(--type-grass)" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" />
+                <Area type="monotone" dataKey="value" stroke="var(--success)" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" />
               </AreaChart>
             </ResponsiveContainer>
           )}
@@ -346,7 +301,7 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
             {/* Type Distribution Donut Chart */}
             <div className="glass-panel">
-              <h3 className="chart-title">{t(gameFilter === 'mtg' ? 'dash.colorDistribution' : 'dash.typeDistribution')}</h3>
+              <h3 className="chart-title">{t('dash.colorDistribution')}</h3>
               <div className="chart-container" style={{ height: '220px' }}>
                 {typeChartData.length === 0 ? (
                   <div className="chart-empty">{t('dash.noTypeData')}</div>

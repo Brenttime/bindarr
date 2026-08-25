@@ -7,7 +7,7 @@
 // them inside an MIT-licensed artifact. Nothing runs this automatically.
 //
 //   node scripts/fetch-models.mjs                 # the two models (~9.6 MB)
-//   node scripts/fetch-models.mjs --catalogs      # ...plus MTG + Pokemon fallbacks (~70 MB)
+//   node scripts/fetch-models.mjs --catalogs      # ...plus the MTG fallback (~56 MB)
 //   node scripts/fetch-models.mjs --catalogs-only
 //
 // In a container:  docker exec bindarr node scripts/fetch-models.mjs
@@ -73,5 +73,5 @@ for (const item of wanted) {
 console.log(`${fetched} file(s) downloaded, ${wanted.length - fetched} already present.`);
 if (!args.has('--catalogs') && !args.has('--catalogs-only')) {
   console.log('Scanning needs a catalog as well as the models: build one from Admin → Catalogs,');
-  console.log('or pass --catalogs to also fetch the published MTG and Pokemon fallbacks.');
+  console.log('or pass --catalogs to also fetch the published MTG fallback.');
 }

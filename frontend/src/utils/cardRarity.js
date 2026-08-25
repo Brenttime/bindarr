@@ -1,46 +1,41 @@
-// Single source of truth for the rarity tiers used across the card
-// visualizers (card border glow, badge color, badge label).
+// Scryfall's complete rarity vocabulary. Keep this aligned with rarityRank() in
+// backend/src/utils/cardSort.js so client and server sorting never diverge.
+const RARITY_RANK = Object.freeze({
+  common: 1,
+  uncommon: 2,
+  rare: 3,
+  mythic: 4,
+  special: 5,
+  bonus: 6,
+});
+
+const BADGE_LABEL = Object.freeze({
+  common: 'COM',
+  uncommon: 'UNC',
+  rare: 'RARE',
+  mythic: 'MYTHIC',
+  special: 'SPECIAL',
+  bonus: 'BONUS',
+});
+
+const normalizeRarity = (rarity) => String(rarity || '').trim().toLowerCase();
+
+export function isPremiumRarity(rarity) {
+  return ['mythic', 'special', 'bonus'].includes(normalizeRarity(rarity));
+}
+
+// Single source of truth for the rarity tiers used across card border glow,
+// badge color, and badge label.
 export function getRarityTier(rarity) {
-  const r = (rarity || '').toLowerCase();
-  if (r.includes('secret') || r.includes('ultra') || r.includes('hyper') || r.includes('illustration') || r.includes('double rare') || r.includes('shiny rare') || r.includes('classic collection')) {
-    return 'top';
-  }
-  if (r.includes('rare') || r.includes('promo')) return 'rare';
-  if (r.includes('uncommon')) return 'uncommon';
+  const value = normalizeRarity(rarity);
+  if (isPremiumRarity(value)) return 'top';
+  if (value === 'rare') return 'rare';
+  if (value === 'uncommon') return 'uncommon';
   return 'common';
 }
 
-// Scarcity rank for sorting: higher = rarer. Checked rarest-keyword first so
-// "Rare Secret" scores as secret, not plain rare, and "Uncommon" before
-// "Common" (it contains the substring). Unknown rarities score 0 (before
-// Common on ascending). Must stay aligned with rarityRank() in
-// backend/src/utils/cardSort.js so display order matches.
-const RARITY_RANK = [
-  { kw: 'classic collection', rank: 16 },
-  { kw: 'hyper', rank: 15 },
-  { kw: 'special illustration', rank: 14 },
-  { kw: 'illustration', rank: 13 },
-  { kw: 'secret', rank: 12 },
-  { kw: 'ultra', rank: 11 },
-  { kw: 'radiant', rank: 10 },
-  { kw: 'amazing', rank: 9 },
-  { kw: 'shiny', rank: 8 },
-  { kw: 'double rare', rank: 7 },
-  { kw: 'mythic', rank: 6 },
-  { kw: 'rare holo', rank: 5 },
-  { kw: 'holo rare', rank: 5 },
-  { kw: 'promo', rank: 4 },
-  { kw: 'rare', rank: 3 },
-  { kw: 'uncommon', rank: 2 },
-  { kw: 'common', rank: 1 },
-];
-
 export function getRarityRank(rarity) {
-  const r = (rarity || '').toLowerCase();
-  for (const { kw, rank } of RARITY_RANK) {
-    if (r.includes(kw)) return rank;
-  }
-  return 0;
+  return RARITY_RANK[normalizeRarity(rarity)] || 0;
 }
 
 export function getCardRarityBorder(rarity) {
@@ -79,12 +74,6 @@ export function getRarityBadgeStyle(rarity) {
 }
 
 export function getRarityBadgeLabel(rarity) {
-  const r = (rarity || '').toLowerCase();
-  if (r.includes('secret') || r.includes('ultra') || r.includes('hyper') || r.includes('illustration')) return 'ULTRA';
-  if (r.includes('double rare')) return 'DR';
-  if (r.includes('shiny rare')) return 'SR';
-  if (r.includes('rare')) return 'RARE';
-  if (r.includes('promo')) return 'PROMO';
-  if (r.includes('uncommon')) return 'UNC';
-  return 'COM';
+  const value = normalizeRarity(rarity);
+  return BADGE_LABEL[value] || (value ? value.slice(0, 8).toUpperCase() : '—');
 }
