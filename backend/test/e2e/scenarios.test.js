@@ -201,6 +201,42 @@ async function runTests() {
       throw err;
     }
 
+    // F6-TC6: checkout ignores basic lands, still enforces non-basic cards
+    // Seed two cache rows directly: a basic land and a spell, neither owned.
+    await db.run(`INSERT INTO card_cache (id, name, supertype, subtypes, set_id, number) VALUES (?,?,?,?,?,?)`,
+      ['smoke-plains', 'Plains', 'Land', '["Basic","Land"]', 'jud', '262']);
+    await db.run(`INSERT INTO card_cache (id, name, supertype, subtypes, set_id, number) VALUES (?,?,?,?,?,?)`,
+      ['smoke-bolt', 'Lightning Bolt', 'Instant', '["Instant","Spell"]', 'jud', '124']);
+    const deckBasics = await db.run(
+      `INSERT INTO decks (name, user_id, format, category, accent_color, target_size) VALUES ('Basic-only deck', ?, 'Standard', 'competitive', '#10b981', 60)`,
+      [adminId]);
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?,?,?)`,
+      [deckBasics.lastID, 'smoke-plains', 4]);
+    const deckSpell = await db.run(
+      `INSERT INTO decks (name, user_id, format, category, accent_color, target_size) VALUES ('Spell-short deck', ?, 'Standard', 'competitive', '#10b981', 60)`,
+      [adminId]);
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?,?,?)`,
+      [deckSpell.lastID, 'smoke-bolt', 1]);
+
+    // A deck whose only shortfall is basic lands must check out: the wizard
+    // and the endpoint use the same isBasicLand rule, so the user is never
+    // bounced by the API after the wizard said "fully covered".
+    const resBasics = await fetch(`http://localhost:${port}/api/decks/${deckBasics.lastID}/checkout`, {
+      method: 'PUT', headers: authHeaders
+    });
+    assert.strictEqual(resBasics.status, 200, 'checkout must ignore missing basic lands');
+    assert.strictEqual((await resBasics.json()).message, 'Deck checked out successfully');
+
+    // A deck short on a NON-basic card must still be rejected.
+    const resSpell = await fetch(`http://localhost:${port}/api/decks/${deckSpell.lastID}/checkout`, {
+      method: 'PUT', headers: authHeaders
+    });
+    assert.strictEqual(resSpell.status, 400, 'checkout must still enforce non-basic cards');
+    const spellErr = await resSpell.json();
+    assert.ok((spellErr.details || []).some(d => d.includes('Lightning Bolt')),
+      'the deficit must name the non-basic card');
+    console.log('PASS: F6-TC6');
+
   } finally {
     try { server.kill('SIGKILL'); } catch {}
     try {
