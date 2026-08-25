@@ -309,11 +309,14 @@ router.put('/:id/checkout', async (req, res) => {
       return res.status(404).json({ error: 'Deck not found or unauthorized' });
     }
 
-    // Validate that we have enough cards physically available
+    // Validate that we have enough cards physically available. Basic lands are
+    // ignored: anyone who plays the format owns a set of them, so a short basic
+    // land is never a reason the deck can't go out the door. The same
+    // isBasicLand helper the wizard and deck builder use, so all three agree.
     const validationQuery = `
       SELECT 
         dc.card_id, 
-        cc.name, cc.printed_name, 
+        cc.name, cc.printed_name, cc.supertype, cc.subtypes, 
         dc.quantity AS required_qty,
         (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ?) AS owned_qty,
         (SELECT COALESCE(SUM(dc2.quantity), 0) FROM deck_cards dc2 JOIN decks d2 ON dc2.deck_id = d2.id WHERE d2.checked_out = 1 AND d2.user_id = ? AND d2.id != ? AND dc2.card_id = dc.card_id) AS locked_qty
@@ -325,6 +328,7 @@ router.put('/:id/checkout', async (req, res) => {
     
     let errors = [];
     for (const card of cards) {
+      if (isBasicLand({ name: card.name, supertype: card.supertype, subtypes: card.subtypes })) continue;
       const available = card.owned_qty - card.locked_qty;
       if (card.required_qty > available) {
         const deficit = card.required_qty - available;
