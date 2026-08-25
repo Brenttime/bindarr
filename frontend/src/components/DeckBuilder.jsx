@@ -315,10 +315,12 @@ function DeckBuilder({ showToast, onNavigate }) {
           // representative image while summing every physical printing owned.
           const byCardName = new Map();
           for (const item of data) {
+            const quantity = Number(item.quantity);
+            if (!Number.isFinite(quantity) || quantity <= 0) continue;
             const key = cardKey(item);
             const existing = byCardName.get(key);
             if (existing) {
-              existing.owned_qty += item.quantity || 1;
+              existing.owned_qty += quantity;
             } else {
               byCardName.set(key, {
                 id: item.card_id,
@@ -327,7 +329,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 set_name: item.set_name,
                 number: item.number || item.collector_number || item.card_number || '',
                 image_url: item.image_url,
-                owned_qty: item.quantity || 1,
+                owned_qty: quantity,
                 supertype: item.supertype,
                 subtypes: item.subtypes,
                 types: item.types,

@@ -81,7 +81,10 @@ router.get('/', async (req, res) => {
         d.checked_out_at,
         d.source,
         COUNT(DISTINCT CASE
-          WHEN dc.quantity > 0 THEN COALESCE(${sqlCardKey('deck_cc')}, 'missing:' || dc.card_id)
+          WHEN dc.quantity > 0 THEN CASE
+            WHEN deck_cc.id IS NULL THEN 'missing:' || dc.card_id
+            ELSE ${sqlCardKey('deck_cc')}
+          END
         END) as total_card_types,
         COALESCE(SUM(CASE WHEN dc.quantity > 0 THEN dc.quantity ELSE 0 END), 0) as total_cards,
         COUNT(DISTINCT CASE WHEN dc.quantity > 0 AND deck_cc.id IS NULL THEN dc.card_id END) as unresolved_card_types
@@ -196,6 +199,7 @@ router.get('/:id', async (req, res) => {
           FROM collection owned
           JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
           WHERE owned.user_id = ?
+            AND owned.quantity > 0
             AND ${sqlCardKey('owned_cc')} = requested.card_key
         ) AS owned_qty
       FROM requested
@@ -225,6 +229,16 @@ router.get('/:id/locations', async (req, res) => {
   try {
     const deck = await db.get(`SELECT id FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (!deck) return res.status(404).json({ error: 'Deck not found' });
+
+    const unresolved = await db.get(`
+      SELECT COUNT(*) AS count
+      FROM deck_cards dc
+      LEFT JOIN card_cache cc ON cc.id = dc.card_id
+      WHERE dc.deck_id = ? AND dc.quantity > 0 AND cc.id IS NULL
+    `, [id]);
+    if (unresolved && unresolved.count > 0) {
+      return res.status(422).json({ error: 'Deck contains cards with missing metadata' });
+    }
 
     const cards = await getDeckCoverageRows(id, req.user.id);
 

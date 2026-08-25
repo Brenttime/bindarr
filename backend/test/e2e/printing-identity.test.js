@@ -144,31 +144,31 @@ async function runTests() {
       INSERT INTO collection (card_id, user_id, quantity, condition, printing, language)
       VALUES ('stack-a', ?, 1, 'Near Mint', 'Normal', 'English')
     `, [userId]);
-    await db.run(`
+    const destinationStack = await db.run(`
       INSERT INTO collection (card_id, user_id, quantity, condition, printing, language)
       VALUES ('stack-a', ?, 4, 'Lightly Played', 'Normal', 'English')
     `, [userId]);
     const stackDeck = await createDeck('Metadata stack reduction guard');
-    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'stack-a', 5)`, [stackDeck]);
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'stack-a', 3)`, [stackDeck]);
     assert.strictEqual((await fetch(api(`/decks/${stackDeck}/checkout`), { method: 'PUT', headers: auth })).status, 200);
+    const negativeLegacy = await db.run(`
+      INSERT INTO collection (card_id, user_id, quantity, condition, printing, language)
+      VALUES ('stack-a', ?, -2, 'Lightly Played', 'Normal', 'English')
+    `, [userId]);
     const mergeReduction = await fetch(api(`/collection/${stackEntry.lastID}`), {
       method: 'PUT', headers: json, body: JSON.stringify({ condition: 'Lightly Played', quantity: 1 })
     });
     assert.strictEqual(mergeReduction.status, 409, 'target-stack merge cannot undercut checked-out demand');
     const stackState = await db.get(`
-      SELECT SUM(quantity) AS owned,
+      SELECT SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) AS owned,
              SUM(CASE WHEN id = ? AND condition = 'Near Mint' THEN 1 ELSE 0 END) AS original_unchanged
       FROM collection WHERE user_id = ? AND card_id = 'stack-a'
     `, [stackEntry.lastID, userId]);
     assert.strictEqual(stackState.owned, 5);
     assert.strictEqual(stackState.original_unchanged, 1);
-    const negativeLegacy = await db.run(`
-      INSERT INTO collection (card_id, user_id, quantity, condition, printing, language)
-      VALUES ('stack-a', ?, -10, 'Damaged', 'Normal', 'English')
-    `, [userId]);
     const guardedBulkDelete = await fetch(api('/collection/bulk'), {
       method: 'POST', headers: json,
-      body: JSON.stringify({ entry_ids: [stackEntry.lastID, negativeLegacy.lastID], action: 'delete' })
+      body: JSON.stringify({ entry_ids: [destinationStack.lastID, negativeLegacy.lastID], action: 'delete' })
     });
     assert.strictEqual(guardedBulkDelete.status, 409, 'negative legacy rows cannot mask a reserved positive deletion');
     await db.run(`DELETE FROM collection WHERE id = ?`, [negativeLegacy.lastID]);
@@ -243,12 +243,13 @@ async function runTests() {
     assert.strictEqual(zeroSummary.total_card_types, 0);
     assert.strictEqual(zeroSummary.total_cards, 0);
     await db.run(`INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, 'missing-list-card', 1)`, [listId]);
+    await db.run(`INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, 'missing-list-card-2', 1)`, [listId]);
     zeroSummary = (await fetch(api('/lists'), { headers: auth }).then(r => r.json())).find(row => row.id === listId);
-    assert.strictEqual(zeroSummary.total_card_types, 1);
-    assert.strictEqual(zeroSummary.unresolved_card_types, 1);
+    assert.strictEqual(zeroSummary.total_card_types, 2, 'distinct positive list orphans stay distinct');
+    assert.strictEqual(zeroSummary.unresolved_card_types, 2);
     assert.strictEqual((await fetch(api(`/lists/${listId}`), { headers: auth })).status, 422);
     assert.strictEqual((await fetch(api(`/lists/${listId}/cardlist`), { headers: auth })).status, 422);
-    await db.run(`DELETE FROM list_cards WHERE list_id = ? AND card_id = 'missing-list-card'`, [listId]);
+    await db.run(`DELETE FROM list_cards WHERE list_id = ? AND card_id LIKE 'missing-list-card%'`, [listId]);
 
     const physicalExport = await fetch(api('/collection/cardlist'), { headers: auth });
     assert.strictEqual(physicalExport.status, 200);
@@ -262,10 +263,13 @@ async function runTests() {
     await db.run('PRAGMA foreign_keys = ON');
 
     await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'missing-deck-card', 1)`, [legacy]);
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'missing-deck-card-2', 1)`, [legacy]);
     const deckSummary = (await fetch(api('/decks'), { headers: auth }).then(r => r.json())).find(row => row.id === legacy);
-    assert.strictEqual(deckSummary.unresolved_card_types, 1);
+    assert.strictEqual(deckSummary.total_card_types, 3, 'two distinct positive deck orphans remain separate from the valid card');
+    assert.strictEqual(deckSummary.unresolved_card_types, 2);
     assert.strictEqual((await fetch(api(`/decks/${legacy}`), { headers: auth })).status, 422);
-    await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND card_id = 'missing-deck-card'`, [legacy]);
+    assert.strictEqual((await fetch(api(`/decks/${legacy}/locations`), { headers: auth })).status, 422);
+    await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND card_id LIKE 'missing-deck-card%'`, [legacy]);
     console.log('PASS: F8-TC7');
 
     // F8-TC8: disabling or removing Moxfield tracking cannot discard a checked-out mirror.
@@ -333,6 +337,53 @@ async function runTests() {
       moxfieldApi.getDeckDetails = originalGetDeckDetails;
     }
     await moxfieldSync.removeAuthor(userId, author.lastID);
+
+    // Discovery that finishes after author removal must not create an orphan
+    // tracking row or local mirror.
+    const discoveryAuthor = await db.run(
+      `INSERT INTO moxfield_authors (user_id, moxfield_user) VALUES (?, 'discovery-race')`,
+      [userId]
+    );
+    const originalGetUser = moxfieldApi.getUser;
+    const originalGetSummaries = moxfieldApi.getAuthorDeckSummaries;
+    let markDiscoveryStarted;
+    const discoveryStarted = new Promise(resolve => { markDiscoveryStarted = resolve; });
+    let releaseDiscovery;
+    moxfieldApi.getUser = async () => ({ userName: 'discovery-race', displayName: 'Discovery Race', profileImageUrl: null });
+    moxfieldApi.getAuthorDeckSummaries = async () => {
+      markDiscoveryStarted();
+      return new Promise(resolve => {
+        releaseDiscovery = () => resolve([{
+          publicId: 'stale-discovery-deck', name: 'Stale Discovery', format: 'commander', lastUpdatedAtUtc: '2026-08-25T00:00:00Z'
+        }]);
+      });
+    };
+    try {
+      const staleDiscovery = moxfieldSync.syncDecklist(discoveryAuthor.lastID, { user: { id: userId } });
+      await discoveryStarted;
+      await moxfieldSync.removeAuthor(userId, discoveryAuthor.lastID);
+      releaseDiscovery();
+      const staleReport = await staleDiscovery;
+      assert.strictEqual(staleReport.stale, true);
+      assert.strictEqual(await db.get(`SELECT id FROM moxfield_decks WHERE public_id = 'stale-discovery-deck'`), undefined);
+      assert.strictEqual(await db.get(`SELECT id FROM decks WHERE moxfield_public_id = 'stale-discovery-deck'`), undefined);
+    } finally {
+      moxfieldApi.getUser = originalGetUser;
+      moxfieldApi.getAuthorDeckSummaries = originalGetSummaries;
+    }
+
+    const brainstormBeforeRollback = (await db.get(
+      `SELECT COUNT(*) AS count FROM collection WHERE user_id = ? AND card_id = 'brain-a'`,
+      [userId]
+    )).count;
+    await assert.rejects(db.withDedicatedTransaction(async tx => {
+      await tx.run(`INSERT INTO collection (card_id, user_id, quantity) VALUES ('brain-a', ?, 1)`, [userId]);
+      throw new Error('injected rollback probe');
+    }), /injected rollback probe/);
+    assert.strictEqual(
+      (await db.get(`SELECT COUNT(*) AS count FROM collection WHERE user_id = ? AND card_id = 'brain-a'`, [userId])).count,
+      brainstormBeforeRollback
+    );
     console.log('PASS: F8-TC8');
 
     // F8-TC9: deck registration remains additive and printing-specific at the physical collection boundary.

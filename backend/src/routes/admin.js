@@ -44,8 +44,8 @@ router.post('/seed-cards', async (req, res) => {
     const seedSetIds = [...new Set(MOCK_POOL.map(c => c.set_id))];
     const seedSetPlaceholders = seedSetIds.map(() => '?').join(',');
     let addedCount = 0;
-    await withAllocationLock(async () => {
-      const removals = await db.all(
+    await withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+      const removals = await tx.all(
         `SELECT MIN(c.card_id) AS card_id, SUM(c.quantity) AS remove_qty
          FROM collection c
          JOIN card_cache removed_cc ON removed_cc.id = c.card_id
@@ -55,7 +55,7 @@ router.post('/seed-cards', async (req, res) => {
         [req.user.id, ...seedSetIds]
       );
       for (const removal of removals) {
-        const status = await logicalInventoryStatus(db, req.user.id, removal.card_id);
+        const status = await logicalInventoryStatus(tx, req.user.id, removal.card_id);
         if (!status || Number(status.owned_qty) - Number(removal.remove_qty) < Number(status.locked_qty)) {
           const conflict = new Error('Check in decks using these cards before replacing the seed collection.');
           conflict.code = 'ALLOCATION_CONFLICT';
@@ -63,7 +63,7 @@ router.post('/seed-cards', async (req, res) => {
         }
       }
 
-      await db.run(
+      await tx.run(
         `DELETE FROM collection WHERE user_id = ? AND card_id IN (
            SELECT id FROM card_cache WHERE set_id IN (${seedSetPlaceholders})
          )`,
@@ -95,7 +95,7 @@ router.post('/seed-cards', async (req, res) => {
 
       const insertSeedEntry = async (maxPrice) => {
         const e = randomEntry(maxPrice);
-        await db.run(`
+        await tx.run(`
           INSERT INTO collection (card_id, quantity, condition, printing, language, purchase_price, user_id)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `, [e.card.id, e.qty, e.condition, e.print, e.language, e.purchasePrice, req.user.id]);
@@ -106,7 +106,7 @@ router.post('/seed-cards', async (req, res) => {
       // seed filled 12 binder pages + 4 box rows; same card count, no storage).
       for (let i = 0; i < 168; i++) await insertSeedEntry(10);
       for (let i = 0; i < 40; i++) await insertSeedEntry(5);
-    });
+    }));
 
     res.json({ message: `Successfully seeded a large test collection: ${addedCount} cards for admin user.` });
   } catch (error) {

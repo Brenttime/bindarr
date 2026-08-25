@@ -34,7 +34,7 @@ async function attachOwnedQty(cards, userId) {
      LEFT JOIN card_cache owned_cc
        ON ${sqlCardKey('owned_cc')} = ${sqlCardKey('target')}
      LEFT JOIN collection c
-       ON c.card_id = owned_cc.id AND c.user_id = ?
+       ON c.card_id = owned_cc.id AND c.user_id = ? AND c.quantity > 0
      WHERE target.id IN (${ids.map(() => '?').join(',')})
      GROUP BY target.id`,
     [userId, ...ids]
@@ -477,13 +477,16 @@ router.put('/collection/:id', async (req, res) => {
           SELECT quantity
           FROM collection
           WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ?
-            AND language = ? AND id != ?
+            AND language = ? AND id != ? AND quantity > 0
         `, [
           req.user.id, currentEntry.card_id, targetCondition, targetPrinting,
           targetLanguage, id
         ]);
-        const projectedStackQty = (Number(currentEntry.quantity) || 1)
-          + targetSiblings.reduce((sum, sibling) => sum + (Number(sibling.quantity) || 1), 0);
+        const projectedStackQty = Math.max(0, Number(currentEntry.quantity) || 0)
+          + targetSiblings.reduce(
+            (sum, sibling) => sum + Math.max(0, Number(sibling.quantity) || 0),
+            0
+          );
         const reduction = Math.max(0, projectedStackQty - requestedQty);
         if (reduction > 0) {
           const status = await logicalInventoryStatus(db, req.user.id, currentEntry.card_id);

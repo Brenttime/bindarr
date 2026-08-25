@@ -29,7 +29,10 @@ router.get('/', async (req, res) => {
       `SELECT
          l.id, l.name, l.description, l.accent_color, l.created_at,
          COUNT(DISTINCT CASE
-           WHEN lc.quantity > 0 THEN COALESCE(${sqlCardKey('list_cc')}, 'missing:' || lc.card_id)
+           WHEN lc.quantity > 0 THEN CASE
+             WHEN list_cc.id IS NULL THEN 'missing:' || lc.card_id
+             ELSE ${sqlCardKey('list_cc')}
+           END
          END) AS total_card_types,
          COALESCE(SUM(CASE WHEN lc.quantity > 0 THEN lc.quantity ELSE 0 END), 0) AS total_cards,
          COUNT(DISTINCT CASE WHEN lc.quantity > 0 AND list_cc.id IS NULL THEN lc.card_id END) AS unresolved_card_types

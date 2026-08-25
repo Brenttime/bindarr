@@ -104,7 +104,7 @@ async function stackSiblings(dbClient, userId, row, entryId) {
   return dbClient.all(`
     SELECT id, quantity FROM collection
     WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ?
-      AND language = ? AND id != ?
+      AND language = ? AND id != ? AND quantity > 0
     ORDER BY id DESC
   `, [userId, row.card_id, row.condition, row.printing, row.language, entryId]);
 }
@@ -122,7 +122,8 @@ async function setStackQuantity(database, userId, entryId, target) {
   if (!row) return 0;
   const siblings = await stackSiblings(dbClient, userId, row, entryId);
 
-  const start = (row.quantity || 1) + siblings.reduce((n, s) => n + (s.quantity || 1), 0);
+  const start = Math.max(0, Number(row.quantity) || 0)
+    + siblings.reduce((n, s) => n + Math.max(0, Number(s.quantity) || 0), 0);
   let current = start;
 
   for (let i = 0; current < target; i++, current++) {
@@ -139,7 +140,7 @@ async function setStackQuantity(database, userId, entryId, target) {
 
   for (const s of siblings) {
     if (current <= target) break;
-    const have = s.quantity || 1;
+    const have = Math.max(0, Number(s.quantity) || 0);
     const drop = Math.min(have, current - target);
     current -= drop;
     if (drop >= have) {

@@ -107,6 +107,60 @@ async function withTransaction(fn) {
   }
 }
 
+// Run genuinely atomic multi-statement work on a dedicated connection. The
+// process-wide connection cannot provide transaction ownership across awaits:
+// unrelated requests can enqueue work into its open transaction. A dedicated
+// connection keeps rollback boundaries honest while BEGIN IMMEDIATE excludes
+// competing writers until commit.
+async function withDedicatedTransaction(fn) {
+  const connection = await new Promise((resolve, reject) => {
+    const candidate = new sqlite3.Database(dbPath, (error) => {
+      if (error) reject(error);
+      else resolve(candidate);
+    });
+  });
+  const client = {
+    run(sql, params = []) {
+      return new Promise((resolve, reject) => {
+        connection.run(sql, params, function (error) {
+          if (error) reject(error);
+          else resolve({ lastID: this.lastID, changes: this.changes });
+        });
+      });
+    },
+    get(sql, params = []) {
+      return new Promise((resolve, reject) => {
+        connection.get(sql, params, (error, row) => error ? reject(error) : resolve(row));
+      });
+    },
+    all(sql, params = []) {
+      return new Promise((resolve, reject) => {
+        connection.all(sql, params, (error, rows) => error ? reject(error) : resolve(rows));
+      });
+    }
+  };
+
+  try {
+    await client.run('PRAGMA foreign_keys = ON');
+    await client.run('PRAGMA busy_timeout = 5000');
+    await client.run('BEGIN IMMEDIATE TRANSACTION');
+    try {
+      const result = await fn(client);
+      await client.run('COMMIT');
+      return result;
+    } catch (error) {
+      try { await client.run('ROLLBACK'); } catch (rollbackError) {
+        console.error('SQLite rollback failed:', rollbackError.message);
+      }
+      throw error;
+    }
+  } finally {
+    await new Promise((resolve, reject) => {
+      connection.close(error => error ? reject(error) : resolve());
+    });
+  }
+}
+
 const PBKDF2_ITERATIONS = 210000;
 
 function hashPassword(password) {
@@ -902,6 +956,7 @@ module.exports = {
   get,
   all,
   withTransaction,
+  withDedicatedTransaction,
   initDb,
   adoptOrphanRows,
   hashPassword,

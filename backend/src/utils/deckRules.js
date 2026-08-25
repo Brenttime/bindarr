@@ -41,7 +41,8 @@ async function validateDeckAddition({ deckId, userId, cardId, newQty, dbClient }
     `SELECT COALESCE(SUM(c.quantity), 0) AS owned
      FROM collection c
      JOIN card_cache owned_cc ON owned_cc.id = c.card_id
-     WHERE c.user_id = ? AND ${sqlCardKey('owned_cc')} = LOWER(TRIM(?))`,
+     WHERE c.user_id = ? AND c.quantity > 0
+       AND ${sqlCardKey('owned_cc')} = LOWER(TRIM(?))`,
     [userId, card.name]
   );
   const owned = ownedRow ? ownedRow.owned : 0;
