@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const cardApi = require('../utils/cardApi');
 const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
-const { validateDeckAddition } = require('../utils/deckRules');
+const { validateDeckAddition, isBasicLand } = require('../utils/deckRules');
 
 const router = express.Router();
 
@@ -145,7 +145,7 @@ router.get('/:id/locations', async (req, res) => {
     const cards = await db.all(`
       SELECT
         dc.card_id,
-        cc.name, cc.printed_name, cc.set_name, cc.number, cc.image_url,
+        cc.name, cc.printed_name, cc.supertype, cc.subtypes, cc.set_name, cc.number, cc.image_url,
         dc.quantity AS required_qty,
         (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ?) AS owned_qty,
         (SELECT COALESCE(SUM(dc2.quantity), 0) FROM deck_cards dc2 JOIN decks d2 ON dc2.deck_id = d2.id WHERE d2.checked_out = 1 AND d2.user_id = ? AND d2.id != ? AND dc2.card_id = dc.card_id) AS locked_qty
@@ -169,7 +169,10 @@ router.get('/:id/locations', async (req, res) => {
         in_use: card.locked_qty,
         available: Math.max(0, available),
         missing,
-        covered: missing === 0
+        covered: missing === 0,
+        // Checkout ignores basic lands: they are not counted against coverage.
+        // The same helper the deck builder uses, so the two can never drift.
+        is_basic_land: isBasicLand({ name: card.name, supertype: card.supertype, subtypes: card.subtypes })
       };
     });
 
