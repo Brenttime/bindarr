@@ -10,6 +10,7 @@ import { useBackGuard } from '../utils/useBackGuard';
 import { buildDeckExport, parseDeckLine } from '../utils/deckText';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
+import { canRegisterDeckInCollection, deckRegistrationCardCount } from '../utils/deckCollectionRegistration';
 
 // Basic Lands are exempt from the "max 4 of a card" deck rule.
 const isBasicLand = (card) => {
@@ -90,6 +91,7 @@ function DeckBuilder({ showToast, onNavigate }) {
 
   // Checkout States
   const [checkingOut, setCheckingOut] = useState(false);
+  const [registeringDeck, setRegisteringDeck] = useState(false);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [checkoutLocations, setCheckoutLocations] = useState([]);
   const [checkoutMode, setCheckoutMode] = useState('checkout'); // 'checkout' | 'checkin'
@@ -360,6 +362,33 @@ function DeckBuilder({ showToast, onNavigate }) {
   };
 
   // --- CHECKOUT / RETURN ---
+  const handleRegisterInCollection = async () => {
+    if (!canRegisterDeckInCollection(activeDeck) || registeringDeck || checkingOut) return;
+
+    const deckId = activeDeck.id;
+    const deckName = activeDeck.name;
+    const cardCount = deckRegistrationCardCount(activeDeck);
+    if (!window.confirm(t('deck.confirmRegisterCollection', { count: cardCount, name: deckName }))) return;
+
+    setRegisteringDeck(true);
+    try {
+      const res = await fetch(`/api/decks/${deckId}/register-collection`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || t('deck.errRegisterCollection'));
+        return;
+      }
+
+      showToast(t('deck.registeredCollection', { count: data.added ?? cardCount, name: deckName }));
+      await loadDeckDetails(deckId);
+    } catch (err) {
+      console.error(err);
+      showToast(t('deck.errRegisterCollection'));
+    } finally {
+      setRegisteringDeck(false);
+    }
+  };
+
   const handleCheckout = async (deck = null) => {
     const targetDeck = deck || activeDeck;
     if (!targetDeck) return;
@@ -1267,6 +1296,18 @@ function DeckBuilder({ showToast, onNavigate }) {
             </div>
 
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              {canRegisterDeckInCollection(activeDeck) && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleRegisterInCollection}
+                  disabled={registeringDeck || checkingOut}
+                  title={t('deck.registerCollectionHint')}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', borderColor: 'rgba(74, 222, 128, 0.38)', color: '#4ade80' }}
+                >
+                  <PackageOpen size={14} />
+                  {registeringDeck ? t('deck.registeringCollection') : t('deck.registerCollection')}
+                </button>
+              )}
               {/* The deck action that's actually used: what's still missing from the collection */}
               <button
                 className="btn btn-primary"
@@ -1290,7 +1331,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 <button
                   className="btn btn-secondary"
                   onClick={() => handleCheckout(activeDeck)}
-                  disabled={checkingOut}
+                  disabled={checkingOut || registeringDeck}
                   style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
                 >
                   <LogOut size={14} /> Check Out for Play

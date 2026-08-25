@@ -291,6 +291,64 @@ async function runTests() {
     );
     console.log('PASS: F6-TC7');
 
+    // F6-TC8: registering a deck creates newly owned copies with exact deck
+    // quantities, then becomes unavailable once that deck is checked out.
+    const registrationDeckRows = await db.all(
+      `SELECT dc.card_id, dc.quantity FROM deck_cards dc WHERE dc.deck_id = ? ORDER BY dc.card_id`,
+      [imported.id]
+    );
+    const registrationIds = registrationDeckRows.map(row => row.card_id);
+    const registrationPlaceholders = registrationIds.map(() => '?').join(',');
+    const ownedBefore = await db.all(
+      `SELECT card_id, COALESCE(SUM(quantity), 0) AS qty FROM collection
+       WHERE user_id = ? AND card_id IN (${registrationPlaceholders})
+       GROUP BY card_id`,
+      [adminId, ...registrationIds]
+    );
+    const beforeById = new Map(ownedBefore.map(row => [row.card_id, row.qty]));
+
+    const registerRes = await fetch(`http://localhost:${port}/api/decks/${imported.id}/register-collection`, {
+      method: 'POST', headers: authHeaders
+    });
+    assert.strictEqual(registerRes.status, 201);
+    const registered = await registerRes.json();
+    assert.strictEqual(registered.added, 5, 'all physical copies are registered');
+    assert.strictEqual(registered.card_types, 2, 'response reports unique printings');
+
+    const ownedAfter = await db.all(
+      `SELECT card_id, COALESCE(SUM(quantity), 0) AS qty FROM collection
+       WHERE user_id = ? AND card_id IN (${registrationPlaceholders})
+       GROUP BY card_id`,
+      [adminId, ...registrationIds]
+    );
+    const afterById = new Map(ownedAfter.map(row => [row.card_id, row.qty]));
+    for (const row of registrationDeckRows) {
+      assert.strictEqual(
+        afterById.get(row.card_id) - (beforeById.get(row.card_id) || 0),
+        row.quantity,
+        `registration must add the deck quantity for ${row.card_id}`
+      );
+    }
+
+    const registeredRows = await db.all(
+      `SELECT card_id, quantity, condition, printing, language FROM collection
+       WHERE user_id = ? AND card_id IN (${registrationPlaceholders})
+       ORDER BY id DESC LIMIT ?`,
+      [adminId, ...registrationIds, registrationIds.length]
+    );
+    assert.ok(registeredRows.every(row => row.condition === 'Near Mint' && row.printing === 'Normal'));
+
+    const registeredCheckout = await fetch(`http://localhost:${port}/api/decks/${imported.id}/checkout`, {
+      method: 'PUT', headers: authHeaders
+    });
+    assert.strictEqual(registeredCheckout.status, 200, 'registered copies cover checkout');
+
+    const hiddenStateRes = await fetch(`http://localhost:${port}/api/decks/${imported.id}/register-collection`, {
+      method: 'POST', headers: authHeaders
+    });
+    assert.strictEqual(hiddenStateRes.status, 409, 'a checked-out deck cannot be registered again');
+    console.log('PASS: F6-TC8');
+
   } finally {
     try { server.kill('SIGKILL'); } catch {}
     try {
