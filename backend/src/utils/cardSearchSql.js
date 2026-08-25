@@ -71,7 +71,7 @@ function collectionQuery({ userId, name, number, setList = [], limit, offset }) 
     SELECT cc.*, SUM(c.quantity) AS owned_qty
     FROM collection c
     JOIN card_cache cc ON c.card_id = cc.id
-    WHERE c.user_id = ? AND c.list_type = 'collection'
+    WHERE c.user_id = ?
   `;
   const params = [userId];
   for (const part of [nameClause('cc.', name), numberClause('cc.number', number), setSqlFilter(setList, 'cc')]) {

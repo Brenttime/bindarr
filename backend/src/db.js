@@ -199,7 +199,6 @@ async function initDb() {
       purchase_price REAL,
       favorite INTEGER DEFAULT 0,
       is_trade INTEGER DEFAULT 0,
-      list_type TEXT DEFAULT 'collection',
       added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(card_id) REFERENCES card_cache(id)
     )
@@ -396,9 +395,6 @@ async function initDb() {
   if (!collectionCols.some(c => c.name === 'favorite')) {
     await run(`ALTER TABLE collection ADD COLUMN favorite INTEGER DEFAULT 0`);
   }
-  if (!collectionCols.some(c => c.name === 'list_type')) {
-    await run(`ALTER TABLE collection ADD COLUMN list_type TEXT DEFAULT 'collection'`);
-  }
   if (!collectionCols.some(c => c.name === 'notes')) {
     await run(`ALTER TABLE collection ADD COLUMN notes TEXT DEFAULT ''`);
   }
@@ -575,6 +571,17 @@ async function initDb() {
         }
       }
 
+      // Wishlist removal (2026-08). collection.list_type existed only to split
+      // the owned rows ('collection') from wishlist rows; with the wishlist
+      // feature gone the column is a constant, so the wishlist rows go and the
+      // column drops with them. Trade-sharing rows are flagged by the separate
+      // is_trade flag, not by list_type, so nothing here touches them. Idempotent
+      // via the column guard (fresh databases never had it).
+      if (await colExists('collection', 'list_type')) {
+        await run(`DELETE FROM collection WHERE list_type <> 'collection'`);
+        await dropCol('collection', 'list_type');
+      }
+
       // 4. set_data_gaps kept its MTG rows but its PRIMARY KEY changed from
       // (game, language, set_id) to (language, set_id). SQLite cannot alter a
       // table's PRIMARY KEY in place, so rebuild it — copying only the MTG
@@ -674,7 +681,6 @@ async function initDb() {
               purchase_price REAL,
               favorite INTEGER DEFAULT 0,
               is_trade INTEGER DEFAULT 0,
-              list_type TEXT DEFAULT 'collection',
               added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               notes TEXT DEFAULT '',
               user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,

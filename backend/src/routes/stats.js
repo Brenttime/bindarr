@@ -129,7 +129,7 @@ router.get('/stats', async (req, res) => {
     const topValuableQuery = `
       SELECT
         c.id AS entry_id,
-        c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.is_trade, c.favorite, c.list_type,
+        c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.is_trade, c.favorite,
         cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
         cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity, cc.price_trend,
         cc.price_normal, cc.price_holofoil
@@ -202,7 +202,7 @@ router.get('/stats', async (req, res) => {
     // Recently added cards (most useful "what did I just add" glance)
     const recentRows = await db.all(`
       SELECT c.id AS entry_id,
-             c.quantity, c.condition, c.printing, c.language, c.added_at, c.is_trade, c.favorite, c.list_type,
+             c.quantity, c.condition, c.printing, c.language, c.added_at, c.is_trade, c.favorite,
              cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
              cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity,
              cc.price_trend, cc.price_normal, cc.price_holofoil
@@ -383,7 +383,7 @@ router.get('/stats/networth', async (req, res) => {
              cc.price_trend, cc.price_normal, cc.price_holofoil
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ? AND c.list_type = 'collection'
+      WHERE c.user_id = ?
     `, [req.user.id]);
 
     let totalCards = 0, totalValue = 0, totalSpent = 0;

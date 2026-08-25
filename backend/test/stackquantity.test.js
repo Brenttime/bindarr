@@ -5,7 +5,7 @@ const assert = require('assert');
 const { setStackQuantity } = require('../src/utils/collectionHelpers');
 
 const USER = 7;
-const base = { user_id: USER, card_id: 'c-A', quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 2, is_trade: 0, favorite: 0, list_type: 'collection' };
+const base = { user_id: USER, card_id: 'c-A', quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English', purchase_price: 2, is_trade: 0, favorite: 0 };
 
 // Fake db covering the three statements setStackQuantity issues.
 function makeFakeDb(rows) {
@@ -17,18 +17,18 @@ function makeFakeDb(rows) {
       return rows.find(r => r.id === id && r.user_id === userId) || null;
     },
     async all(sql, params) {
-      const [userId, cardId, condition, printing, language, listType, excludeId] = params;
+      const [userId, cardId, condition, printing, language, excludeId] = params;
       return rows
         .filter(r => r.user_id === userId && r.card_id === cardId && r.condition === condition
-          && r.printing === printing && r.language === language && r.list_type === listType && r.id !== excludeId)
+          && r.printing === printing && r.language === language && r.id !== excludeId)
         // newest first — the trim order the helper asks for
         .sort((a, b) => b.id - a.id);
     },
     async run(sql, params) {
       if (/^\s*INSERT INTO collection/.test(sql)) {
         const [card_id, user_id, condition, printing, language, purchase_price,
-          is_trade, favorite, list_type, game] = params;
-        rows.push({ id: ++nextId, card_id, user_id, quantity: 1, condition, printing, language, purchase_price, is_trade, favorite, list_type, game });
+          is_trade, favorite] = params;
+        rows.push({ id: ++nextId, card_id, user_id, quantity: 1, condition, printing, language, purchase_price, is_trade, favorite });
       } else if (/^\s*DELETE FROM collection/.test(sql)) {
         rows.splice(rows.findIndex(r => r.id === params[0]), 1);
       } else if (/SET quantity = quantity - \?/.test(sql)) {

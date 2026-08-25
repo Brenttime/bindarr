@@ -147,11 +147,11 @@ async function runTests() {
     await db.run(`
       INSERT INTO collection (
         card_id, quantity, condition, printing, language, purchase_price,
-        favorite, is_trade, list_type, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        favorite, is_trade, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       'mtg-c3', 2, 'Lightly Played', 'Holofoil', 'English', 12.5,
-      1, 1, 'collection', 'keep this per-card note'
+      1, 1, 'keep this per-card note'
     ]);
 
     await db.initDb();

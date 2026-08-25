@@ -113,7 +113,7 @@ router.get('/:id', async (req, res) => {
          cc.rarity, cc.set_id, cc.set_name, cc.number,
          cc.image_url, cc.price_trend,
          (SELECT COALESCE(SUM(quantity), 0) FROM collection
-          WHERE card_id = cc.id AND user_id = ? AND list_type = 'collection') AS owned_qty
+          WHERE card_id = cc.id AND user_id = ?) AS owned_qty
        FROM list_cards lc
        JOIN card_cache cc ON lc.card_id = cc.id
        WHERE lc.list_id = ?

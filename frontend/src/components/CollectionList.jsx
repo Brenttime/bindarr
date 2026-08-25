@@ -65,7 +65,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const [viewMode, setViewMode] = useState('gallery'); // 'gallery' or 'list'
   const [inspectorCard, setInspectorCard] = useState(null);
   const [inspectorStartEdit, setInspectorStartEdit] = useState(false);
-  const [subTab, setSubTab] = useState('collection'); // 'collection', 'wishlist'
   const [showFilters, setShowFilters] = useState(false);
 
   // Search & Filter state
@@ -99,17 +98,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     fetchCollection();
     fetchSets();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statsTrigger, subTab, tradeOnly]);
+  }, [statsTrigger, tradeOnly]);
 
   const fetchCollection = async () => {
     try {
       setLoading(true);
-      let url = '/api/collection?list_type=collection';
-      if (subTab === 'wishlist') {
-        url = '/api/collection?list_type=wishlist';
-      }
+      let url = '/api/collection';
       if (tradeOnly) {
-        url += '&is_trade=1';
+        url += '?is_trade=1';
       }
 
       const response = await fetch(url);
@@ -326,20 +322,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       {/* Header: sub-tabs + selection hint + view toggle */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button
-            className={`btn ${subTab === 'collection' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setSubTab('collection')}
-            style={{ fontSize: '0.85rem', padding: '0.45rem 1.25rem', borderRadius: 'var(--radius-sm)' }}
-          >
-            {t('nav.collection')}
-          </button>
-          <button
-            className={`btn ${subTab === 'wishlist' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setSubTab('wishlist')}
-            style={{ fontSize: '0.85rem', padding: '0.45rem 1.25rem', borderRadius: 'var(--radius-sm)' }}
-          >
-            {t('collection.wishlist')}
-          </button>
+          <span style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-strong)', padding: '0.45rem 0.5rem' }}>{t('nav.collection')}</span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -560,7 +543,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <button className="btn btn-danger" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('delete', null, t('bulk.confirmDelete', { count: selectedIds.size }))}>{t('bulk.delete')}</button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('trade', null)}>{t('bulk.markTrade')}</button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('untrade', null)}>{t('bulk.untrade')}</button>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => runBulk('list_type', subTab === 'wishlist' ? 'collection' : 'wishlist', null)}>{t(subTab === 'wishlist' ? 'bulk.moveToCollection' : 'bulk.moveToWishlist')}</button>
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <select className="select-control" value="" disabled={!selectedIds.size} onChange={(e) => { if (e.target.value) runBulk('condition', e.target.value); e.target.value = ''; }} style={{ fontSize: '0.72rem', maxWidth: '150px', padding: '0.3rem 0.4rem' }}>
             <option value="">{t('bulk.setCondition')}</option>

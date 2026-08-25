@@ -10,7 +10,6 @@
     "added_at": "2026-07-21 11:15:00",
     "is_trade": 0,
     "favorite": 1,
-    "list_type": "collection",
     "name": "Dragon Fodder",
     "supertype": "MTG",
     "subtypes": [
@@ -45,7 +44,6 @@
     "added_at": "2026-07-20 13:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Adult Gold Dragon",
     "supertype": "MTG",
     "subtypes": [
@@ -83,7 +81,6 @@
     "added_at": "2026-07-20 15:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Angel of Light",
     "supertype": "MTG",
     "subtypes": [
@@ -119,7 +116,6 @@
     "added_at": "2026-07-19 17:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Angel of Flight Alabaster",
     "supertype": "MTG",
     "subtypes": [
@@ -155,7 +151,6 @@
     "added_at": "2026-07-18 19:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Emeritus of Conflict // Lightning Bolt",
     "supertype": "MTG",
     "subtypes": [
@@ -193,7 +188,6 @@
     "added_at": "2026-07-18 21:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Lightning Bolt",
     "supertype": "MTG",
     "subtypes": [
@@ -228,7 +222,6 @@
     "added_at": "2026-07-17 11:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Goblin Oriflamme",
     "supertype": "MTG",
     "subtypes": [
@@ -263,7 +256,6 @@
     "added_at": "2026-07-16 13:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Goblin Smuggler",
     "supertype": "MTG",
     "subtypes": [
@@ -300,7 +292,6 @@
     "added_at": "2026-07-16 15:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Elfhame Sanctuary",
     "supertype": "MTG",
     "subtypes": [
@@ -335,7 +326,6 @@
     "added_at": "2026-07-15 17:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Bloodbraid Elf",
     "supertype": "MTG",
     "subtypes": [
@@ -374,7 +364,6 @@
     "added_at": "2026-07-14 19:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Serrated Biskelion",
     "supertype": "MTG",
     "subtypes": [
@@ -407,7 +396,6 @@
     "added_at": "2026-07-14 21:15:00",
     "is_trade": 0,
     "favorite": 0,
-    "list_type": "collection",
     "name": "Serra Angel",
     "supertype": "MTG",
     "subtypes": [

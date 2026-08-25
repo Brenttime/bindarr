@@ -63,7 +63,6 @@ function testCollectionScopeIgnoresLanguage() {
   });
   assert.ok(!/language/i.test(sql), 'collection scope must NOT filter by language');
   assert.ok(squash(sql).includes('JOIN card_cache cc ON c.card_id = cc.id'));
-  assert.ok(squash(sql).includes("c.list_type = 'collection'"));
   assert.ok(squash(sql).includes('GROUP BY cc.id LIMIT ? OFFSET ?'), 'grouped, so one row per card');
 
   assert.strictEqual(params[0], 7, 'userId first');
