@@ -1,27 +1,16 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { ArrowRight, FolderPlus, Globe, PackageOpen, X } from 'lucide-react';
 import { useBackGuard } from '../utils/useBackGuard';
+import { useDialogFocus } from '../utils/useDialogFocus';
 import { useT } from '../utils/i18n';
 
-export default function AddDeckChoiceModal({ open, onClose, onCustom, onPrecon, onMoxfield }) {
+export default function AddDeckChoiceModal({ open, onClose, onCustom, onPrecon, onMoxfield, returnFocusRef }) {
   const { t } = useT();
   const customRef = useRef(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  const dialogRef = useRef(null);
 
   useBackGuard(open, onClose);
-  useEffect(() => {
-    if (!open) return undefined;
-    const focusTimer = setTimeout(() => customRef.current?.focus(), 50);
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onCloseRef.current?.();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      clearTimeout(focusTimer);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [open]);
+  useDialogFocus({ isOpen: open, containerRef: dialogRef, initialFocusRef: customRef, returnFocusRef, onEscape: onClose });
 
   if (!open) return null;
 
@@ -60,7 +49,9 @@ export default function AddDeckChoiceModal({ open, onClose, onCustom, onPrecon, 
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
       <section
+        ref={dialogRef}
         className="glass-panel add-deck-chooser"
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-deck-title"

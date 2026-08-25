@@ -5,10 +5,11 @@
 // product's exact card list — mainboard plus commander — as a new deck, each
 // card resolved to the printing the product actually ships, so the "export
 // what's missing" math afterwards is honest.
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { X, Search, PackageOpen, Loader2 } from 'lucide-react';
 import { useT } from '../utils/i18n';
 import { useBackGuard } from '../utils/useBackGuard';
+import { useDialogFocus } from '../utils/useDialogFocus';
 
 const TYPE_LABEL = {
   'Commander Deck': 'Commander',
@@ -38,7 +39,7 @@ const TYPE_LABEL = {
   'Halfdeck': 'Halfdeck',
 };
 
-export default function PreconSearchModal({ open, onClose, onImported, showToast }) {
+export default function PreconSearchModal({ open, onClose, onImported, showToast, returnFocusRef }) {
   const { t } = useT();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -47,9 +48,16 @@ export default function PreconSearchModal({ open, onClose, onImported, showToast
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(null); // the fileName being imported
   const inputRef = useRef(null);
+  const dialogRef = useRef(null);
 
   useBackGuard(open, () => { if (!importing) onClose(); });
-  useEffect(() => { if (open) setTimeout(() => inputRef.current && inputRef.current.focus(), 50); }, [open]);
+  useDialogFocus({
+    isOpen: open,
+    containerRef: dialogRef,
+    initialFocusRef: inputRef,
+    returnFocusRef,
+    onEscape: () => { if (!importing) onClose(); },
+  });
 
   if (!open) return null;
 
@@ -102,7 +110,7 @@ export default function PreconSearchModal({ open, onClose, onImported, showToast
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}
       onClick={(e) => { if (e.target === e.currentTarget && !importing) onClose(); }}
     >
-      <div className="glass-panel" role="dialog" aria-modal="true" aria-labelledby="precon-search-title" aria-describedby="precon-search-subtitle precon-fast-path-body" style={{ width: '100%', maxWidth: '560px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '1.5rem', position: 'relative' }}>
+      <div ref={dialogRef} className="glass-panel" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="precon-search-title" aria-describedby="precon-search-subtitle precon-fast-path-body" style={{ width: '100%', maxWidth: '560px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '1.5rem', position: 'relative' }}>
         <button
           className="btn btn-secondary btn-icon-only"
           onClick={onClose}

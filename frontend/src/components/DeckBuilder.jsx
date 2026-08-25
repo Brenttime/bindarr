@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
@@ -51,6 +51,7 @@ function DeckBuilder({ showToast, onNavigate }) {
   ];
 
   const [showAddDeckModal, setShowAddDeckModal] = useState(false);
+  const addDeckButtonRef = useRef(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showPreconModal, setShowPreconModal] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
@@ -757,6 +758,7 @@ function DeckBuilder({ showToast, onNavigate }) {
             </div>
             <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
               <button 
+                ref={addDeckButtonRef}
                 className="btn btn-primary" 
                 onClick={() => setShowAddDeckModal(true)}
                 style={{ padding: '0.6rem 1.25rem', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 14px rgba(234, 179, 8, 0.25)' }}
@@ -1662,6 +1664,7 @@ function DeckBuilder({ showToast, onNavigate }) {
             setShowAddDeckModal(false);
             onNavigate?.('settings', 'moxfield');
           }}
+          returnFocusRef={addDeckButtonRef}
         />
       )}
 
@@ -2085,6 +2088,7 @@ function DeckBuilder({ showToast, onNavigate }) {
             fetchDecks();
           }}
           showToast={showToast}
+          returnFocusRef={addDeckButtonRef}
         />
       )}
 
