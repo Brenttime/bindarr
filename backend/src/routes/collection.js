@@ -447,30 +447,46 @@ router.put('/collection/:id', async (req, res) => {
     if (favorite !== undefined) { updates.push('favorite = ?'); params.push(favorite ? 1 : 0); }
     if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
 
+    const touchesPhysicalStack = requestedQty !== null
+      || condition !== undefined || printing !== undefined || language !== undefined;
+
     const saveEntry = async () => {
+      // The row may have changed while this request was waiting for the shared
+      // allocation lock. Re-read it inside the lock so a concurrent metadata
+      // move cannot make the quantity guard inspect one stack and reconcile a
+      // different one.
+      const currentEntry = touchesPhysicalStack
+        ? await db.get(`SELECT * FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id])
+        : entry;
+      if (!currentEntry) {
+        const missing = new Error('collection-entry-not-found');
+        missing.code = 'COLLECTION_ENTRY_NOT_FOUND';
+        throw missing;
+      }
+
       if (requestedQty !== null) {
         // Metadata edits can move this row into another physical stack before
         // setStackQuantity reconciles that stack. Guard the stack that will
         // actually exist after the edit, not the row's old stack; otherwise a
         // one-copy row moved into a four-copy stack and saved as quantity=1
         // could delete four copies that a checked-out deck already reserved.
-        const targetCondition = condition !== undefined ? condition : entry.condition;
-        const targetPrinting = printing !== undefined ? printing : entry.printing;
-        const targetLanguage = language !== undefined ? language : entry.language;
+        const targetCondition = condition !== undefined ? condition : currentEntry.condition;
+        const targetPrinting = printing !== undefined ? printing : currentEntry.printing;
+        const targetLanguage = language !== undefined ? language : currentEntry.language;
         const targetSiblings = await db.all(`
           SELECT quantity
           FROM collection
           WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ?
             AND language = ? AND id != ?
         `, [
-          req.user.id, entry.card_id, targetCondition, targetPrinting,
+          req.user.id, currentEntry.card_id, targetCondition, targetPrinting,
           targetLanguage, id
         ]);
-        const projectedStackQty = (Number(entry.quantity) || 1)
+        const projectedStackQty = (Number(currentEntry.quantity) || 1)
           + targetSiblings.reduce((sum, sibling) => sum + (Number(sibling.quantity) || 1), 0);
         const reduction = Math.max(0, projectedStackQty - requestedQty);
         if (reduction > 0) {
-          const status = await logicalInventoryStatus(db, req.user.id, entry.card_id);
+          const status = await logicalInventoryStatus(db, req.user.id, currentEntry.card_id);
           if (!status || Number(status.owned_qty) - reduction < Number(status.locked_qty)) {
             const conflict = new Error('allocation-conflict');
             conflict.code = 'ALLOCATION_CONFLICT';
@@ -495,11 +511,14 @@ router.put('/collection/:id', async (req, res) => {
       }
     };
 
-    if (requestedQty !== null) await withAllocationLock(saveEntry);
+    if (touchesPhysicalStack) await withAllocationLock(saveEntry);
     else await saveEntry();
 
     res.json({ message: 'Collection entry updated successfully' });
   } catch (error) {
+    if (error && error.code === 'COLLECTION_ENTRY_NOT_FOUND') {
+      return res.status(404).json({ error: 'Collection entry not found' });
+    }
     if (error && error.code === 'ALLOCATION_CONFLICT') {
       return res.status(409).json({
         error: 'Check in the deck using this card before reducing the owned quantity.'
