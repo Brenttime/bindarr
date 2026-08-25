@@ -236,6 +236,8 @@ async function initDb() {
       checked_out INTEGER DEFAULT 0,
       checked_out_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      source TEXT DEFAULT 'manual',
+      moxfield_public_id TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);

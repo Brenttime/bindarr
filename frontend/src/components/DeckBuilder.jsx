@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
 import CheckoutWizardModal from './CheckoutWizardModal';
+import PreconSearchModal from './PreconSearchModal';
 import { useBackGuard } from '../utils/useBackGuard';
 import { buildDeckExport, parseDeckLine } from '../utils/deckText';
 import CardImage from './CardImage';
@@ -49,6 +50,7 @@ function DeckBuilder({ showToast, onNavigate }) {
   ];
 
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showPreconModal, setShowPreconModal] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
   const [newDeckDesc, setNewDeckDesc] = useState('');
   const [newDeckFormat, setNewDeckFormat] = useState('Commander / EDH');
@@ -753,6 +755,14 @@ function DeckBuilder({ showToast, onNavigate }) {
                 style={{ padding: '0.6rem 1.25rem', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 14px rgba(234, 179, 8, 0.25)' }}
               >
                 <Plus size={18} /> {t('deck.createDeck')}
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowPreconModal(true)}
+                title={t('precon.buttonHint')}
+                style={{ padding: '0.6rem 1.1rem', fontSize: '0.9rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <PackageOpen size={18} /> {t('precon.addPrecon')}
               </button>
             </div>
           </div>
@@ -2038,6 +2048,21 @@ function DeckBuilder({ showToast, onNavigate }) {
           mode={checkoutMode}
           onCancel={handleCheckoutCancel}
           onClose={() => setShowCheckoutModal(false)}
+        />
+      )}
+
+      {/* Precon Search + Import Modal */}
+      {showPreconModal && (
+        <PreconSearchModal
+          open={showPreconModal}
+          onClose={() => setShowPreconModal(false)}
+          onImported={(deckId) => {
+            setShowPreconModal(false);
+            setViewMode('detail');
+            loadDeckDetails(deckId);
+            fetchDecks();
+          }}
+          showToast={showToast}
         />
       )}
 
