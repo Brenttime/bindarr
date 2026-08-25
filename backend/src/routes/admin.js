@@ -9,6 +9,8 @@ const { parseCardRow } = require('../utils/priceHelpers');
 const languages = require('../utils/languages');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { BACKUP_DIR, listBackups, createBackup } = require('../backup');
+const { logicalInventoryStatus, withAllocationLock } = require('../utils/collectionHelpers');
+const { sqlCardKey } = require('../utils/cardIdentity');
 
 const router = express.Router();
 
@@ -41,54 +43,76 @@ router.post('/seed-cards', async (req, res) => {
 
     const seedSetIds = [...new Set(MOCK_POOL.map(c => c.set_id))];
     const seedSetPlaceholders = seedSetIds.map(() => '?').join(',');
-    await db.run(
-      `DELETE FROM collection WHERE user_id = ? AND card_id IN (
-         SELECT id FROM card_cache WHERE set_id IN (${seedSetPlaceholders})
-       )`,
-      [req.user.id, ...seedSetIds]
-    );
-
-    const conditions = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played'];
-    const languages = ['English', 'English', 'English', 'Japanese'];
-
-    const printsForCard = (card) => {
-      const options = [];
-      if (card.price_normal > 0) options.push('Normal');
-      if (card.price_holofoil > 0) options.push('Holofoil');
-      return options.length > 0 ? options : ['Normal'];
-    };
-
     let addedCount = 0;
+    await withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+      const removals = await tx.all(
+        `SELECT MIN(c.card_id) AS card_id, SUM(c.quantity) AS remove_qty
+         FROM collection c
+         JOIN card_cache removed_cc ON removed_cc.id = c.card_id
+         WHERE c.user_id = ? AND c.quantity > 0
+           AND removed_cc.set_id IN (${seedSetPlaceholders})
+         GROUP BY ${sqlCardKey('removed_cc')}`,
+        [req.user.id, ...seedSetIds]
+      );
+      for (const removal of removals) {
+        const status = await logicalInventoryStatus(tx, req.user.id, removal.card_id);
+        if (!status || Number(status.owned_qty) - Number(removal.remove_qty) < Number(status.locked_qty)) {
+          const conflict = new Error('Check in decks using these cards before replacing the seed collection.');
+          conflict.code = 'ALLOCATION_CONFLICT';
+          throw conflict;
+        }
+      }
 
-    const randomEntry = (maxPrice) => {
-      const card = MOCK_POOL[Math.floor(Math.random() * MOCK_POOL.length)];
-      const prints = printsForCard(card);
-      return {
-        card,
-        print: prints[Math.floor(Math.random() * prints.length)],
-        condition: conditions[Math.floor(Math.random() * conditions.length)],
-        language: languages[Math.floor(Math.random() * languages.length)],
-        qty: Math.floor(Math.random() * 2) + 1,
-        purchasePrice: parseFloat((Math.random() * maxPrice).toFixed(2))
+      await tx.run(
+        `DELETE FROM collection WHERE user_id = ? AND card_id IN (
+           SELECT id FROM card_cache WHERE set_id IN (${seedSetPlaceholders})
+         )`,
+        [req.user.id, ...seedSetIds]
+      );
+
+      const conditions = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played'];
+      const languages = ['English', 'English', 'English', 'Japanese'];
+
+      const printsForCard = (card) => {
+        const options = [];
+        if (card.price_normal > 0) options.push('Normal');
+        if (card.price_holofoil > 0) options.push('Holofoil');
+        return options.length > 0 ? options : ['Normal'];
       };
-    };
 
-    const insertSeedEntry = async (maxPrice) => {
-      const e = randomEntry(maxPrice);
-      await db.run(`
-        INSERT INTO collection (card_id, quantity, condition, printing, language, purchase_price, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [e.card.id, e.qty, e.condition, e.print, e.language, e.purchasePrice, req.user.id]);
-      addedCount += e.qty;
-    };
+      const randomEntry = (maxPrice) => {
+        const card = MOCK_POOL[Math.floor(Math.random() * MOCK_POOL.length)];
+        const prints = printsForCard(card);
+        return {
+          card,
+          print: prints[Math.floor(Math.random() * prints.length)],
+          condition: conditions[Math.floor(Math.random() * conditions.length)],
+          language: languages[Math.floor(Math.random() * languages.length)],
+          qty: Math.floor(Math.random() * 2) + 1,
+          purchasePrice: parseFloat((Math.random() * maxPrice).toFixed(2))
+        };
+      };
 
-    // 168 assorted cards, priced up to $10; another 40 cheap fillers (the old
-    // seed filled 12 binder pages + 4 box rows; same card count, no storage).
-    for (let i = 0; i < 168; i++) await insertSeedEntry(10);
-    for (let i = 0; i < 40; i++) await insertSeedEntry(5);
+      const insertSeedEntry = async (maxPrice) => {
+        const e = randomEntry(maxPrice);
+        await tx.run(`
+          INSERT INTO collection (card_id, quantity, condition, printing, language, purchase_price, user_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [e.card.id, e.qty, e.condition, e.print, e.language, e.purchasePrice, req.user.id]);
+        addedCount += e.qty;
+      };
+
+      // 168 assorted cards, priced up to $10; another 40 cheap fillers (the old
+      // seed filled 12 binder pages + 4 box rows; same card count, no storage).
+      for (let i = 0; i < 168; i++) await insertSeedEntry(10);
+      for (let i = 0; i < 40; i++) await insertSeedEntry(5);
+    }));
 
     res.json({ message: `Successfully seeded a large test collection: ${addedCount} cards for admin user.` });
   } catch (error) {
+    if (error && error.code === 'ALLOCATION_CONFLICT') {
+      return res.status(409).json({ error: error.message });
+    }
     console.error('SEEDING ERROR:', error);
     res.status(500).json({ error: 'Failed to seed test cards' });
   }
@@ -218,16 +242,30 @@ router.delete('/users/:id', async (req, res) => {
   }
 
   try {
-    const targetUser = await db.get(`SELECT id, username FROM users WHERE id = ?`, [id]);
-    if (!targetUser) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    const outcome = await withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+      const targetUser = await tx.get(`SELECT id, username FROM users WHERE id = ?`, [id]);
+      if (!targetUser) return { status: 404, error: 'User not found' };
 
-    await db.run(`DELETE FROM sessions WHERE user_id = ?`, [id]);
-    await db.run(`DELETE FROM collection WHERE user_id = ?`, [id]);
-    await db.run(`DELETE FROM users WHERE id = ?`, [id]);
+      // Deleting a checked-out user would destroy the positive supply backing
+      // active reservations. Require their decks to be checked in first, just
+      // like every other deck lifecycle mutation.
+      const checkedOut = await tx.get(
+        `SELECT COUNT(*) AS count FROM decks WHERE user_id = ? AND checked_out = 1`,
+        [id]
+      );
+      if (checkedOut.count > 0) {
+        return { status: 409, error: 'Check in all of this user\'s decks before deleting their account.' };
+      }
 
-    res.json({ message: `User "${targetUser.username}" and all their card collections have been permanently deleted.` });
+      await tx.run(`DELETE FROM sessions WHERE user_id = ?`, [id]);
+      await tx.run(`DELETE FROM collection WHERE user_id = ?`, [id]);
+      const deleted = await tx.run(`DELETE FROM users WHERE id = ?`, [id]);
+      if (deleted.changes !== 1) throw new Error('User disappeared during deletion');
+      return { status: 200, username: targetUser.username };
+    }));
+
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+    res.json({ message: `User "${outcome.username}" and all their card collections have been permanently deleted.` });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to delete user' });

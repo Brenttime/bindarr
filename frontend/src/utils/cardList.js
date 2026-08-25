@@ -9,7 +9,9 @@ const norm = (v) => String(v == null ? '' : v).trim();
 // One card line. plain: "4 Lightning Bolt" — detailed: "4 Lightning Bolt (JUD) 124".
 // Set code uppercased; split cards stay one line, name verbatim.
 export function cardListLine(card, style = 'plain') {
-  const qty = Math.max(1, parseInt(card.quantity, 10) || 1);
+  const parsedQty = parseInt(card.quantity, 10);
+  const qty = Number.isFinite(parsedQty) ? parsedQty : 1;
+  if (qty <= 0) return '';
   const name = norm(card.name);
   if (style === 'detailed') {
     const set = norm(card.set_id || card.set_code).toUpperCase();
@@ -24,5 +26,5 @@ export function cardListLine(card, style = 'plain') {
 
 export function buildCardListText(cards, style = 'plain') {
   if (!Array.isArray(cards) || cards.length === 0) return '';
-  return cards.map(c => cardListLine(c, style)).join('\n');
+  return cards.map(c => cardListLine(c, style)).filter(Boolean).join('\n');
 }

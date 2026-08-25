@@ -28,6 +28,7 @@
 // there it is part of a cached printing's identity, and answering a Japanese
 // search with the English row sitting next to it would return the wrong card.
 const { setSqlFilter } = require('./setQuery');
+const { sqlCardKey } = require('./cardIdentity');
 
 // Match a collector number written either way round.
 //
@@ -68,12 +69,20 @@ function nameClause(prefix, name) {
 // What the user OWNS, across every language they own it in.
 function collectionQuery({ userId, name, number, setList = [], limit, offset }) {
   let sql = `
-    SELECT cc.*, SUM(c.quantity) AS owned_qty
+    WITH logical_owned AS (
+      SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(owned.quantity) AS owned_qty
+      FROM collection owned
+      JOIN card_cache owned_cc ON owned.card_id = owned_cc.id
+      WHERE owned.user_id = ? AND owned.quantity > 0
+      GROUP BY ${sqlCardKey('owned_cc')}
+    )
+    SELECT cc.*, logical_owned.owned_qty
     FROM collection c
     JOIN card_cache cc ON c.card_id = cc.id
-    WHERE c.user_id = ?
+    JOIN logical_owned ON logical_owned.card_key = ${sqlCardKey('cc')}
+    WHERE c.user_id = ? AND c.quantity > 0
   `;
-  const params = [userId];
+  const params = [userId, userId];
   for (const part of [nameClause('cc.', name), numberClause('cc.number', number), setSqlFilter(setList, 'cc')]) {
     if (!part) continue;
     sql += ` AND ${part.clause}`;

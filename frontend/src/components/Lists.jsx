@@ -7,6 +7,7 @@ import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
 import { displayName, setReference } from '../utils/languages';
 import { useT } from '../utils/i18n';
+import { cardKey, findSameCard } from '../utils/cardIdentity';
 
 const ACCENTS = [
   { name: 'Emerald', hex: '#10b981' },
@@ -206,7 +207,13 @@ function Lists({ showToast }) {
       const q = query;
       const res = await fetch(`/api/search?name=${encodeURIComponent(q)}&limit=24`);
       if (res.ok) {
-        setSearchResults(await res.json());
+        const found = await res.json();
+        const byCardName = new Map();
+        for (const card of found) {
+          const key = cardKey(card);
+          if (!byCardName.has(key)) byCardName.set(key, card);
+        }
+        setSearchResults(Array.from(byCardName.values()));
       } else if (res.status === 429) {
         showToast(t('lists.errLoad'));
       } else {
@@ -249,8 +256,8 @@ function Lists({ showToast }) {
   };
 
   const addCard = async (card) => {
-    const existing = listDetail?.cards.find(c => c.id === card.id);
-    await setQty(card.id, (existing?.quantity || 0) + 1);
+    const existing = findSameCard(listDetail?.cards, card);
+    await setQty(existing?.id || card.id, (existing?.quantity || 0) + 1);
     if (!existing) showToast(t('lists.addedCard', { name: displayName(card) }));
   };
 

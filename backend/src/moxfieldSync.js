@@ -15,9 +15,9 @@
 //     no network beyond that one summary call: the per-minute check is cheap by
 //     construction.
 //
-// Mapping rule: a Moxfield card's `scryfall_id` is a Scryfall UUID, and
-// Bindarr's MTG card id is `mtg-<that same UUID>` — so decks mirror onto
-// card_cache directly. No name matching, no printing ambiguity.
+// Mapping rule: Moxfield supplies exact Scryfall printing ids for cache lookup,
+// but deck identity is the normalized canonical English card name. Reprints are
+// collapsed before reconciliation; the retained id is only representative art.
 //
 // Ownership: mirrored decks are owned by the user who added the author, carry
 // `source='moxfield'` plus the Moxfield public id, and are reconciled exactly
@@ -28,6 +28,14 @@
 const db = require('./db');
 const moxfieldApi = require('./moxfieldApi');
 const { bulkFetchByIdentifier, cacheCards } = require('./scryfallApi');
+const { sqlCardKey } = require('./utils/cardIdentity');
+const { withAllocationLock } = require('./utils/collectionHelpers');
+
+function allocationConflict(message) {
+  const error = new Error(message);
+  error.code = 'ALLOCATION_CONFLICT';
+  return error;
+}
 const {
   MIRROR_BOARDS,
   extractDeckCards,
@@ -94,14 +102,14 @@ async function backfillMissingCards(entries) {
 
 // Create the local mirror deck for a summary (or details-derived summary) if
 // one does not already exist. Returns the local deck id.
-async function ensureLocalDeck(author, summary) {
-  const existing = await db.get(
+async function ensureLocalDeck(author, summary, dbClient = db) {
+  const existing = await dbClient.get(
     `SELECT id FROM decks WHERE user_id = ? AND moxfield_public_id = ?`,
     [author.user_id, summary.publicId]
   );
   if (existing) return existing.id;
 
-  const result = await db.run(
+  const result = await dbClient.run(
     `INSERT INTO decks (name, description, format, category, accent_color, target_size, user_id, source, moxfield_public_id)
      VALUES (?, ?, ?, 'Moxfield Sync', '#22d3ee', ?, ?, 'moxfield', ?)`,
     [
@@ -121,59 +129,88 @@ async function ensureLocalDeck(author, summary) {
 // the local deck to it. Only creates the local mirror when the deck is
 // enabled — an unchecked deck is tracked (so re-enabling is instant) but
 // never imported.
-async function upsertTrackingRow(author, summary, { enabled = true } = {}) {
-  await db.run(
-    `INSERT INTO moxfield_decks
-       (author_id, public_id, name, format, mainboard_count, sideboard_count, maybeboard_count, commander_count, last_updated_at, bindarr_deck_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(author_id, public_id) DO UPDATE SET
-       name = excluded.name,
-       format = excluded.format,
-       mainboard_count = excluded.mainboard_count,
-       sideboard_count = excluded.sideboard_count,
-       maybeboard_count = excluded.maybeboard_count,
-       last_updated_at = excluded.last_updated_at,
-       bindarr_deck_id = COALESCE(excluded.bindarr_deck_id, moxfield_decks.bindarr_deck_id)`,
-    [
-      author.id,
-      summary.publicId,
-      summary.name || summary.publicId,
-      summary.format || null,
-      summary.mainboardCount != null ? parseInt(summary.mainboardCount, 10) : null,
-      summary.sideboardCount != null ? parseInt(summary.sideboardCount, 10) : null,
-      summary.maybeboardCount != null ? parseInt(summary.maybeboardCount, 10) : null,
-      null,
-      summary.lastUpdatedAtUtc || null
-    ]
-  );
-  const row = await db.get(`SELECT * FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
-    [author.id, summary.publicId]);
-  if (!row.bindarr_deck_id && enabled) {
-    const deckId = await ensureLocalDeck(author, summary);
-    await db.run(`UPDATE moxfield_decks SET bindarr_deck_id = ? WHERE id = ?`, [deckId, row.id]);
-    row.bindarr_deck_id = deckId;
-  }
-  // Renames on Moxfield propagate to the mirror.
-  await db.run(
-    `UPDATE decks SET name = ?, description = ? WHERE id = ? AND moxfield_public_id = ? AND source = 'moxfield'`,
-    [summary.name || summary.publicId, summary.description || '', row.bindarr_deck_id, summary.publicId]
-  );
-  return row;
+async function upsertTrackingRow(author, summary) {
+  return withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+    // Discovery is remote work and may finish after the author was removed.
+    // Revalidate lifecycle ownership inside the same lock/transaction used by
+    // teardown before creating or linking a local mirror.
+    const liveAuthor = await tx.get(
+      `SELECT * FROM moxfield_authors WHERE id = ? AND user_id = ?`,
+      [author.id, author.user_id]
+    );
+    if (!liveAuthor) return null;
+
+    await tx.run(
+      `INSERT INTO moxfield_decks
+         (author_id, public_id, name, format, mainboard_count, sideboard_count, maybeboard_count, commander_count, last_updated_at, bindarr_deck_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(author_id, public_id) DO UPDATE SET
+         name = excluded.name,
+         format = excluded.format,
+         mainboard_count = excluded.mainboard_count,
+         sideboard_count = excluded.sideboard_count,
+         maybeboard_count = excluded.maybeboard_count,
+         last_updated_at = excluded.last_updated_at,
+         bindarr_deck_id = COALESCE(excluded.bindarr_deck_id, moxfield_decks.bindarr_deck_id)`,
+      [
+        liveAuthor.id,
+        summary.publicId,
+        summary.name || summary.publicId,
+        summary.format || null,
+        summary.mainboardCount != null ? parseInt(summary.mainboardCount, 10) : null,
+        summary.sideboardCount != null ? parseInt(summary.sideboardCount, 10) : null,
+        summary.maybeboardCount != null ? parseInt(summary.maybeboardCount, 10) : null,
+        null,
+        summary.lastUpdatedAtUtc || null
+      ]
+    );
+    const row = await tx.get(
+      `SELECT * FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
+      [liveAuthor.id, summary.publicId]
+    );
+    // The caller's enabled snapshot may be stale after remote discovery. The
+    // tracking row inside this transaction is authoritative: a concurrent
+    // disable must never be undone by late deck-list work.
+    if (!row.bindarr_deck_id && row.enabled !== 0) {
+      const deckId = await ensureLocalDeck(liveAuthor, summary, tx);
+      const linked = await tx.run(
+        `UPDATE moxfield_decks SET bindarr_deck_id = ? WHERE id = ?`,
+        [deckId, row.id]
+      );
+      if (linked.changes !== 1) {
+        throw new Error('Moxfield tracking row disappeared while linking its mirror');
+      }
+      row.bindarr_deck_id = deckId;
+    }
+    // Renames on Moxfield propagate to the mirror.
+    await tx.run(
+      `UPDATE decks SET name = ?, description = ? WHERE id = ? AND moxfield_public_id = ? AND source = 'moxfield'`,
+      [summary.name || summary.publicId, summary.description || '', row.bindarr_deck_id, summary.publicId]
+    );
+    return row;
+  }));
 }
 
 // Retire a tracked deck: drop the local mirror and its tracking row. Cards stay
 // in card_cache (they may be referenced by other decks and by price history).
 async function retireDeck(author, publicId) {
-  const row = await db.get(`SELECT bindarr_deck_id FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
-    [author.id, publicId]);
-  if (!row) return false;
-  if (row.bindarr_deck_id) {
-    await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
-    await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
-  }
-  await db.run(`DELETE FROM moxfield_decks WHERE author_id = ? AND public_id = ?`, [author.id, publicId]);
-  console.log(`Moxfield sync: retired deck "${publicId}" (removed on Moxfield)`);
-  return true;
+  return withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+    const row = await tx.get(`
+      SELECT md.bindarr_deck_id, d.checked_out
+      FROM moxfield_decks md
+      LEFT JOIN decks d ON d.id = md.bindarr_deck_id
+      WHERE md.author_id = ? AND md.public_id = ?
+    `, [author.id, publicId]);
+    if (!row) return false;
+    if (row.checked_out) throw allocationConflict('Check this deck in before removing its Moxfield mirror');
+    if (row.bindarr_deck_id) {
+      await tx.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
+      await tx.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
+    }
+    await tx.run(`DELETE FROM moxfield_decks WHERE author_id = ? AND public_id = ?`, [author.id, publicId]);
+    console.log(`Moxfield sync: retired deck "${publicId}" (removed on Moxfield)`);
+    return true;
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +222,9 @@ async function retireDeck(author, publicId) {
 // deleted ones, refresh the stamp on every tracked row.
 async function syncDecklist(authorId, { user } = {}) {
   const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ?`, [authorId]);
-  if (!author) throw new Error('Moxfield author not found');
+  if (!author || (user && Number(author.user_id) !== Number(user.id))) {
+    throw new Error('Moxfield author not found');
+  }
 
   // Resolve the canonical username (and pick up profile name changes).
   const userInfo = await moxfieldApi.getUser(author.moxfield_user);
@@ -198,13 +237,24 @@ async function syncDecklist(authorId, { user } = {}) {
 
   for (const summary of summaries) {
     if (!summary.publicId) continue;
-    const wasTracked = await db.get(`SELECT id, enabled FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
+    const wasTracked = await db.get(`SELECT id FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
       [author.id, summary.publicId]);
-    const enabled = wasTracked ? wasTracked.enabled !== 0 : true;
-    await upsertTrackingRow(author, summary, { enabled });
+    const liveTracking = await upsertTrackingRow(author, summary);
+    if (!liveTracking) {
+      return {
+        ok: true,
+        author: userInfo.userName,
+        stale: true,
+        reason: 'author-removed-during-sync',
+        decks_on_moxfield: summaries.length,
+        decks_created: created,
+        decks_kept: kept,
+        decks_removed: 0
+      };
+    }
     if (wasTracked) {
       kept += 1;
-    } else if (enabled) {
+    } else if (liveTracking.enabled !== 0) {
       created += 1;
       // Brand-new mirror: pull its contents right away rather than waiting for
       // the fast job to notice the unsynced stamp.
@@ -250,7 +300,9 @@ async function syncDecklist(authorId, { user } = {}) {
 // request and touched only its own tracking rows.
 async function runContentSync(authorId, { user } = {}) {
   const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ?`, [authorId]);
-  if (!author) throw new Error('Moxfield author not found');
+  if (!author || (user && Number(author.user_id) !== Number(user.id))) {
+    throw new Error('Moxfield author not found');
+  }
   // No ENABLED tracked decks yet (author just added, decklist sync pending, or
   // every deck unchecked): nothing to check. Unchecked decks cost no Moxfield
   // requests.
@@ -331,12 +383,32 @@ async function runContentSync(authorId, { user } = {}) {
 
 // Pull one deck's full contents from Moxfield and mirror onto the local deck.
 async function pullDeckContent(author, publicId, knownRow = null) {
-  const row = knownRow || await db.get(`SELECT * FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
+  let row = knownRow || await db.get(`SELECT * FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
     [author.id, publicId]);
   if (!row) throw new Error(`Deck ${publicId} is not tracked for ${author.moxfield_user}`);
 
   const details = await moxfieldApi.getDeckDetails(publicId);
   const entries = extractDeckCards(details);
+
+  // Fetch/cache provider metadata before taking the allocation lock; network I/O
+  // must never stall checkouts. From the first mirror-deck read through the final
+  // reconciliation write, however, checkout and sync are one ordered operation.
+  await backfillMissingCards(entries);
+  return withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+    // A content pull may spend seconds in remote/cache I/O. Re-read tracking
+    // state only after acquiring the same lock used by disable/remove/retire so
+    // stale work can never recreate a mirror that was paused or deleted while
+    // the request was in flight.
+    const liveRow = await tx.get(`
+      SELECT md.*
+      FROM moxfield_decks md
+      JOIN moxfield_authors ma ON ma.id = md.author_id
+      WHERE md.author_id = ? AND md.public_id = ? AND ma.user_id = ?
+    `, [author.id, publicId, author.user_id]);
+    if (!liveRow || !liveRow.enabled) {
+      return { ok: true, skipped: true, public_id: publicId, reason: 'tracking-disabled-or-removed' };
+    }
+    row = liveRow;
 
   // A stored bindarr_deck_id can dangle if the mirror deck was deleted through
   // the generic deck-delete (which doesn't clear the Moxfield pointer). Writing
@@ -344,12 +416,15 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   // that reads 0. Validate the pointer; if it's gone, re-mint the mirror.
   let targetDeckId = row.bindarr_deck_id;
   if (targetDeckId) {
-    const alive = await db.get(
-      `SELECT id FROM decks WHERE id = ? AND source = 'moxfield'`, [targetDeckId]
+    const alive = await tx.get(
+      `SELECT id, checked_out FROM decks WHERE id = ? AND source = 'moxfield'`, [targetDeckId]
     );
+    if (alive && alive.checked_out) {
+      throw allocationConflict('Check this deck in before syncing Moxfield changes');
+    }
     if (!alive) {
       targetDeckId = null;
-      await db.run(`UPDATE moxfield_decks SET bindarr_deck_id = NULL WHERE id = ?`, [row.id]);
+      await tx.run(`UPDATE moxfield_decks SET bindarr_deck_id = NULL WHERE id = ?`, [row.id]);
     }
   }
   if (!targetDeckId) {
@@ -358,37 +433,91 @@ async function pullDeckContent(author, publicId, knownRow = null) {
       name: details.name || row.name,
       description: details.description || '',
       format: details.format || row.format
-    });
-    await db.run(`UPDATE moxfield_decks SET bindarr_deck_id = ? WHERE id = ?`, [targetDeckId, row.id]);
+    }, tx);
+    await tx.run(`UPDATE moxfield_decks SET bindarr_deck_id = ? WHERE id = ?`, [targetDeckId, row.id]);
   }
 
-  // 1. Backfill any cards not in card_cache yet (Scryfall, batched + rate-limited).
-  await backfillMissingCards(entries);
+  // 1. Card metadata was backfilled before taking the allocation lock.
 
-  // 2. Reconcile quantities exactly: drop what left the deck, upsert the rest.
-  //    (A card that stays keeps its row — and any checked_out state on it.)
-  const desired = new Map(); // card_id -> quantity
+  // 2. Reconcile quantities by logical card identity. Moxfield can name more
+  // than one printing of the same game card; retain one representative id and
+  // sum those quantities instead of creating parallel deck rows.
+  const rawDesired = new Map();
   for (const e of entries) {
     const id = bindarrCardId(e.card);
-    desired.set(id, (desired.get(id) || 0) + e.quantity);
+    rawDesired.set(id, (rawDesired.get(id) || 0) + e.quantity);
   }
-  const current = await db.all(`SELECT card_id FROM deck_cards WHERE deck_id = ?`, [targetDeckId]);
-  for (const c of current) {
-    if (!desired.has(c.card_id)) {
-      await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND card_id = ?`, [targetDeckId, c.card_id]);
+  const desiredIds = [...rawDesired.keys()];
+  const cached = desiredIds.length
+    ? await tx.all(
+      `SELECT id, ${sqlCardKey('card_cache')} AS card_key
+       FROM card_cache WHERE id IN (${desiredIds.map(() => '?').join(',')})`,
+      desiredIds
+    )
+    : [];
+  const keysById = new Map(cached.map(card => [card.id, card.card_key]));
+  const desired = new Map(); // logical card key -> representative id + summed quantity
+  for (const [id, quantity] of rawDesired) {
+    const key = keysById.get(id);
+    if (!key) throw new Error(`Card cache metadata is incomplete for ${id}`);
+    const existing = desired.get(key);
+    if (existing) existing.quantity += quantity;
+    else desired.set(key, { cardId: id, quantity });
+  }
+
+  const current = await tx.all(`
+    SELECT dc.card_id, ${sqlCardKey('current_cc')} AS card_key
+    FROM deck_cards dc
+    LEFT JOIN card_cache current_cc ON current_cc.id = dc.card_id
+    WHERE dc.deck_id = ?
+    ORDER BY dc.card_id
+  `, [targetDeckId]);
+  const currentByKey = new Map();
+  for (const row of current) {
+    if (!row.card_key || !desired.has(row.card_key)) {
+      const removed = await tx.run(`
+        DELETE FROM deck_cards
+        WHERE deck_id = ? AND card_id = ?
+          AND EXISTS (SELECT 1 FROM decks WHERE id = ? AND checked_out = 0)
+      `, [targetDeckId, row.card_id, targetDeckId]);
+      if (!removed.changes) throw new Error('Deck was checked out while Moxfield changes were syncing');
+      continue;
     }
+    if (!currentByKey.has(row.card_key)) currentByKey.set(row.card_key, []);
+    currentByKey.get(row.card_key).push(row.card_id);
   }
-  for (const [cardId, quantity] of desired) {
-    await db.run(
-      `INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, ?, ?)
-       ON CONFLICT(deck_id, card_id) DO UPDATE SET quantity = excluded.quantity`,
-      [targetDeckId, cardId, quantity]
-    );
+
+  for (const [key, wanted] of desired) {
+    const existingIds = currentByKey.get(key) || [];
+    if (existingIds.length > 0) {
+      const representative = existingIds.includes(wanted.cardId) ? wanted.cardId : existingIds[0];
+      const updated = await tx.run(`
+        UPDATE deck_cards
+        SET quantity = CASE WHEN card_id = ? THEN ? ELSE 0 END
+        WHERE deck_id = ?
+          AND card_id IN (${existingIds.map(() => '?').join(',')})
+          AND EXISTS (SELECT 1 FROM decks WHERE id = ? AND checked_out = 0)
+      `, [representative, wanted.quantity, targetDeckId, ...existingIds, targetDeckId]);
+      if (!updated.changes) throw new Error('Deck was checked out while Moxfield changes were syncing');
+      await tx.run(
+        `DELETE FROM deck_cards
+         WHERE deck_id = ? AND quantity <= 0
+           AND card_id IN (${existingIds.map(() => '?').join(',')})`,
+        [targetDeckId, ...existingIds]
+      );
+    } else {
+      const inserted = await tx.run(`
+        INSERT INTO deck_cards (deck_id, card_id, quantity)
+        SELECT ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM decks WHERE id = ? AND checked_out = 0)
+      `, [targetDeckId, wanted.cardId, wanted.quantity, targetDeckId]);
+      if (!inserted.changes) throw new Error('Deck was checked out while Moxfield changes were syncing');
+    }
   }
 
   // 3. Refresh the tracking row: the stamp we just mirrored is now "current".
   const stamp = details.lastUpdatedAtUtc || null;
-  await db.run(
+  await tx.run(
     `UPDATE moxfield_decks SET
         last_synced_updated_at = ?, last_content_sync_at = CURRENT_TIMESTAMP, last_error = NULL,
         name = ?, format = ?,
@@ -407,7 +536,7 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   );
   // Name drift between the summary list and the details payload.
   if (details.name) {
-    await db.run(`UPDATE decks SET name = ? WHERE id = ? AND source = 'moxfield'`, [details.name, targetDeckId]);
+    await tx.run(`UPDATE decks SET name = ? WHERE id = ? AND source = 'moxfield'`, [details.name, targetDeckId]);
   }
 
   const counts = boardCounts(entries);
@@ -419,6 +548,7 @@ async function pullDeckContent(author, publicId, knownRow = null) {
     sideboard: counts.sideboard,
     commanders: counts.commanders
   };
+  }));
 }
 
 // Flip one deck's import switch. Disabling removes the local mirror (and its
@@ -453,15 +583,29 @@ async function setDeckEnabled(userId, publicId, enabled) {
     return { ok: true, enabled: true, imported: !!fresh.bindarr_deck_id };
   }
 
-  if (row.bindarr_deck_id) {
-    await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
-    await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
-    await db.run(`UPDATE moxfield_decks SET enabled = 0, bindarr_deck_id = NULL, last_synced_updated_at = NULL, last_error = NULL WHERE id = ?`, [row.id]);
-  } else {
-    await db.run(`UPDATE moxfield_decks SET enabled = 0, last_error = NULL WHERE id = ?`, [row.id]);
-  }
-  console.log(`Moxfield sync: deck "${row.name}" import disabled (mirror removed)`);
-  return { ok: true, enabled: false };
+  return withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+    const current = await tx.get(`
+      SELECT md.bindarr_deck_id, d.checked_out
+      FROM moxfield_decks md
+      LEFT JOIN decks d ON d.id = md.bindarr_deck_id
+      WHERE md.id = ?
+    `, [row.id]);
+    if (!current) throw new Error('Moxfield deck not found for this user');
+    if (current.checked_out) {
+      const conflict = new Error('Check this deck in before disabling its Moxfield mirror');
+      conflict.code = 'ALLOCATION_CONFLICT';
+      throw conflict;
+    }
+    if (current.bindarr_deck_id) {
+      await tx.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [current.bindarr_deck_id]);
+      await tx.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [current.bindarr_deck_id]);
+      await tx.run(`UPDATE moxfield_decks SET enabled = 0, bindarr_deck_id = NULL, last_synced_updated_at = NULL, last_error = NULL WHERE id = ?`, [row.id]);
+    } else {
+      await tx.run(`UPDATE moxfield_decks SET enabled = 0, last_error = NULL WHERE id = ?`, [row.id]);
+    }
+    console.log(`Moxfield sync: deck "${row.name}" import disabled (mirror removed)`);
+    return { ok: true, enabled: false };
+  }));
 }
 
 // Re-pull one specific deck's contents for a user, regardless of its stamp.
@@ -508,18 +652,30 @@ async function addAuthor(userId, username) {
 
 // Stop tracking an author: remove every mirrored deck this account produced.
 async function removeAuthor(userId, authorId) {
-  const author = await db.get(`SELECT * FROM moxfield_authors WHERE id = ? AND user_id = ?`, [authorId, userId]);
-  if (!author) throw new Error('Moxfield author not found');
-  const tracked = await db.all(`SELECT bindarr_deck_id FROM moxfield_decks WHERE author_id = ?`, [author.id]);
-  for (const row of tracked) {
-    if (row.bindarr_deck_id) {
-      await db.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
-      await db.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
+  return withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
+    const author = await tx.get(`SELECT * FROM moxfield_authors WHERE id = ? AND user_id = ?`, [authorId, userId]);
+    if (!author) throw new Error('Moxfield author not found');
+    const tracked = await tx.all(`
+      SELECT md.bindarr_deck_id, d.checked_out
+      FROM moxfield_decks md
+      LEFT JOIN decks d ON d.id = md.bindarr_deck_id
+      WHERE md.author_id = ?
+    `, [author.id]);
+    if (tracked.some(row => row.checked_out)) {
+      const conflict = new Error('Check in every mirrored deck before removing this Moxfield author');
+      conflict.code = 'ALLOCATION_CONFLICT';
+      throw conflict;
     }
-  }
-  // CASCADE removes the moxfield_decks rows.
-  await db.run(`DELETE FROM moxfield_authors WHERE id = ?`, [author.id]);
-  return { ok: true, removed_decks: tracked.filter(r => r.bindarr_deck_id).length };
+    for (const row of tracked) {
+      if (row.bindarr_deck_id) {
+        await tx.run(`DELETE FROM deck_cards WHERE deck_id = ?`, [row.bindarr_deck_id]);
+        await tx.run(`DELETE FROM decks WHERE id = ? AND source = 'moxfield'`, [row.bindarr_deck_id]);
+      }
+    }
+    // CASCADE removes the moxfield_decks rows.
+    await tx.run(`DELETE FROM moxfield_authors WHERE id = ?`, [author.id]);
+    return { ok: true, removed_decks: tracked.filter(r => r.bindarr_deck_id).length };
+  }));
 }
 
 // Status for the UI: every author this user tracks, with per-deck freshness.

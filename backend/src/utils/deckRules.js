@@ -2,6 +2,7 @@
 // deck_cards (deck builder POST, the collection "add to deck" bulk action)
 // obeys them — the frontend checks were advisory and easy to bypass.
 const db = require('../db');
+const { sqlCardKey } = require('./cardIdentity');
 
 function parseSubtypes(raw) {
   if (Array.isArray(raw)) return raw;
@@ -14,8 +15,9 @@ function parseSubtypes(raw) {
 function isBasicLand(card) {
   if (!card) return false;
   const subs = parseSubtypes(card.subtypes);
-  const basicTypes = ['Basic', 'Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes'];
-  return (subs.includes('Land') || card.supertype === 'Land') && basicTypes.some(t => subs.includes(t) || card.name === t);
+  const basicNames = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes'];
+  return (subs.includes('Land') || card.supertype === 'Land') &&
+    (subs.includes('Basic') || basicNames.includes(card.name));
 }
 
 // Validate setting a deck's copy count of `cardId` to `newQty`.
@@ -32,28 +34,28 @@ async function validateDeckAddition({ deckId, userId, cardId, newQty, dbClient }
   );
   if (!card) return { ok: false, error: 'Card not found' };
 
+  // Ownership is game-card ownership, not printing ownership. A Revised Bolt
+  // covers a deck row created from an M10 Bolt. The collection keeps both exact
+  // printing ids for display and value, but every deck rule compares canonical
+  // English names.
   const ownedRow = await client.get(
-    `SELECT COALESCE(SUM(quantity), 0) AS owned FROM collection
-     WHERE card_id = ? AND user_id = ?`, [cardId, userId]
+    `SELECT COALESCE(SUM(c.quantity), 0) AS owned
+     FROM collection c
+     JOIN card_cache owned_cc ON owned_cc.id = c.card_id
+     WHERE c.user_id = ? AND c.quantity > 0
+       AND ${sqlCardKey('owned_cc')} = LOWER(TRIM(?))`,
+    [userId, card.name]
   );
   const owned = ownedRow ? ownedRow.owned : 0;
+
+  // newQty is the absolute quantity for the logical game card. Route writes
+  // collapse/zero any legacy alternate-printing rows before returning.
   if (qty > owned) {
     return { ok: false, error: `You only own ${owned} ${owned === 1 ? 'copy' : 'copies'} of ${card.name}.` }
   }
 
-  if (!isBasicLand(card)) {
-    // Copies of the same NAME already in the deck under a different card_id
-    // (alt arts / reprints) count toward the 4-card limit.
-    const otherRow = await client.get(
-      `SELECT COALESCE(SUM(dc.quantity), 0) AS other
-       FROM deck_cards dc JOIN card_cache cc ON dc.card_id = cc.id
-       WHERE dc.deck_id = ? AND cc.name = ? AND dc.card_id != ?`,
-      [deckId, card.name, cardId]
-    );
-    const other = otherRow ? otherRow.other : 0;
-    if (other + qty > 4) {
-      return { ok: false, error: `Cannot have more than 4 copies of ${card.name}.` }
-    }
+  if (!isBasicLand(card) && qty > 4) {
+    return { ok: false, error: `Cannot have more than 4 copies of ${card.name}.` }
   }
 
   return { ok: true }

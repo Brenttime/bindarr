@@ -107,6 +107,60 @@ async function withTransaction(fn) {
   }
 }
 
+// Run genuinely atomic multi-statement work on a dedicated connection. The
+// process-wide connection cannot provide transaction ownership across awaits:
+// unrelated requests can enqueue work into its open transaction. A dedicated
+// connection keeps rollback boundaries honest while BEGIN IMMEDIATE excludes
+// competing writers until commit.
+async function withDedicatedTransaction(fn) {
+  const connection = await new Promise((resolve, reject) => {
+    const candidate = new sqlite3.Database(dbPath, (error) => {
+      if (error) reject(error);
+      else resolve(candidate);
+    });
+  });
+  const client = {
+    run(sql, params = []) {
+      return new Promise((resolve, reject) => {
+        connection.run(sql, params, function (error) {
+          if (error) reject(error);
+          else resolve({ lastID: this.lastID, changes: this.changes });
+        });
+      });
+    },
+    get(sql, params = []) {
+      return new Promise((resolve, reject) => {
+        connection.get(sql, params, (error, row) => error ? reject(error) : resolve(row));
+      });
+    },
+    all(sql, params = []) {
+      return new Promise((resolve, reject) => {
+        connection.all(sql, params, (error, rows) => error ? reject(error) : resolve(rows));
+      });
+    }
+  };
+
+  try {
+    await client.run('PRAGMA foreign_keys = ON');
+    await client.run('PRAGMA busy_timeout = 5000');
+    await client.run('BEGIN IMMEDIATE TRANSACTION');
+    try {
+      const result = await fn(client);
+      await client.run('COMMIT');
+      return result;
+    } catch (error) {
+      try { await client.run('ROLLBACK'); } catch (rollbackError) {
+        console.error('SQLite rollback failed:', rollbackError.message);
+      }
+      throw error;
+    }
+  } finally {
+    await new Promise((resolve, reject) => {
+      connection.close(error => error ? reject(error) : resolve());
+    });
+  }
+}
+
 const PBKDF2_ITERATIONS = 210000;
 
 function hashPassword(password) {
@@ -804,7 +858,12 @@ async function initDb() {
   if (!mfxDecksCols.some(c => c.name === 'moxfield_public_id')) {
     await run(`ALTER TABLE decks ADD COLUMN moxfield_public_id TEXT`);
   }
-  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_mfx_public_id ON decks(moxfield_public_id) WHERE moxfield_public_id IS NOT NULL`);
+  // A public Moxfield deck may legitimately be mirrored by several Bindarr
+  // users. Uniqueness is per owner, not global. Drop the former global index
+  // before creating its user-scoped replacement under a new stable name.
+  await run(`DROP INDEX IF EXISTS idx_decks_mfx_public_id`);
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_user_mfx_public_id
+    ON decks(user_id, moxfield_public_id) WHERE moxfield_public_id IS NOT NULL`);
 
   // Moxfield sync cadence, per instance: how often the decklist refreshes
   // (author exists? new decks? removed decks? which changed?) and how often
@@ -902,6 +961,7 @@ module.exports = {
   get,
   all,
   withTransaction,
+  withDedicatedTransaction,
   initDb,
   adoptOrphanRows,
   hashPassword,
