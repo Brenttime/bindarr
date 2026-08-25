@@ -5,6 +5,7 @@ const { parseSetList } = require('./utils/setQuery');
 const cardSearchSql = require('./utils/cardSearchSql');
 const languages = require('./utils/languages');
 const { cacheNormalizedCards } = require('./utils/cardCache');
+const { sqlCardKey } = require('./utils/cardIdentity');
 
 // Scryfall needs no API key but asks callers to identify themselves and accept
 // JSON. See https://scryfall.com/docs/api. IDs from Scryfall are UUIDs / set-num
@@ -629,7 +630,7 @@ async function updateCollectionPrices(force = false) {
   try {
     const cards = await db.all(`
       WITH deck_card_keys AS (
-        SELECT DISTINCT LOWER(TRIM(deck_cc.name)) AS card_key
+        SELECT DISTINCT ${sqlCardKey('deck_cc')} AS card_key
         FROM deck_cards dc
         JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
         WHERE dc.quantity > 0
@@ -640,8 +641,8 @@ async function updateCollectionPrices(force = false) {
       WHERE c.quantity > 0
       UNION
       SELECT DISTINCT cc.id AS card_id, cc.set_id, cc.number, cc.name
-      FROM card_cache cc
-      JOIN deck_card_keys deck_key ON deck_key.card_key = LOWER(TRIM(cc.name))
+      FROM card_cache cc INDEXED BY idx_card_cache_logical_key
+      JOIN deck_card_keys deck_key ON deck_key.card_key = ${sqlCardKey('cc')}
     `);
     if (cards.length === 0) return;
     if (!force && !(await shouldSweepPrices('mtg'))) {
