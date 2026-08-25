@@ -301,6 +301,63 @@ router.delete('/:id/cards/:card_id', async (req, res) => {
   }
 });
 
+// Register every physical card represented by this deck as newly owned.
+// This is deliberately additive: buying a precon (for example) adds another
+// Sol Ring even when the collection already contains one from a different deck.
+// One stacked collection row per printing keeps the write small while preserving
+// the deck's exact quantities. The transaction prevents a half-registered deck.
+router.post('/:id/register-collection', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const deck = await db.get(
+      `SELECT id, name, checked_out FROM decks WHERE id = ? AND user_id = ?`,
+      [id, req.user.id]
+    );
+    if (!deck) return res.status(404).json({ error: 'Deck not found or unauthorized' });
+    if (deck.checked_out) {
+      return res.status(409).json({ error: 'This deck is already checked out for play.' });
+    }
+
+    const cards = await db.all(`
+      SELECT
+        dc.card_id,
+        dc.quantity,
+        COALESCE(NULLIF(cc.language, ''), 'English') AS language,
+        cc.price_trend
+      FROM deck_cards dc
+      JOIN card_cache cc ON cc.id = dc.card_id
+      WHERE dc.deck_id = ? AND dc.quantity > 0
+      ORDER BY dc.card_id
+    `, [id]);
+
+    if (cards.length === 0) {
+      return res.status(400).json({ error: 'This deck has no cards to register.' });
+    }
+
+    await db.withTransaction(async () => {
+      for (const card of cards) {
+        await db.run(`
+          INSERT INTO collection (
+            card_id, user_id, quantity, condition, printing, language,
+            purchase_price, is_trade
+          ) VALUES (?, ?, ?, 'Near Mint', 'Normal', ?, 0, 0)
+        `, [card.card_id, req.user.id, card.quantity, card.language]);
+        await recordPrice(card.card_id, card.price_trend);
+      }
+    });
+
+    const total = cards.reduce((sum, card) => sum + Number(card.quantity || 0), 0);
+    res.status(201).json({
+      message: `Added ${total} cards from ${deck.name} to your collection.`,
+      added: total,
+      card_types: cards.length
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to register deck in collection' });
+  }
+});
+
 // Checkout Deck (mark as in play)
 router.put('/:id/checkout', async (req, res) => {
   const { id } = req.params;
