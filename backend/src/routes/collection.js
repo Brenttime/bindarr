@@ -699,7 +699,14 @@ router.post('/collection/bulk', async (req, res) => {
       if (!allowed.includes(value)) return res.status(400).json({ error: `Invalid ${action}` });
       // Column name is action, drawn from the BULK_ACTIONS whitelist (not user
       // input), so it is safe to interpolate.
-      const result = await db.run(`UPDATE collection SET ${action} = ? WHERE id IN (${placeholders}) AND user_id = ?`, [value, ...ids, req.user.id]);
+      // Moving a row between physical stacks must serialize with single-row
+      // quantity reconciliation. Otherwise the quantity path can inspect the
+      // old stack while this bulk edit moves the row, then trim the new stack
+      // without having guarded the copies it removes.
+      const result = await withAllocationLock(() => db.run(
+        `UPDATE collection SET ${action} = ? WHERE id IN (${placeholders}) AND user_id = ?`,
+        [value, ...ids, req.user.id]
+      ));
       return res.json({ message: `Set ${action} on ${result.changes} card(s)`, affected: result.changes });
     }
 

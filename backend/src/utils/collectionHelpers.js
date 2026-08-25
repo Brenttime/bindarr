@@ -8,7 +8,8 @@ const { sqlCardKey, sqlIsBasicLand } = require('./cardIdentity');
 // the gap between a reduction's availability read and its multi-row stack write
 // without pretending the shared sqlite3 connection provides request-local
 // transactions. Every operation that can reserve or shrink logical supply uses
-// this lock; exact-printing metadata-only edits do not need it.
+// this lock. Physical stack-key edits (condition, finish, language) also use it
+// because they can race a quantity reconciliation that trims the target stack.
 let allocationTail = Promise.resolve();
 async function withAllocationLock(fn) {
   const previous = allocationTail;
