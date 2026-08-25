@@ -48,7 +48,41 @@ axios.Axios.prototype.post = async function(url, body, config) {
 
 axios.Axios.prototype.get = async function(url, config) {
   const fullUrl = (this.defaults.baseURL || '') + url;
-  
+
+  // MTGJSON precon endpoints (GET /api/precons + import in the scenarios suite).
+  // The same fixtures the Scryfall branches serve, so an imported precon card
+  // is the very card the search-and-add tests already cached.
+  if (fullUrl.includes('mtgjson.com')) {
+    if (fullUrl.includes('DeckList.json')) {
+      return {
+        data: {
+          data: [{
+            name: 'precons-test', code: 'LEA', type: 'Sample Deck',
+            releaseDate: '2020-01-01', fileName: 'precons-test', source: 'https://example.test'
+          }],
+          meta: { date: '2026-01-01', version: 'test' }
+        }
+      };
+    }
+    if (fullUrl.includes('/decks/')) {
+      return {
+        data: {
+          data: {
+            name: 'precons-test', code: 'LEA', type: 'Sample Deck', releaseDate: '2020-01-01',
+            mainBoard: [
+              { name: 'Black Lotus', count: 2, setCode: 'lea', number: '232', identifiers: { scryfallId: 'lea-232' } },
+              { name: 'Lightning Bolt', count: 3, setCode: 'm10', number: '146', identifiers: { scryfallId: 'm10-146' } }
+            ],
+            sideBoard: [],
+            commander: []
+          },
+          meta: { date: '2026-01-01', version: 'test' }
+        }
+      };
+    }
+    return { data: {} };
+  }
+
   if (fullUrl.includes('api.scryfall.com')) {
     // Simulate API delay if requested
     if (process.env.MOCK_SCRYFALL_DELAY === 'true') {

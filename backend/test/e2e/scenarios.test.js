@@ -237,6 +237,54 @@ async function runTests() {
       'the deficit must name the non-basic card');
     console.log('PASS: F6-TC6');
 
+    // F6-TC7: precon search + import creates a deck from the WOTC list
+    // The mock serves a one-deck MTGJSON index and a 5-card card list whose
+    // printings (lea-232, m10-146) the Scryfall mock already knows.
+    const searchRes = await fetch(`http://localhost:${port}/api/precons?q=precon`, { headers: authHeaders });
+    assert.strictEqual(searchRes.status, 200);
+    const search = await searchRes.json();
+    assert.strictEqual(search.results.length, 1, 'index search returns the mocked deck');
+    assert.strictEqual(search.results[0].name, 'precons-test');
+
+    const importRes = await fetch(`http://localhost:${port}/api/precons/import`, {
+      method: 'POST', headers: authHeaders,
+      body: JSON.stringify({ fileName: 'precons-test' })
+    });
+    assert.strictEqual(importRes.status, 201, 'precon import creates the deck');
+    const imported = await importRes.json();
+    assert.strictEqual(imported.cards, 2, 'both card types land in the deck');
+
+    // The imported deck carries the resolved printings, stamped as a precon.
+    const importedDeck = await db.get(`SELECT id, source, name FROM decks WHERE id = ?`, [imported.id]);
+    assert.ok(importedDeck, 'deck row exists');
+    assert.strictEqual(importedDeck.source, 'precon');
+    assert.strictEqual(importedDeck.name, 'precons-test');
+    const rows = await db.all(
+      `SELECT cc.name, dc.quantity FROM deck_cards dc JOIN card_cache cc ON dc.card_id = cc.id WHERE dc.deck_id = ? ORDER BY cc.name`,
+      [imported.id]
+    );
+    assert.deepStrictEqual(
+      rows.map(r => `${r.name}:${r.quantity}`),
+      ['Black Lotus:2', 'Lightning Bolt:3'],
+      'quantities and resolved card names must match the WOTC list'
+    );
+
+    // Importing the same precon again must not fail and must not duplicate rows.
+    const importRes2 = await fetch(`http://localhost:${port}/api/precons/import`, {
+      method: 'POST', headers: authHeaders,
+      body: JSON.stringify({ fileName: 'precons-test' })
+    });
+    assert.strictEqual(importRes2.status, 201);
+    const rows2 = await db.all(
+      `SELECT cc.name, dc.quantity FROM deck_cards dc JOIN card_cache cc ON dc.card_id = cc.id WHERE dc.deck_id = ? ORDER BY cc.name`,
+      [(await importRes2.json()).id]
+    );
+    assert.deepStrictEqual(
+      rows2.map(r => `${r.name}:${r.quantity}`),
+      ['Black Lotus:2', 'Lightning Bolt:3']
+    );
+    console.log('PASS: F6-TC7');
+
   } finally {
     try { server.kill('SIGKILL'); } catch {}
     try {
@@ -255,5 +303,6 @@ runTests()
     process.exit(0);
   })
   .catch(err => {
+    console.error('FAIL: uncaught error in scenario suite —', err && err.stack || err);
     process.exit(1);
   });
