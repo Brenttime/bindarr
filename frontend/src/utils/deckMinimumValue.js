@@ -12,3 +12,8 @@ export function deckMinimumValueHint(deck, t) {
   if (unpriced > 0) return t('deck.minimumValueIncomplete', { count: unpriced });
   return t('deck.minimumValueComplete');
 }
+
+export function deckUnpricedCountText(deck, t) {
+  const unpriced = Number(deck?.unpriced_cards) || 0;
+  return unpriced > 0 ? t('deck.unpricedCount', { count: unpriced }) : '';
+}

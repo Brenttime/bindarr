@@ -12,7 +12,7 @@ import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 import { canRegisterDeckInCollection, deckRegistrationCardCount } from '../utils/deckCollectionRegistration';
 import { cardKey, findSameCard, quantityByCardName } from '../utils/cardIdentity';
-import { deckMinimumValueHint, deckMinimumValueText } from '../utils/deckMinimumValue';
+import { deckMinimumValueHint, deckMinimumValueText, deckUnpricedCountText } from '../utils/deckMinimumValue';
 
 // Basic Lands are exempt from the "max 4 of a card" deck rule.
 const isBasicLand = (card) => {
@@ -1080,13 +1080,18 @@ function DeckBuilder({ showToast, onNavigate }) {
                       </div>
                       <div
                         title={deckMinimumValueHint(deck, t)}
+                        tabIndex={0}
+                        aria-label={`${t('deck.minimumValue')}: ${deckMinimumValueText(deck)}. ${deckMinimumValueHint(deck, t)}`}
                         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.35rem', borderTop: '1px solid var(--border-glass)', fontSize: '0.75rem' }}
                       >
                         <span style={{ color: 'var(--text-secondary)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                           <DollarSign size={12} /> {t('deck.minimumValue')}
                         </span>
-                        <span style={{ color: 'var(--accent-yellow)', fontWeight: 800 }}>
+                        <span style={{ color: 'var(--accent-yellow)', fontWeight: 800, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                           {deckMinimumValueText(deck)}
+                          {Number(deck.unpriced_cards) > 0 && (
+                            <small style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{deckUnpricedCountText(deck, t)}</small>
+                          )}
                         </span>
                       </div>
                     </div>
@@ -1210,9 +1215,14 @@ function DeckBuilder({ showToast, onNavigate }) {
                         </td>
                         <td
                           title={deckMinimumValueHint(deck, t)}
+                          tabIndex={0}
+                          aria-label={`${t('deck.minimumValue')}: ${deckMinimumValueText(deck)}. ${deckMinimumValueHint(deck, t)}`}
                           style={{ padding: '0.75rem 1rem', color: 'var(--accent-yellow)', fontWeight: 800, whiteSpace: 'nowrap' }}
                         >
-                          {deckMinimumValueText(deck)}
+                          <div>{deckMinimumValueText(deck)}</div>
+                          {Number(deck.unpriced_cards) > 0 && (
+                            <small style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{deckUnpricedCountText(deck, t)}</small>
+                          )}
                         </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
                           {deck.checked_out ? (
@@ -1293,9 +1303,14 @@ function DeckBuilder({ showToast, onNavigate }) {
                   </span>
                   <span
                     title={deckMinimumValueHint(activeDeck, t)}
+                    tabIndex={0}
+                    aria-label={`${t('deck.minimumValue')}: ${deckMinimumValueText(activeDeck)}. ${deckMinimumValueHint(activeDeck, t)}`}
                     style={{ fontSize: '0.75rem', color: 'var(--accent-yellow)', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '2px' }}
                   >
                     <DollarSign size={13} /> {t('deck.minimumValue')}: {deckMinimumValueText(activeDeck)}
+                    {Number(activeDeck.unpriced_cards) > 0 && (
+                      <small style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({deckUnpricedCountText(activeDeck, t)})</small>
+                    )}
                   </span>
                   {activeDeck.checked_out ? (
                     <span style={{

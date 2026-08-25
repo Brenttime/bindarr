@@ -220,10 +220,14 @@ function normalizeCard(raw, lang) {
   const prices = raw.prices || {};
   const money = (v) => (v != null ? parseFloat(v) : null);
   const eurOnly = money(prices.usd) == null && money(prices.usd_foil) == null
+    && money(prices.usd_etched) == null
     && (money(prices.eur) != null || money(prices.eur_foil) != null);
   const currency = eurOnly ? 'EUR' : 'USD';
   const usd = eurOnly ? money(prices.eur) : money(prices.usd);
   const usdFoil = eurOnly ? money(prices.eur_foil) : money(prices.usd_foil);
+  // Scryfall has no EUR etched field. An etched quote therefore always selects
+  // the USD row instead of being mixed into a EUR-normal/EUR-foil row.
+  const usdEtched = eurOnly ? null : money(prices.usd_etched);
   const cmc = raw.cmc != null ? parseFloat(raw.cmc) : null;
   const colorIdentity = raw.color_identity || face.color_identity || [];
 
@@ -239,9 +243,10 @@ function normalizeCard(raw, lang) {
     set_name: raw.set_name || '',
     number: raw.collector_number || '',
     image_url: imgSrc.normal || imgSrc.large || imgSrc.small || '',
-    price_trend: usd != null ? usd : (usdFoil != null ? usdFoil : 0),
+    price_trend: usd != null ? usd : (usdFoil != null ? usdFoil : (usdEtched != null ? usdEtched : 0)),
     price_normal: usd,
     price_holofoil: usdFoil,
+    price_etched: usdEtched,
     cmc: cmc,
     color_identity: colorIdentity.map(c => COLOR_NAMES[c] || c),
     // Which printing this row IS. The quick-add form defaults the copy's language

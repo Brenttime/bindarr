@@ -47,17 +47,18 @@ async function runTests() {
     const auth = { Authorization: `Bearer ${token}` };
 
     const cards = [
-      ['value-bolt-active', 'Lightning Bolt', 8, 8, null, 'USD'],
-      ['value-bolt-cheap', ' Lightning Bolt ', 2.25, 2.25, 1.5, 'USD'],
-      ['value-bolt-eur', 'Lightning Bolt', 0.1, 0.1, null, 'EUR'],
-      ['value-bolt-negative', 'Lightning Bolt', 10, 10, null, 'USD'],
-      ['value-unpriced', 'Brainstorm', null, null, null, 'USD'],
+      ['value-bolt-active', 'Lightning Bolt', 8, 8, null, null, 'USD'],
+      ['value-bolt-cheap', ' Lightning Bolt ', 2.25, 2.25, 1.5, 1.25, 'USD'],
+      ['value-bolt-eur', 'Lightning Bolt', 0.1, 0.1, null, null, 'EUR'],
+      ['value-bolt-negative', 'Lightning Bolt', 10, 10, null, null, 'USD'],
+      ['value-etched-only', 'Etched Example', 0.75, null, null, 0.75, 'USD'],
+      ['value-unpriced', 'Brainstorm', null, null, null, null, 'USD'],
     ];
     for (const card of cards) {
       await db.run(
         `INSERT INTO card_cache
-          (id, name, price_trend, price_normal, price_holofoil, price_currency)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+          (id, name, price_trend, price_normal, price_holofoil, price_etched, price_currency)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         card
       );
     }
@@ -66,6 +67,7 @@ async function runTests() {
     await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'value-bolt-active', 2)`, [valuedDeck.lastID]);
     await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'value-bolt-cheap', 1)`, [valuedDeck.lastID]);
     await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'value-bolt-negative', -10)`, [valuedDeck.lastID]);
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'value-etched-only', 2)`, [valuedDeck.lastID]);
     await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'value-unpriced', 2)`, [valuedDeck.lastID]);
     const emptyDeck = await db.run(`INSERT INTO decks (user_id, name) VALUES (?, 'Empty Value Deck')`, [userId]);
 
@@ -73,12 +75,19 @@ async function runTests() {
     assert.strictEqual(listResponse.status, 200);
     const decks = await listResponse.json();
     const summary = decks.find(deck => deck.id === valuedDeck.lastID);
-    assert.strictEqual(summary.minimum_value, 4.5,
-      'three logical copies use the cheapest USD printing/finish, not the active printing or cheaper EUR quote');
+    assert.strictEqual(summary.minimum_value, 5.25,
+      'logical copies use the cheapest USD printing/finish, including etched, not the active printing or cheaper EUR quote');
     assert.strictEqual(summary.minimum_value_currency, 'USD');
     assert.strictEqual(summary.unpriced_cards, 2);
     assert.strictEqual(summary.unpriced_card_types, 1);
-    assert.ok(await db.get(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_card_cache_logical_name'`));
+    assert.ok(await db.get(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_card_cache_logical_key'`));
+    const priceLookupPlan = await db.all(`
+      EXPLAIN QUERY PLAN
+      SELECT id FROM card_cache INDEXED BY idx_card_cache_logical_key
+      WHERE LOWER(TRIM(COALESCE(name, ''))) = ?
+    `, ['lightning bolt']);
+    assert.ok(priceLookupPlan.some(step => /SEARCH card_cache USING INDEX idx_card_cache_logical_key/.test(step.detail)),
+      'logical-name price lookups must use an indexed search instead of scanning the full cache');
     const empty = decks.find(deck => deck.id === emptyDeck.lastID);
     assert.strictEqual(empty.minimum_value, 0);
     assert.strictEqual(empty.unpriced_cards, 0);
@@ -87,7 +96,7 @@ async function runTests() {
     const detailResponse = await fetch(`http://localhost:${port}/api/decks/${valuedDeck.lastID}`, { headers: auth });
     assert.strictEqual(detailResponse.status, 200);
     const detail = await detailResponse.json();
-    assert.strictEqual(detail.minimum_value, 4.5);
+    assert.strictEqual(detail.minimum_value, 5.25);
     assert.strictEqual(detail.unpriced_cards, 2);
     assert.strictEqual(detail.cards.find(card => card.name.trim() === 'Lightning Bolt').quantity, 3,
       'legacy active-print rows remain one logical card while valuation sums their quantity');
