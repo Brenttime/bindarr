@@ -173,11 +173,22 @@ router.post('/scan-match', searchLimiter, async (req, res) => {
 router.get('/collection/cardlist', async (req, res) => {
   try {
     const style = req.query.style === 'detailed' ? 'detailed' : 'plain';
+    const unresolved = await db.get(`
+      SELECT COUNT(*) AS count
+      FROM collection c
+      LEFT JOIN card_cache cc ON cc.id = c.card_id
+      WHERE c.user_id = ? AND c.quantity > 0 AND cc.id IS NULL
+    `, [req.user.id]);
+    if (Number(unresolved && unresolved.count) > 0) {
+      return res.status(422).json({
+        error: 'The collection contains cards whose details are unavailable. Repair their metadata before exporting.'
+      });
+    }
     const rows = await db.all(
       `SELECT c.quantity, cc.name, cc.set_id, cc.number
        FROM collection c
        JOIN card_cache cc ON c.card_id = cc.id
-       WHERE c.user_id = ?
+       WHERE c.user_id = ? AND c.quantity > 0
        ORDER BY c.added_at DESC`,
       [req.user.id]
     );
@@ -438,12 +449,26 @@ router.put('/collection/:id', async (req, res) => {
 
     const saveEntry = async () => {
       if (requestedQty !== null) {
-        const stack = await db.get(`
-          SELECT COALESCE(SUM(quantity), 0) AS quantity
+        // Metadata edits can move this row into another physical stack before
+        // setStackQuantity reconciles that stack. Guard the stack that will
+        // actually exist after the edit, not the row's old stack; otherwise a
+        // one-copy row moved into a four-copy stack and saved as quantity=1
+        // could delete four copies that a checked-out deck already reserved.
+        const targetCondition = condition !== undefined ? condition : entry.condition;
+        const targetPrinting = printing !== undefined ? printing : entry.printing;
+        const targetLanguage = language !== undefined ? language : entry.language;
+        const targetSiblings = await db.all(`
+          SELECT quantity
           FROM collection
-          WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ? AND language = ?
-        `, [req.user.id, entry.card_id, entry.condition, entry.printing, entry.language]);
-        const reduction = Math.max(0, Number(stack && stack.quantity) - requestedQty);
+          WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ?
+            AND language = ? AND id != ?
+        `, [
+          req.user.id, entry.card_id, targetCondition, targetPrinting,
+          targetLanguage, id
+        ]);
+        const projectedStackQty = (Number(entry.quantity) || 1)
+          + targetSiblings.reduce((sum, sibling) => sum + (Number(sibling.quantity) || 1), 0);
+        const reduction = Math.max(0, projectedStackQty - requestedQty);
         if (reduction > 0) {
           const status = await logicalInventoryStatus(db, req.user.id, entry.card_id);
           if (!status || Number(status.owned_qty) - reduction < Number(status.locked_qty)) {

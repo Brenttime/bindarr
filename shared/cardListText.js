@@ -20,7 +20,9 @@ const norm = (v) => String(v == null ? '' : v).trim();
 // carry set_id/number, deck cards carry set_code/collector_number — accept
 // every spelling, uppercasing the set code the way the deck exports do.
 function cardListLine(card, style = 'plain') {
-  const qty = Math.max(1, parseInt(card.quantity, 10) || 1);
+  const parsedQty = parseInt(card.quantity, 10);
+  const qty = Number.isFinite(parsedQty) ? parsedQty : 1;
+  if (qty <= 0) return '';
   const name = norm(card.name);
   if (style === 'detailed') {
     const set = norm(card.set_id || card.set_code).toUpperCase();
@@ -37,7 +39,7 @@ function cardListLine(card, style = 'plain') {
 // is worse than an error).
 function buildCardListText(cards, style = 'plain') {
   if (!Array.isArray(cards) || cards.length === 0) return '';
-  return cards.map(c => cardListLine(c, style)).join('\n');
+  return cards.map(c => cardListLine(c, style)).filter(Boolean).join('\n');
 }
 
 module.exports = { cardListLine, buildCardListText };

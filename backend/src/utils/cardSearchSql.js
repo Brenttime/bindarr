@@ -73,14 +73,14 @@ function collectionQuery({ userId, name, number, setList = [], limit, offset }) 
       SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(owned.quantity) AS owned_qty
       FROM collection owned
       JOIN card_cache owned_cc ON owned.card_id = owned_cc.id
-      WHERE owned.user_id = ?
+      WHERE owned.user_id = ? AND owned.quantity > 0
       GROUP BY ${sqlCardKey('owned_cc')}
     )
     SELECT cc.*, logical_owned.owned_qty
     FROM collection c
     JOIN card_cache cc ON c.card_id = cc.id
     JOIN logical_owned ON logical_owned.card_key = ${sqlCardKey('cc')}
-    WHERE c.user_id = ?
+    WHERE c.user_id = ? AND c.quantity > 0
   `;
   const params = [userId, userId];
   for (const part of [nameClause('cc.', name), numberClause('cc.number', number), setSqlFilter(setList, 'cc')]) {

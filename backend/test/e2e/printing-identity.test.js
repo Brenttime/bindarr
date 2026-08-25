@@ -57,6 +57,7 @@ async function runTests() {
       ['split-b', 'Fire // Ice', 'mh2', '290', 'Instant', '["Instant"]'],
       ['island-a', 'Island', 'lea', '286', 'Land', '["Basic","Land","Island"]'],
       ['brain-a', 'Brainstorm', 'ice', '61', 'Instant', '["Instant"]'],
+      ['stack-a', 'Stack Merge Probe', 'tst', '1', 'Instant', '["Instant"]'],
     ];
     for (const card of cards) {
       await db.run(
@@ -136,6 +137,32 @@ async function runTests() {
     if (brainState.locked) {
       assert.strictEqual((await fetch(api(`/decks/${brainDeck}/return`), { method: 'PUT', headers: auth })).status, 200);
     }
+
+    // A metadata edit can move one row into another physical stack. The guard
+    // must account for the target stack before setStackQuantity trims it.
+    const stackEntry = await db.run(`
+      INSERT INTO collection (card_id, user_id, quantity, condition, printing, language)
+      VALUES ('stack-a', ?, 1, 'Near Mint', 'Normal', 'English')
+    `, [userId]);
+    await db.run(`
+      INSERT INTO collection (card_id, user_id, quantity, condition, printing, language)
+      VALUES ('stack-a', ?, 4, 'Lightly Played', 'Normal', 'English')
+    `, [userId]);
+    const stackDeck = await createDeck('Metadata stack reduction guard');
+    await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'stack-a', 5)`, [stackDeck]);
+    assert.strictEqual((await fetch(api(`/decks/${stackDeck}/checkout`), { method: 'PUT', headers: auth })).status, 200);
+    const mergeReduction = await fetch(api(`/collection/${stackEntry.lastID}`), {
+      method: 'PUT', headers: json, body: JSON.stringify({ condition: 'Lightly Played', quantity: 1 })
+    });
+    assert.strictEqual(mergeReduction.status, 409, 'target-stack merge cannot undercut checked-out demand');
+    const stackState = await db.get(`
+      SELECT SUM(quantity) AS owned,
+             SUM(CASE WHEN id = ? AND condition = 'Near Mint' THEN 1 ELSE 0 END) AS original_unchanged
+      FROM collection WHERE user_id = ? AND card_id = 'stack-a'
+    `, [stackEntry.lastID, userId]);
+    assert.strictEqual(stackState.owned, 5);
+    assert.strictEqual(stackState.original_unchanged, 1);
+    assert.strictEqual((await fetch(api(`/decks/${stackDeck}/return`), { method: 'PUT', headers: auth })).status, 200);
     console.log('PASS: F8-TC3');
 
     // F8-TC4: legacy duplicate printing rows collapse in reads and in later writes.
@@ -163,6 +190,12 @@ async function runTests() {
     assert.strictEqual(search.length, 2);
     assert.deepStrictEqual(search.map(card => card.id).sort(), ['bolt-a', 'bolt-b']);
     assert.ok(search.every(card => card.owned_qty === 3));
+    await db.run(`INSERT INTO collection (card_id, user_id, quantity) VALUES ('split-a', ?, 0)`, [userId]);
+    const zeroOwnedSearch = await fetch(
+      api('/search?scope=collection&name=Fire%20%2F%2F%20Ice'),
+      { headers: auth }
+    ).then(r => r.json());
+    assert.strictEqual(zeroOwnedSearch.length, 0, 'nonpositive collection rows are not owned search results');
     console.log('PASS: F8-TC5');
 
     // F8-TC6: list add/count/detail/export/remove use logical identity, not printing id.
@@ -206,6 +239,17 @@ async function runTests() {
     assert.strictEqual((await fetch(api(`/lists/${listId}`), { headers: auth })).status, 422);
     assert.strictEqual((await fetch(api(`/lists/${listId}/cardlist`), { headers: auth })).status, 422);
     await db.run(`DELETE FROM list_cards WHERE list_id = ? AND card_id = 'missing-list-card'`, [listId]);
+
+    const physicalExport = await fetch(api('/collection/cardlist'), { headers: auth });
+    assert.strictEqual(physicalExport.status, 200);
+    assert.ok(!(await physicalExport.text()).includes('Fire // Ice'), 'zero physical rows are omitted from exports');
+    await db.run('PRAGMA foreign_keys = OFF');
+    await db.run(`INSERT INTO collection (card_id, user_id, quantity) VALUES ('missing-collection-card', ?, 1)`, [userId]);
+    await db.run('PRAGMA foreign_keys = ON');
+    assert.strictEqual((await fetch(api('/collection/cardlist'), { headers: auth })).status, 422);
+    await db.run('PRAGMA foreign_keys = OFF');
+    await db.run(`DELETE FROM collection WHERE user_id = ? AND card_id = 'missing-collection-card'`, [userId]);
+    await db.run('PRAGMA foreign_keys = ON');
 
     await db.run(`INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'missing-deck-card', 1)`, [legacy]);
     const deckSummary = (await fetch(api('/decks'), { headers: auth }).then(r => r.json())).find(row => row.id === legacy);

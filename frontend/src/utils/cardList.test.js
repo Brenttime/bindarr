@@ -16,7 +16,12 @@ assert.strictEqual(cardListLine(cards[0], 'detailed'), '4 Lightning Bolt (JUD) 1
 assert.strictEqual(cardListLine(cards[1], 'detailed'), '1 The Legend of Yangchen // Avatar Yangchen (TLA) 27');
 assert.strictEqual(cardListLine(cards[2], 'detailed'), '2 Basic Snow Island', 'missing set/number degrades to name');
 assert.strictEqual(cardListLine(cards[3], 'detailed'), '1 Daily Bugle Newspaper (MSC) 749');
-assert.strictEqual(cardListLine({ quantity: 0, name: 'X' }, 'plain'), '1 X', 'quantity floors at 1');
+assert.strictEqual(cardListLine({ quantity: 0, name: 'X' }, 'plain'), '', 'nonpositive rows are omitted');
+assert.strictEqual(
+  buildCardListText([{ quantity: 0, name: 'X' }, { quantity: 2, name: 'Y' }], 'plain'),
+  '2 Y',
+  'nonpositive rows do not create blank export lines'
+);
 
 // ManaBox's own documented "most standard format" (manabox.app/guides/decks/
 // import-export/ and .../collection/import-export/ — the MTGA format). This is
