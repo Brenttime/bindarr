@@ -15,10 +15,16 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
   const cancel = onCancel || onClose;
 
   const cards = Array.isArray(locationsData) ? locationsData : (locationsData?.cards || []);
-  const coveredCount = cards.filter(c => c.covered).length;
-  const totalCards = cards.length;
-  const missingCards = cards.filter(c => c.missing > 0);
-  const coveredCards = cards.filter(c => c.missing === 0);
+  // Basic lands are ignored for coverage: anyone who plays the format owns a
+  // set of them, so a short basic land is never a reason a deck can't go out
+  // the door. They are listed (dimmed) for completeness but never count
+  // against the progress bar or the covered check.
+  const counted = cards.filter(c => !c.is_basic_land);
+  const ignoredBasicLands = cards.filter(c => c.is_basic_land);
+  const missingCards = counted.filter(c => c.missing > 0);
+  const coveredCards = counted.filter(c => c.missing === 0);
+  const totalCards = counted.length;
+  const coveredCount = coveredCards.length;
   const allCovered = totalCards > 0 && coveredCount === totalCards;
 
   useBackGuard(true, cancel);
@@ -115,6 +121,37 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
               <div style={{ color: 'var(--text-secondary)', fontWeight: 700, fontSize: '0.85rem' }}>{t('wizard.coveredSection')}</div>
               {coveredCards.map(renderRow)}
+            </div>
+          )}
+
+          {ignoredBasicLands.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <div style={{ color: 'var(--text-muted)', fontWeight: 700, fontSize: '0.8rem' }}>{t('wizard.basicLandsIgnored')}</div>
+              {ignoredBasicLands.map(c => (
+                <div
+                  key={c.card_id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.65rem',
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px dashed var(--border-glass)',
+                    borderRadius: 'var(--radius-sm)',
+                    opacity: 0.75
+                  }}
+                >
+                  <div style={{ width: '34px', height: '46px', flexShrink: 0, borderRadius: '4px', overflow: 'hidden', background: 'rgba(0,0,0,0.3)' }}>
+                    {c.image_url && <CardImage card={{ image_url: c.image_url, name: c.name }} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {c.card_name}
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+                      {t('wizard.basicLand', { owned: c.owned, required: c.required })}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>{t('wizard.ignored')}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>

@@ -501,6 +501,17 @@ function DeckBuilder({ showToast, onNavigate }) {
       .catch(() => showToast(t('deck.errCopy')));
   };
 
+  // Copy just the cards this deck needs beyond what the collection owns — the
+  // "what am I missing for this deck?" list. Same math as the buylist format,
+  // so it stays consistent with the TCGplayer Mass Entry path.
+  const handleCopyMissing = () => {
+    const text = buildDeckExport(activeDeck?.cards, 'buylist');
+    if (!text) { showToast(t('deck.nothingToBuy')); return; }
+    navigator.clipboard.writeText(text)
+      .then(() => showToast(t('deck.missingCopied')))
+      .catch(() => showToast(t('deck.errCopy')));
+  };
+
   // Copy the buylist and open TCGplayer Mass Entry — user pastes (their mass
   // entry page has no documented prefill URL param, so clipboard + open is the
   // reliable path).
@@ -1241,22 +1252,15 @@ function DeckBuilder({ showToast, onNavigate }) {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* The deck action that's actually used: what's still missing from the collection */}
               <button
-                className="btn btn-secondary"
-                onClick={() => setShowExportModal(true)}
+                className="btn btn-primary"
+                onClick={handleCopyMissing}
+                title={t('deck.missingHint')}
                 style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                title={t('deck.exportHint')}
               >
-                <Download size={14} /> Export
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowImportModal(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                title={t('deck.importHint')}
-              >
-                <Upload size={14} /> Import
+                <List size={14} /> {t('deck.exportMissing')}
               </button>
               {/* Checkout / Return button */}
               {activeDeck.checked_out ? (
@@ -1281,6 +1285,25 @@ function DeckBuilder({ showToast, onNavigate }) {
               <button className="btn btn-primary" onClick={startSimulator} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <Play size={14} /> Draw Simulator
               </button>
+              {/* Deck tools — used rarely, so they sit smaller and quieter at the end */}
+              <div style={{ display: 'flex', gap: '0.25rem', opacity: 0.75 }} title={t('deck.deckTools')}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowExportModal(true)}
+                  title={t('deck.exportHint')}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem' }}
+                >
+                  <Download size={12} />
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowImportModal(true)}
+                  title={t('deck.importHint')}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem' }}
+                >
+                  <Upload size={12} />
+                </button>
+              </div>
             </div>
           </div>
 
