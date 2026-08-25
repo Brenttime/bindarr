@@ -11,6 +11,7 @@ import { buildDeckExport, parseDeckLine } from '../utils/deckText';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 import { canRegisterDeckInCollection, deckRegistrationCardCount } from '../utils/deckCollectionRegistration';
+import { cardKey, findSameCard, quantityByCardName } from '../utils/cardIdentity';
 
 // Basic Lands are exempt from the "max 4 of a card" deck rule.
 const isBasicLand = (card) => {
@@ -20,9 +21,8 @@ const isBasicLand = (card) => {
   return (subs.includes('Land') || card.supertype === 'Land') && basicTypes.some(t => subs.includes(t) || card.name === t);
 };
 
-// Total copies of a card (matched by name) already in a deck's card list.
-const deckCountByName = (deckCards, name) =>
-  (deckCards || []).filter(c => c.name === name).reduce((s, c) => s + c.quantity, 0);
+// Total copies of a logical card already in a deck, regardless of printing.
+const deckCountByName = (deckCards, name) => quantityByCardName(deckCards, name);
 
 // What a new deck starts as.
 
@@ -189,8 +189,9 @@ function DeckBuilder({ showToast, onNavigate }) {
   const handleAddCardToDeck = async (card) => {
     if (!activeDeck || savingCard) return;
 
-    // Find if card already exists in deck
-    const existing = activeDeck.cards.find(c => c.id === card.id);
+    // Reprints share one deck quantity. The chosen art can differ from the row
+    // already in the deck, but the + button still increments the same game card.
+    const existing = findSameCard(activeDeck.cards, card);
     const newQty = existing ? existing.quantity + 1 : 1;
 
     setSavingCard(true);
@@ -310,25 +311,18 @@ function DeckBuilder({ showToast, onNavigate }) {
         const res = await fetch(`/api/collection`);
         if (res.ok) {
           const data = await res.json();
-          // /api/collection returns one row per physical entry (so N copies of
-          // a card = N rows sharing the same card_id). Unlike /api/search
-          // (which GROUPs BY card_id server-side), this endpoint doesn't
-          // aggregate — grouping here mirrors that so browse-mode results have
-          // the same one-row-per-card shape search results already have.
-          // Without this, every row for a given card_id gets marked "added"
-          // together once any one copy is added, and a second owned copy
-          // can't be added at all.
-          const byCardId = new Map();
+          // Deck identity is the game card name, not a printing id. Keep one
+          // representative image while summing every physical printing owned.
+          const byCardName = new Map();
           for (const item of data) {
-            const existing = byCardId.get(item.card_id);
+            const key = cardKey(item);
+            const existing = byCardName.get(key);
             if (existing) {
               existing.owned_qty += item.quantity || 1;
             } else {
-              byCardId.set(item.card_id, {
+              byCardName.set(key, {
                 id: item.card_id,
                 name: item.name,
-                // Carried through so the picker shows the localized name; `name` stays
-                // English because the 4-copy rule counts by it.
                 printed_name: item.printed_name,
                 set_name: item.set_name,
                 number: item.number || item.collector_number || item.card_number || '',
@@ -342,13 +336,21 @@ function DeckBuilder({ showToast, onNavigate }) {
               });
             }
           }
-          setSearchResults(Array.from(byCardId.values()));
+          setSearchResults(Array.from(byCardName.values()));
         }
       } else {
         const response = await fetch(`/api/search?name=${encodeURIComponent(searchQuery)}&scope=collection`);
         if (response.ok) {
           const data = await response.json();
-          setSearchResults(data);
+          // Search returns each owned printing for art/collection display. A deck
+          // picker collapses those to one logical card; owned_qty is already the
+          // all-printings total on every row.
+          const byCardName = new Map();
+          for (const card of data) {
+            const key = cardKey(card);
+            if (!byCardName.has(key)) byCardName.set(key, card);
+          }
+          setSearchResults(Array.from(byCardName.values()));
         } else {
           showToast(t(response.status === 429 ? 'deck.errRateLimit' : 'deck.errSearch'));
         }
@@ -575,7 +577,7 @@ function DeckBuilder({ showToast, onNavigate }) {
           if (cards.length > 0) {
             const card = cards[0];
             const owned = card.owned_qty || 0;
-            const inDeck = activeDeck.cards.find(c => c.id === card.id)?.quantity || 0;
+            const inDeck = quantityByCardName(activeDeck.cards, card);
             results.push({
               rawName,
               requestedQty: qty,
@@ -1419,8 +1421,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                   ) : searchResults.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '1rem', maxHeight: '240px', overflowY: 'auto', background: 'rgba(0,0,0,0.15)', padding: '0.5rem', borderRadius: 'var(--radius-sm)' }}>
                       {searchResults.map(card => {
-                          const existingInDeck = activeDeck?.cards.find(c => c.id === card.id);
-                          const qtyInDeck = existingInDeck ? existingInDeck.quantity : 0;
+                          const qtyInDeck = quantityByCardName(activeDeck?.cards, card);
                           const ownedQty = card.owned_qty || 0;
                           const isAtMaxOwned = qtyInDeck >= ownedQty;
                           const isAtRuleMax = !isBasicLand(card) && deckCountByName(activeDeck?.cards, card.name) >= 4;

@@ -15,9 +15,9 @@
 //     no network beyond that one summary call: the per-minute check is cheap by
 //     construction.
 //
-// Mapping rule: a Moxfield card's `scryfall_id` is a Scryfall UUID, and
-// Bindarr's MTG card id is `mtg-<that same UUID>` — so decks mirror onto
-// card_cache directly. No name matching, no printing ambiguity.
+// Mapping rule: Moxfield supplies exact Scryfall printing ids for cache lookup,
+// but deck identity is the normalized canonical English card name. Reprints are
+// collapsed before reconciliation; the retained id is only representative art.
 //
 // Ownership: mirrored decks are owned by the user who added the author, carry
 // `source='moxfield'` plus the Moxfield public id, and are reconciled exactly
@@ -28,6 +28,7 @@
 const db = require('./db');
 const moxfieldApi = require('./moxfieldApi');
 const { bulkFetchByIdentifier, cacheCards } = require('./scryfallApi');
+const { sqlCardKey } = require('./utils/cardIdentity');
 const {
   MIRROR_BOARDS,
   extractDeckCards,
@@ -345,8 +346,11 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   let targetDeckId = row.bindarr_deck_id;
   if (targetDeckId) {
     const alive = await db.get(
-      `SELECT id FROM decks WHERE id = ? AND source = 'moxfield'`, [targetDeckId]
+      `SELECT id, checked_out FROM decks WHERE id = ? AND source = 'moxfield'`, [targetDeckId]
     );
+    if (alive && alive.checked_out) {
+      throw new Error('Check this deck in before syncing Moxfield changes');
+    }
     if (!alive) {
       targetDeckId = null;
       await db.run(`UPDATE moxfield_decks SET bindarr_deck_id = NULL WHERE id = ?`, [row.id]);
@@ -365,25 +369,75 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   // 1. Backfill any cards not in card_cache yet (Scryfall, batched + rate-limited).
   await backfillMissingCards(entries);
 
-  // 2. Reconcile quantities exactly: drop what left the deck, upsert the rest.
-  //    (A card that stays keeps its row — and any checked_out state on it.)
-  const desired = new Map(); // card_id -> quantity
+  // 2. Reconcile quantities by logical card identity. Moxfield can name more
+  // than one printing of the same game card; retain one representative id and
+  // sum those quantities instead of creating parallel deck rows.
+  const rawDesired = new Map();
   for (const e of entries) {
     const id = bindarrCardId(e.card);
-    desired.set(id, (desired.get(id) || 0) + e.quantity);
+    rawDesired.set(id, (rawDesired.get(id) || 0) + e.quantity);
   }
-  const current = await db.all(`SELECT card_id FROM deck_cards WHERE deck_id = ?`, [targetDeckId]);
-  for (const c of current) {
-    if (!desired.has(c.card_id)) {
-      await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND card_id = ?`, [targetDeckId, c.card_id]);
+  const desiredIds = [...rawDesired.keys()];
+  const cached = desiredIds.length
+    ? await db.all(
+      `SELECT id, ${sqlCardKey('card_cache')} AS card_key
+       FROM card_cache WHERE id IN (${desiredIds.map(() => '?').join(',')})`,
+      desiredIds
+    )
+    : [];
+  const keysById = new Map(cached.map(card => [card.id, card.card_key]));
+  const desired = new Map(); // logical card key -> representative id + summed quantity
+  for (const [id, quantity] of rawDesired) {
+    const key = keysById.get(id);
+    if (!key) throw new Error(`Card cache metadata is incomplete for ${id}`);
+    const existing = desired.get(key);
+    if (existing) existing.quantity += quantity;
+    else desired.set(key, { cardId: id, quantity });
+  }
+
+  const current = await db.all(`
+    SELECT dc.card_id, ${sqlCardKey('current_cc')} AS card_key
+    FROM deck_cards dc
+    LEFT JOIN card_cache current_cc ON current_cc.id = dc.card_id
+    WHERE dc.deck_id = ?
+    ORDER BY dc.card_id
+  `, [targetDeckId]);
+  const currentByKey = new Map();
+  for (const row of current) {
+    if (!row.card_key || !desired.has(row.card_key)) {
+      const removed = await db.run(`
+        DELETE FROM deck_cards
+        WHERE deck_id = ? AND card_id = ?
+          AND EXISTS (SELECT 1 FROM decks WHERE id = ? AND checked_out = 0)
+      `, [targetDeckId, row.card_id, targetDeckId]);
+      if (!removed.changes) throw new Error('Deck was checked out while Moxfield changes were syncing');
+      continue;
     }
+    if (!currentByKey.has(row.card_key)) currentByKey.set(row.card_key, []);
+    currentByKey.get(row.card_key).push(row.card_id);
   }
-  for (const [cardId, quantity] of desired) {
-    await db.run(
-      `INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, ?, ?)
-       ON CONFLICT(deck_id, card_id) DO UPDATE SET quantity = excluded.quantity`,
-      [targetDeckId, cardId, quantity]
-    );
+
+  for (const [key, wanted] of desired) {
+    const existingIds = currentByKey.get(key) || [];
+    if (existingIds.length > 0) {
+      const representative = existingIds.includes(wanted.cardId) ? wanted.cardId : existingIds[0];
+      const updated = await db.run(`
+        UPDATE deck_cards
+        SET quantity = CASE WHEN card_id = ? THEN ? ELSE 0 END
+        WHERE deck_id = ?
+          AND card_id IN (${existingIds.map(() => '?').join(',')})
+          AND EXISTS (SELECT 1 FROM decks WHERE id = ? AND checked_out = 0)
+      `, [representative, wanted.quantity, targetDeckId, ...existingIds, targetDeckId]);
+      if (!updated.changes) throw new Error('Deck was checked out while Moxfield changes were syncing');
+      await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND quantity <= 0`, [targetDeckId]);
+    } else {
+      const inserted = await db.run(`
+        INSERT INTO deck_cards (deck_id, card_id, quantity)
+        SELECT ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM decks WHERE id = ? AND checked_out = 0)
+      `, [targetDeckId, wanted.cardId, wanted.quantity, targetDeckId]);
+      if (!inserted.changes) throw new Error('Deck was checked out while Moxfield changes were syncing');
+    }
   }
 
   // 3. Refresh the tracking row: the stamp we just mirrored is now "current".

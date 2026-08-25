@@ -3,6 +3,7 @@ const db = require('../db');
 const cardApi = require('../utils/cardApi');
 const { parseCardRow } = require('../utils/priceHelpers');
 const { buildCardListText } = require('../../../shared/cardListText.js');
+const { sqlCardKey } = require('../utils/cardIdentity');
 
 const router = express.Router();
 
@@ -17,10 +18,11 @@ router.get('/', async (req, res) => {
     const rows = await db.all(
       `SELECT
          l.id, l.name, l.description, l.accent_color, l.created_at,
-         COUNT(lc.card_id) AS total_card_types,
+         COUNT(DISTINCT CASE WHEN lc.card_id IS NOT NULL THEN ${sqlCardKey('list_cc')} END) AS total_card_types,
          COALESCE(SUM(lc.quantity), 0) AS total_cards
        FROM card_lists l
        LEFT JOIN list_cards lc ON l.id = lc.list_id
+       LEFT JOIN card_cache list_cc ON list_cc.id = lc.card_id
        WHERE l.user_id = ?
        GROUP BY l.id
        ORDER BY l.created_at DESC`,
@@ -106,19 +108,33 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'List not found' });
     }
     const cards = await db.all(
-      `SELECT
-         lc.quantity,
+      `WITH requested AS (
+         SELECT
+           ${sqlCardKey('list_cc')} AS card_key,
+           MIN(lc.card_id) AS representative_id,
+           SUM(lc.quantity) AS quantity
+         FROM list_cards lc
+         JOIN card_cache list_cc ON list_cc.id = lc.card_id
+         WHERE lc.list_id = ?
+         GROUP BY ${sqlCardKey('list_cc')}
+       )
+       SELECT
+         requested.quantity,
          cc.id, cc.name, cc.printed_name,
          cc.supertype, cc.subtypes, cc.types,
          cc.rarity, cc.set_id, cc.set_name, cc.number,
          cc.image_url, cc.price_trend,
-         (SELECT COALESCE(SUM(quantity), 0) FROM collection
-          WHERE card_id = cc.id AND user_id = ?) AS owned_qty
-       FROM list_cards lc
-       JOIN card_cache cc ON lc.card_id = cc.id
-       WHERE lc.list_id = ?
+         (
+           SELECT COALESCE(SUM(owned.quantity), 0)
+           FROM collection owned
+           JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
+           WHERE owned.user_id = ?
+             AND ${sqlCardKey('owned_cc')} = requested.card_key
+         ) AS owned_qty
+       FROM requested
+       JOIN card_cache cc ON cc.id = requested.representative_id
        ORDER BY cc.name ASC`,
-      [req.user.id, id]
+      [id, req.user.id]
     );
     res.json({ ...list, cards: cards.map(parseCardRow) });
   } catch (error) {
@@ -139,10 +155,19 @@ router.get('/:id/cardlist', async (req, res) => {
       return res.status(404).json({ error: 'List not found' });
     }
     const rows = await db.all(
-      `SELECT lc.quantity, cc.name, cc.set_id, cc.number
-       FROM list_cards lc
-       JOIN card_cache cc ON lc.card_id = cc.id
-       WHERE lc.list_id = ?
+      `WITH requested AS (
+         SELECT
+           ${sqlCardKey('list_cc')} AS card_key,
+           MIN(lc.card_id) AS representative_id,
+           SUM(lc.quantity) AS quantity
+         FROM list_cards lc
+         JOIN card_cache list_cc ON list_cc.id = lc.card_id
+         WHERE lc.list_id = ?
+         GROUP BY ${sqlCardKey('list_cc')}
+       )
+       SELECT requested.quantity, cc.name, cc.set_id, cc.number
+       FROM requested
+       JOIN card_cache cc ON cc.id = requested.representative_id
        ORDER BY cc.name ASC`,
       [id]
     );
@@ -225,11 +250,37 @@ router.post('/:id/cards', async (req, res) => {
       }
     }
 
-    await db.run(
-      `INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, ?, ?)
-       ON CONFLICT(list_id, card_id) DO UPDATE SET quantity = ?`,
-      [id, card_id, qty, qty]
-    );
+    const equivalent = await db.get(`
+      SELECT lc.card_id
+      FROM list_cards lc
+      JOIN card_cache existing_cc ON existing_cc.id = lc.card_id
+      JOIN card_cache target_cc ON target_cc.id = ?
+      WHERE lc.list_id = ?
+        AND ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+      ORDER BY (lc.card_id = ?) DESC, lc.card_id
+      LIMIT 1
+    `, [card_id, id, card_id]);
+    const effectiveCardId = equivalent ? equivalent.card_id : card_id;
+
+    if (equivalent) {
+      await db.run(`
+        UPDATE list_cards
+        SET quantity = CASE WHEN card_id = ? THEN ? ELSE 0 END
+        WHERE list_id = ?
+          AND card_id IN (
+            SELECT existing_cc.id
+            FROM card_cache existing_cc
+            JOIN card_cache target_cc ON target_cc.id = ?
+            WHERE ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+          )
+      `, [effectiveCardId, qty, id, effectiveCardId]);
+      await db.run(`DELETE FROM list_cards WHERE list_id = ? AND quantity <= 0`, [id]);
+    } else {
+      await db.run(
+        `INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, ?, ?)`,
+        [id, effectiveCardId, qty]
+      );
+    }
     res.json({ message: 'Card added to list' });
   } catch (error) {
     console.error(error);
@@ -245,7 +296,19 @@ router.delete('/:id/cards/:card_id', async (req, res) => {
     if (!list) {
       return res.status(404).json({ error: 'List not found or unauthorized' });
     }
-    await db.run(`DELETE FROM list_cards WHERE list_id = ? AND card_id = ?`, [id, card_id]);
+    await db.run(`
+      DELETE FROM list_cards
+      WHERE list_id = ?
+        AND (
+          card_id = ?
+          OR card_id IN (
+            SELECT existing_cc.id
+            FROM card_cache existing_cc
+            JOIN card_cache target_cc ON target_cc.id = ?
+            WHERE ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+          )
+        )
+    `, [id, card_id, card_id]);
     res.json({ message: 'Card removed from list' });
   } catch (error) {
     console.error(error);

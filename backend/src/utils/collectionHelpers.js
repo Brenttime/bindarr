@@ -1,6 +1,7 @@
 // Shared helpers for the collection route. Kept in one neutral module so the
 // split route files never have to import each other.
 const db = require('../db');
+const { sqlCardKey, sqlIsBasicLand } = require('./cardIdentity');
 
 // How many copies of each collection entry are physically pulled for a
 // checked-out deck. Sums required quantity per card across all of the user's
@@ -9,20 +10,31 @@ const db = require('../db');
 // checklist told them to grab.
 async function checkedOutAllocation(userId) {
   const required = await db.all(`
-    SELECT dc.card_id, SUM(dc.quantity) AS req
+    SELECT ${sqlCardKey('needed_cc')} AS card_key, SUM(dc.quantity) AS req
     FROM deck_cards dc
+    JOIN card_cache needed_cc ON needed_cc.id = dc.card_id
     JOIN decks d ON dc.deck_id = d.id
-    WHERE d.user_id = ? AND d.checked_out = 1
-    GROUP BY dc.card_id
+    WHERE d.user_id = ?
+      AND d.checked_out = 1
+      AND dc.quantity > 0
+      AND NOT ${sqlIsBasicLand('needed_cc')}
+    GROUP BY ${sqlCardKey('needed_cc')}
   `, [userId]);
   const alloc = new Map();
-  for (const { card_id, req } of required) {
+  for (const { card_key, req } of required) {
     let need = req;
+    // Deliberately span every printing with this English card name. The chosen
+    // physical rows are still exact collection entries, so the collection can
+    // grey out the copies actually allocated while checkout stays art-agnostic.
     const entries = await db.all(`
-      SELECT id AS entry_id, quantity FROM collection
-      WHERE user_id = ? AND card_id = ?
-      ORDER BY added_at DESC
-    `, [userId, card_id]);
+      SELECT c.id AS entry_id, c.quantity
+      FROM collection c
+      JOIN card_cache owned_cc ON owned_cc.id = c.card_id
+      WHERE c.user_id = ?
+        AND c.quantity > 0
+        AND ${sqlCardKey('owned_cc')} = ?
+      ORDER BY c.added_at DESC, c.id DESC
+    `, [userId, card_key]);
     for (const e of entries) {
       if (need <= 0) break;
       const take = Math.min(e.quantity, need);
@@ -31,6 +43,37 @@ async function checkedOutAllocation(userId) {
     }
   }
   return alloc;
+}
+
+async function logicalInventoryStatus(database, userId, cardId) {
+  const dbClient = database || db;
+  return dbClient.get(`
+    SELECT
+      target.id AS card_id,
+      ${sqlCardKey('target')} AS card_key,
+      CASE WHEN ${sqlIsBasicLand('target')} THEN 1 ELSE 0 END AS is_basic_land,
+      (
+        SELECT COALESCE(SUM(c.quantity), 0)
+        FROM collection c
+        JOIN card_cache owned_cc ON owned_cc.id = c.card_id
+        WHERE c.user_id = ?
+          AND c.quantity > 0
+          AND ${sqlCardKey('owned_cc')} = ${sqlCardKey('target')}
+      ) AS owned_qty,
+      (
+        SELECT COALESCE(SUM(dc.quantity), 0)
+        FROM deck_cards dc
+        JOIN card_cache locked_cc ON locked_cc.id = dc.card_id
+        JOIN decks d ON d.id = dc.deck_id
+        WHERE d.user_id = ?
+          AND d.checked_out = 1
+          AND dc.quantity > 0
+          AND NOT ${sqlIsBasicLand('locked_cc')}
+          AND ${sqlCardKey('locked_cc')} = ${sqlCardKey('target')}
+      ) AS locked_qty
+    FROM card_cache target
+    WHERE target.id = ?
+  `, [userId, userId, cardId]);
 }
 
 // The rows the collection view stacks together with this one: same card, same
@@ -124,6 +167,7 @@ async function splitStackedEntries(database) {
 
 module.exports = {
   checkedOutAllocation,
+  logicalInventoryStatus,
   setStackQuantity,
   splitStackedEntries,
 };

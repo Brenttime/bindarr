@@ -190,12 +190,19 @@ async function importPreconCardsIntoDeck({
   }
   if (fresh.length) await cacheCards(fresh);
 
-  const cardIds = [];
+  const cardIdsByName = new Map();
   for (const { row, card } of pairs) {
     if (card && String(card.id).startsWith('mtg-')) {
-      cardIds.push({ cardId: card.id, quantity: row.quantity });
+      // Scryfall's canonical English name is identical across printings. Keep
+      // the first printing as representative art and combine any reprint rows.
+      const key = String(card.name || '').trim().toLowerCase();
+      if (!key) continue;
+      const existing = cardIdsByName.get(key);
+      if (existing) existing.quantity += row.quantity;
+      else cardIdsByName.set(key, { cardId: card.id, quantity: row.quantity });
     }
   }
+  const cardIds = [...cardIdsByName.values()];
   if (!cardIds.length) {
     throw Object.assign(
       new Error("None of this preconstructed deck's cards could be resolved to card printings"),

@@ -12,6 +12,7 @@ import { CONDITIONS, PRINTING_OPTIONS } from '../utils/cardOptions';
 import { LANGUAGES, langName, isEnglish, displayName, translatedName, setReference, setCode } from '../utils/languages';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
+import { adjustOwnedQuantityByName, cardKey } from '../utils/cardIdentity';
 
 // Search failures worth explaining in-page rather than only as a toast. `keyHint`
 // marks the ones a user API key actually fixes; an upstream 5xx does not. Title
@@ -242,7 +243,8 @@ function CardSearch({ onAddSuccess, showToast }) {
   };
 
   const handleBulkAdd = async () => {
-    const ids = filteredAndSortedCards.filter(c => selectedIds.has(c.id)).map(c => c.id);
+    const selectedCards = filteredAndSortedCards.filter(c => selectedIds.has(c.id));
+    const ids = selectedCards.map(c => c.id);
     if (ids.length === 0) { showToast(t('search.errNoneSelected')); return; }
     setBulkAdding(true);
     try {
@@ -261,11 +263,18 @@ function CardSearch({ onAddSuccess, showToast }) {
       const data = await response.json().catch(() => ({}));
       if (response.ok) {
         showToast(data.message || t('search.addedCards', { count: ids.length }));
-        // Reflect the new owned counts without re-running the search.
+        // Owned badges are logical-card totals. Adding two selected reprints of
+        // one name raises every displayed printing by two copies.
         const added = parseInt(quantity, 10) || 1;
-        setCards(prev => prev.map(c => (selectedIds.has(c.id)
-          ? { ...c, owned_qty: (c.owned_qty || 0) + added }
-          : c)));
+        const deltaByName = new Map();
+        for (const card of selectedCards) {
+          const key = cardKey(card);
+          deltaByName.set(key, (deltaByName.get(key) || 0) + added);
+        }
+        setCards(prev => prev.map(card => {
+          const delta = deltaByName.get(cardKey(card)) || 0;
+          return delta ? { ...card, owned_qty: (card.owned_qty || 0) + delta } : card;
+        }));
         exitSelectMode();
         onAddSuccess();
       } else {
@@ -338,10 +347,12 @@ function CardSearch({ onAddSuccess, showToast }) {
       const result = await addCardNow(hit);
       setRapidLog(prev => [{ entryId: result.id, card: hit, qty: parseInt(quantity, 10) || 1 }, ...prev].slice(0, 25));
       setRapidNumber('');
-      // Keep the owned badge honest if the card is also on screen.
-      setCards(prev => prev.map(c => (c.id === hit.id
-        ? { ...c, owned_qty: (c.owned_qty || 0) + (parseInt(quantity, 10) || 1) }
-        : c)));
+      // Keep every displayed printing's logical owned badge in sync.
+      setCards(prev => adjustOwnedQuantityByName(
+        prev,
+        hit,
+        parseInt(quantity, 10) || 1
+      ));
       onAddSuccess();
     } catch (err) {
       console.error(err);
@@ -358,9 +369,7 @@ function CardSearch({ onAddSuccess, showToast }) {
       const res = await fetch(`/api/collection/${entry.entryId}`, { method: 'DELETE' });
       if (!res.ok) { showToast(t('search.errUndo')); return; }
       setRapidLog(prev => prev.filter(e => e.entryId !== entry.entryId));
-      setCards(prev => prev.map(c => (c.id === entry.card.id
-        ? { ...c, owned_qty: Math.max(0, (c.owned_qty || 0) - entry.qty) }
-        : c)));
+      setCards(prev => adjustOwnedQuantityByName(prev, entry.card, -entry.qty));
       showToast(t('search.removed', { name: displayName(entry.card) }));
       onAddSuccess();
     } catch (err) {
@@ -415,6 +424,11 @@ function CardSearch({ onAddSuccess, showToast }) {
 
       if (response.ok) {
         showToast(t('search.addedToCollection', { name: displayName(selectedCard) }));
+        setCards(prev => adjustOwnedQuantityByName(
+          prev,
+          selectedCard,
+          parseInt(quantity, 10) || 1
+        ));
         
         // Trigger confetti for rare/valuable cards!
         const rarity = (selectedCard.rarity || '').toLowerCase();

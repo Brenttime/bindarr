@@ -5,22 +5,19 @@ const assert = require('assert');
 const { isBasicLand, validateDeckAddition } = require('../src/utils/deckRules');
 
 function testClassification() {
-  // Basic land: basic AND a land type.
   assert.strictEqual(isBasicLand({ name: 'Forest', supertype: 'Land', subtypes: '["Basic","Forest"]' }), true);
-  // Nonbasic land is not exempt.
   assert.strictEqual(isBasicLand({ name: 'Fabled Passage', supertype: 'Land', subtypes: '["Land"]' }), false);
-  // A basic-lands token is a land.
   assert.strictEqual(isBasicLand({ name: 'Sword of the Meek', supertype: 'Enchantment' }), false);
 }
 
-// Fake db: one owned card (3 copies of a normal creature), a deck already
-// holding 2 copies of that name under a different card_id.
-function makeFakeDb({ owned = 3, otherSameName = 2 } = {}) {
+function makeFakeDb({ owned = 3, card } = {}) {
+  const cachedCard = card || {
+    id: 'mtg-p1', name: 'Llantern Wanderer', supertype: 'Creature', subtypes: '["Creature","Cat"]'
+  };
   return {
-    async get(sql, params) {
-      if (/FROM card_cache WHERE id/.test(sql)) return { id: 'mtg-p1', name: 'Llantern Wanderer', supertype: 'Creature', subtypes: '["Creature","Cat"]' };
+    async get(sql) {
+      if (/FROM card_cache WHERE id/.test(sql)) return cachedCard;
       if (/AS owned/.test(sql)) return { owned };
-      if (/AS other/.test(sql)) return { other: otherSameName };
       return null;
     },
   };
@@ -29,18 +26,20 @@ function makeFakeDb({ owned = 3, otherSameName = 2 } = {}) {
 async function testValidation() {
   const base = { deckId: 1, userId: 7, cardId: 'mtg-p1' };
 
-  // Owned cap: 3 owned, asking for 4 fails; 3 ok (2 already elsewhere + 3 = 5 > 4 → blocked by 4-cap instead).
   assert.strictEqual((await validateDeckAddition({ ...base, newQty: 4, dbClient: makeFakeDb({ owned: 3 }) })).ok, false,
-    'cannot exceed owned copies');
+    'cannot exceed logical copies owned across printings');
 
-  // 4-cap by name: deck has 2 of this name already; adding 3 more (total 5) fails.
-  const capFail = await validateDeckAddition({ ...base, newQty: 3, dbClient: makeFakeDb({ owned: 10, otherSameName: 2 }) });
-  assert.strictEqual(capFail.ok, false, 'total copies by name capped at 4');
+  const capFail = await validateDeckAddition({ ...base, newQty: 5, dbClient: makeFakeDb({ owned: 10 }) });
+  assert.strictEqual(capFail.ok, false, 'absolute logical quantity is capped at 4');
   assert.ok(/more than 4/.test(capFail.error), 'reports the 4-copy rule');
 
-  // Within both limits: 2 already + 2 = 4, owned 10 → ok.
-  assert.strictEqual((await validateDeckAddition({ ...base, newQty: 2, dbClient: makeFakeDb({ owned: 10, otherSameName: 2 }) })).ok, true,
+  assert.strictEqual((await validateDeckAddition({ ...base, newQty: 4, dbClient: makeFakeDb({ owned: 10 }) })).ok, true,
     'exactly 4 total is allowed');
+
+  const island = { id: 'island-a', name: 'Island', supertype: 'Land', subtypes: '["Basic","Land","Island"]' };
+  assert.strictEqual((await validateDeckAddition({
+    ...base, cardId: island.id, newQty: 20, dbClient: makeFakeDb({ owned: 20, card: island })
+  })).ok, true, 'basic lands remain exempt from the four-copy cap');
 }
 
 async function main() {

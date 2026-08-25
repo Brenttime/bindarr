@@ -3,8 +3,55 @@ const db = require('../db');
 const cardApi = require('../utils/cardApi');
 const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { validateDeckAddition, isBasicLand } = require('../utils/deckRules');
+const { sqlCardKey, sqlIsBasicLand } = require('../utils/cardIdentity');
 
 const router = express.Router();
+
+// One printing-agnostic coverage query shared by the checkout guide and the
+// checkout mutation's diagnostics. A deck may contain several printing ids for
+// one card; requirements are summed by canonical English name, collection copies
+// are summed across every printing, and checked-out decks reserve that same
+// logical pool.
+async function getDeckCoverageRows(deckId, userId) {
+  return db.all(`
+    WITH requested AS (
+      SELECT
+        ${sqlCardKey('deck_cc')} AS card_key,
+        MIN(dc.card_id) AS representative_id,
+        SUM(dc.quantity) AS required_qty
+      FROM deck_cards dc
+      JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
+      WHERE dc.deck_id = ? AND dc.quantity > 0
+      GROUP BY ${sqlCardKey('deck_cc')}
+    )
+    SELECT
+      requested.representative_id AS card_id,
+      cc.name, cc.printed_name, cc.supertype, cc.subtypes,
+      cc.set_name, cc.number, cc.image_url,
+      requested.required_qty,
+      (
+        SELECT COALESCE(SUM(owned.quantity), 0)
+        FROM collection owned
+        JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
+        WHERE owned.user_id = ?
+          AND owned.quantity > 0
+          AND ${sqlCardKey('owned_cc')} = requested.card_key
+      ) AS owned_qty,
+      (
+        SELECT COALESCE(SUM(locked_dc.quantity), 0)
+        FROM deck_cards locked_dc
+        JOIN card_cache locked_cc ON locked_cc.id = locked_dc.card_id
+        JOIN decks locked_deck ON locked_deck.id = locked_dc.deck_id
+        WHERE locked_deck.checked_out = 1
+          AND locked_dc.quantity > 0
+          AND locked_deck.user_id = ?
+          AND locked_deck.id != ?
+          AND ${sqlCardKey('locked_cc')} = requested.card_key
+      ) AS locked_qty
+    FROM requested
+    JOIN card_cache cc ON cc.id = requested.representative_id
+  `, [deckId, userId, userId, deckId]);
+}
 
 // Get User Decks
 router.get('/', async (req, res) => {
@@ -22,10 +69,13 @@ router.get('/', async (req, res) => {
         d.checked_out,
         d.checked_out_at,
         d.source,
-        COUNT(dc.card_id) as total_card_types,
-        COALESCE(SUM(dc.quantity), 0) as total_cards
+        COUNT(DISTINCT CASE
+          WHEN deck_cc.id IS NOT NULL AND dc.quantity > 0 THEN ${sqlCardKey('deck_cc')}
+        END) as total_card_types,
+        COALESCE(SUM(CASE WHEN dc.quantity > 0 THEN dc.quantity ELSE 0 END), 0) as total_cards
       FROM decks d
       LEFT JOIN deck_cards dc ON d.id = dc.deck_id
+      LEFT JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
       WHERE d.user_id = ?
       GROUP BY d.id
       ORDER BY d.created_at DESC
@@ -101,8 +151,18 @@ router.get('/:id', async (req, res) => {
     }
 
     const cardsQuery = `
+      WITH requested AS (
+        SELECT
+          ${sqlCardKey('deck_cc')} AS card_key,
+          MIN(dc.card_id) AS representative_id,
+          SUM(dc.quantity) AS quantity
+        FROM deck_cards dc
+        JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
+        WHERE dc.deck_id = ? AND dc.quantity > 0
+        GROUP BY ${sqlCardKey('deck_cc')}
+      )
       SELECT
-        dc.quantity,
+        requested.quantity,
         cc.id,
         cc.name, cc.printed_name,
         cc.supertype,
@@ -114,12 +174,18 @@ router.get('/:id', async (req, res) => {
         cc.number,
         cc.image_url,
         cc.price_trend,
-        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = cc.id AND user_id = ?) AS owned_qty
-      FROM deck_cards dc
-      JOIN card_cache cc ON dc.card_id = cc.id
-      WHERE dc.deck_id = ?
+        (
+          SELECT COALESCE(SUM(owned.quantity), 0)
+          FROM collection owned
+          JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
+          WHERE owned.user_id = ?
+            AND ${sqlCardKey('owned_cc')} = requested.card_key
+        ) AS owned_qty
+      FROM requested
+      JOIN card_cache cc ON cc.id = requested.representative_id
+      ORDER BY cc.name
     `;
-    const cards = await db.all(cardsQuery, [req.user.id, id]);
+    const cards = await db.all(cardsQuery, [id, req.user.id]);
 
     const formatted = cards.map(parseCardRow);
 
@@ -143,17 +209,7 @@ router.get('/:id/locations', async (req, res) => {
     const deck = await db.get(`SELECT id FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (!deck) return res.status(404).json({ error: 'Deck not found' });
 
-    const cards = await db.all(`
-      SELECT
-        dc.card_id,
-        cc.name, cc.printed_name, cc.supertype, cc.subtypes, cc.set_name, cc.number, cc.image_url,
-        dc.quantity AS required_qty,
-        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ?) AS owned_qty,
-        (SELECT COALESCE(SUM(dc2.quantity), 0) FROM deck_cards dc2 JOIN decks d2 ON dc2.deck_id = d2.id WHERE d2.checked_out = 1 AND d2.user_id = ? AND d2.id != ? AND dc2.card_id = dc.card_id) AS locked_qty
-      FROM deck_cards dc
-      JOIN card_cache cc ON dc.card_id = cc.id
-      WHERE dc.deck_id = ?
-    `, [req.user.id, req.user.id, id, id]);
+    const cards = await getDeckCoverageRows(id, req.user.id);
 
     const results = cards.map(card => {
       const available = card.owned_qty - card.locked_qty;
@@ -218,9 +274,12 @@ router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
     // Verify ownership
-    const deck = await db.get(`SELECT id FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    const deck = await db.get(`SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (!deck) {
       return res.status(404).json({ error: 'Deck not found or unauthorized' });
+    }
+    if (deck.checked_out) {
+      return res.status(409).json({ error: 'Check this deck in before changing its cards.' });
     }
 
     // Manual cascade deletion
@@ -245,9 +304,12 @@ router.post('/:id/cards', async (req, res) => {
 
   try {
     // Verify deck ownership
-    const deck = await db.get(`SELECT id FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    const deck = await db.get(`SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (!deck) {
       return res.status(404).json({ error: 'Deck not found or unauthorized' });
+    }
+    if (deck.checked_out) {
+      return res.status(409).json({ error: 'Check this deck in before changing its cards.' });
     }
 
     // Ensure card metadata exists in cache.
@@ -260,21 +322,75 @@ router.post('/:id/cards', async (req, res) => {
       }
     }
 
-    // Enforce deck rules (owned-copy cap + max 4 per name). quantity here is the
-    // absolute new count for this card, so validate it directly.
-    const check = await validateDeckAddition({ deckId: id, userId: req.user.id, cardId: card_id, newQty: quantity });
+    // If this deck already carries the same game card under another printing,
+    // update that logical row instead of creating a second printing-specific row.
+    const equivalent = await db.get(`
+      SELECT dc.card_id
+      FROM deck_cards dc
+      JOIN card_cache existing_cc ON existing_cc.id = dc.card_id
+      JOIN card_cache target_cc ON target_cc.id = ?
+      WHERE dc.deck_id = ?
+        AND ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+      ORDER BY (dc.card_id = ?) DESC, dc.card_id
+      LIMIT 1
+    `, [card_id, id, card_id]);
+    const effectiveCardId = equivalent ? equivalent.card_id : card_id;
+
+    // Enforce the logical owned-copy cap + max 4 per name. quantity here is the
+    // absolute new count for the game card, regardless of which art was selected.
+    const check = await validateDeckAddition({
+      deckId: id,
+      userId: req.user.id,
+      cardId: effectiveCardId,
+      newQty: quantity
+    });
     if (!check.ok) return res.status(400).json({ error: check.error });
 
-    // Insert or update quantities
-    await db.run(`
-      INSERT INTO deck_cards (deck_id, card_id, quantity)
-      VALUES (?, ?, ?)
-      ON CONFLICT(deck_id, card_id) DO UPDATE SET quantity = ?
-    `, [id, card_id, parseInt(quantity, 10), parseInt(quantity, 10)]);
+    const parsedQuantity = parseInt(quantity, 10);
+    if (equivalent) {
+      // Preserve one representative id and zero any legacy reprint rows in one
+      // statement so grouped reads immediately equal the requested quantity.
+      const updated = await db.run(`
+        UPDATE deck_cards
+        SET quantity = CASE WHEN card_id = ? THEN ? ELSE 0 END
+        WHERE deck_id = ?
+          AND EXISTS (
+            SELECT 1 FROM decks guarded_deck
+            WHERE guarded_deck.id = deck_cards.deck_id
+              AND guarded_deck.user_id = ?
+              AND guarded_deck.checked_out = 0
+          )
+          AND card_id IN (
+            SELECT existing_cc.id
+            FROM card_cache existing_cc
+            JOIN card_cache target_cc ON target_cc.id = ?
+            WHERE ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+          )
+      `, [effectiveCardId, parsedQuantity, id, req.user.id, effectiveCardId]);
+      if (!updated.changes) {
+        return res.status(409).json({ error: 'The deck was checked out before the card update could be saved.' });
+      }
+      await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND quantity <= 0`, [id]);
+    } else {
+      const inserted = await db.run(
+        `INSERT INTO deck_cards (deck_id, card_id, quantity)
+         SELECT ?, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM decks guarded_deck
+           WHERE guarded_deck.id = ?
+             AND guarded_deck.user_id = ?
+             AND guarded_deck.checked_out = 0
+         )`,
+        [id, effectiveCardId, parsedQuantity, id, req.user.id]
+      );
+      if (!inserted.changes) {
+        return res.status(409).json({ error: 'The deck was checked out before the card could be added.' });
+      }
+    }
 
     // Record initial price history trend if card is added
-    const cacheCard = await db.get(`SELECT price_trend FROM card_cache WHERE id = ?`, [card_id]);
-    if (cacheCard) await recordPrice(card_id, cacheCard.price_trend);
+    const cacheCard = await db.get(`SELECT price_trend FROM card_cache WHERE id = ?`, [effectiveCardId]);
+    if (cacheCard) await recordPrice(effectiveCardId, cacheCard.price_trend);
 
     res.json({ message: 'Card added/updated in deck successfully' });
   } catch (error) {
@@ -288,12 +404,41 @@ router.delete('/:id/cards/:card_id', async (req, res) => {
   const { id, card_id } = req.params;
   try {
     // Verify deck ownership
-    const deck = await db.get(`SELECT id FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    const deck = await db.get(`SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (!deck) {
       return res.status(404).json({ error: 'Deck not found or unauthorized' });
     }
+    if (deck.checked_out) {
+      return res.status(409).json({ error: 'Check this deck in before changing its cards.' });
+    }
 
-    await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND card_id = ?`, [id, card_id]);
+    // A deck card is a logical game card. Removing any displayed printing removes
+    // all legacy rows for that same name from this deck.
+    const removed = await db.run(`
+      DELETE FROM deck_cards
+      WHERE deck_id = ?
+        AND EXISTS (
+          SELECT 1 FROM decks guarded_deck
+          WHERE guarded_deck.id = deck_cards.deck_id
+            AND guarded_deck.user_id = ?
+            AND guarded_deck.checked_out = 0
+        )
+        AND (
+          card_id = ?
+          OR card_id IN (
+            SELECT existing_cc.id
+            FROM card_cache existing_cc
+            JOIN card_cache target_cc ON target_cc.id = ?
+            WHERE ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+          )
+        )
+    `, [id, req.user.id, card_id, card_id]);
+    if (!removed.changes) {
+      const current = await db.get(`SELECT checked_out FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+      if (current && current.checked_out) {
+        return res.status(409).json({ error: 'The deck was checked out before the card could be removed.' });
+      }
+    }
     res.json({ message: 'Card removed from deck successfully' });
   } catch (error) {
     console.error(error);
@@ -418,47 +563,114 @@ router.post('/:id/register-collection', async (req, res) => {
 router.put('/:id/checkout', async (req, res) => {
   const { id } = req.params;
   try {
-    const deck = await db.get(`SELECT id, name FROM decks WHERE id = ? AND user_id = ?`, [id, req.user.id]);
-    if (!deck) {
-      return res.status(404).json({ error: 'Deck not found or unauthorized' });
+    // The availability guard and state change are one SQLite statement. Concurrent
+    // checkouts serialize here: once one deck becomes checked out, the next
+    // statement sees its same-name reservations. This prevents two clients from
+    // both spending the same physical copies after separate preflight reads.
+    const checkedOut = await db.all(`
+      UPDATE decks AS target
+      SET checked_out = 1, checked_out_at = CURRENT_TIMESTAMP
+      WHERE target.id = ?
+        AND target.user_id = ?
+        AND target.checked_out = 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM deck_cards unresolved
+          LEFT JOIN card_cache unresolved_cc ON unresolved_cc.id = unresolved.card_id
+          WHERE unresolved.deck_id = target.id
+            AND unresolved.quantity > 0
+            AND unresolved_cc.id IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM decks orphan_deck
+          JOIN deck_cards orphan_dc ON orphan_dc.deck_id = orphan_deck.id
+          LEFT JOIN card_cache orphan_cc ON orphan_cc.id = orphan_dc.card_id
+          WHERE orphan_deck.user_id = target.user_id
+            AND orphan_deck.checked_out = 1
+            AND orphan_dc.quantity > 0
+            AND orphan_cc.id IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM deck_cards needed_dc
+          JOIN card_cache needed_cc ON needed_cc.id = needed_dc.card_id
+          WHERE needed_dc.deck_id = target.id
+            AND needed_dc.quantity > 0
+            AND NOT ${sqlIsBasicLand('needed_cc')}
+          GROUP BY ${sqlCardKey('needed_cc')}
+          HAVING SUM(needed_dc.quantity) >
+            COALESCE((
+              SELECT SUM(owned.quantity)
+              FROM collection owned
+              JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
+              WHERE owned.user_id = target.user_id
+                AND owned.quantity > 0
+                AND ${sqlCardKey('owned_cc')} = ${sqlCardKey('needed_cc')}
+            ), 0)
+            - COALESCE((
+              SELECT SUM(locked_dc.quantity)
+              FROM deck_cards locked_dc
+              JOIN card_cache locked_cc ON locked_cc.id = locked_dc.card_id
+              JOIN decks locked_deck ON locked_deck.id = locked_dc.deck_id
+              WHERE locked_deck.user_id = target.user_id
+                AND locked_deck.checked_out = 1
+                AND locked_dc.quantity > 0
+                AND locked_deck.id != target.id
+                AND ${sqlCardKey('locked_cc')} = ${sqlCardKey('needed_cc')}
+            ), 0)
+        )
+      RETURNING id
+    `, [id, req.user.id]);
+
+    if (checkedOut.length) {
+      return res.json({ message: 'Deck checked out successfully' });
     }
 
-    // Validate that we have enough cards physically available. Basic lands are
-    // ignored: anyone who plays the format owns a set of them, so a short basic
-    // land is never a reason the deck can't go out the door. The same
-    // isBasicLand helper the wizard and deck builder use, so all three agree.
-    const validationQuery = `
-      SELECT 
-        dc.card_id, 
-        cc.name, cc.printed_name, cc.supertype, cc.subtypes, 
-        dc.quantity AS required_qty,
-        (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE card_id = dc.card_id AND user_id = ?) AS owned_qty,
-        (SELECT COALESCE(SUM(dc2.quantity), 0) FROM deck_cards dc2 JOIN decks d2 ON dc2.deck_id = d2.id WHERE d2.checked_out = 1 AND d2.user_id = ? AND d2.id != ? AND dc2.card_id = dc.card_id) AS locked_qty
+    // Diagnose a guarded no-op without weakening the atomic mutation above.
+    const deck = await db.get(
+      `SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`,
+      [id, req.user.id]
+    );
+    if (!deck) return res.status(404).json({ error: 'Deck not found or unauthorized' });
+    if (deck.checked_out) {
+      return res.status(409).json({ error: 'This deck is already checked out for play.' });
+    }
+
+    const sourceState = await db.get(`
+      SELECT COALESCE(SUM(CASE WHEN cc.id IS NULL THEN 1 ELSE 0 END), 0) AS unresolved
       FROM deck_cards dc
-      JOIN card_cache cc ON dc.card_id = cc.id
-      WHERE dc.deck_id = ?
-    `;
-    const cards = await db.all(validationQuery, [req.user.id, req.user.id, id, id]);
-    
-    let errors = [];
+      LEFT JOIN card_cache cc ON cc.id = dc.card_id
+      WHERE dc.deck_id = ? AND dc.quantity > 0
+    `, [id]);
+    if (sourceState.unresolved) {
+      return res.status(422).json({
+        error: 'This deck contains cards whose details are unavailable. Refresh or re-import it before checkout.'
+      });
+    }
+
+    const cards = await getDeckCoverageRows(id, req.user.id);
+    const errors = [];
     for (const card of cards) {
-      if (isBasicLand({ name: card.name, supertype: card.supertype, subtypes: card.subtypes })) continue;
-      const available = card.owned_qty - card.locked_qty;
-      if (card.required_qty > available) {
-        const deficit = card.required_qty - available;
-        errors.push(`Missing ${deficit}x ${card.printed_name || card.name} (Owned: ${card.owned_qty}, In Use: ${card.locked_qty})`);
+      if (isBasicLand(card)) continue;
+      const available = Number(card.owned_qty || 0) - Number(card.locked_qty || 0);
+      if (Number(card.required_qty || 0) > available) {
+        const deficit = Number(card.required_qty) - available;
+        errors.push(`Missing ${deficit}x ${card.name} (Owned: ${card.owned_qty}, In Use: ${card.locked_qty})`);
       }
     }
-
-    if (errors.length > 0) {
-      return res.status(400).json({ error: 'Not enough cards available to check out this deck.', details: errors });
+    if (errors.length) {
+      return res.status(400).json({
+        error: 'Not enough cards available to check out this deck.',
+        details: errors
+      });
     }
 
-    await db.run(
-      `UPDATE decks SET checked_out = 1, checked_out_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [id]
-    );
-    res.json({ message: 'Deck checked out successfully' });
+    // The deck or another allocation changed between the guarded statement and
+    // these diagnostics. Nothing was reserved; a reload is the safe response.
+    return res.status(409).json({
+      error: 'Card availability changed before checkout completed. Refresh and try again.'
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to checkout deck' });

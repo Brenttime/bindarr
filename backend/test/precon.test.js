@@ -59,7 +59,13 @@ const DECKS = [
     let notFound = 0;
     for (const r of rows) {
       if (r.set_id === 'NOPE') { notFound++; continue; }
-      const card = { id: `mtg-${r.set_id}-${r.number}`, set_id: r.set_id, number: String(r.number) };
+      const logicalName = r.number === '164' || r.number === '999a' ? 'Shared Reprint' : `${r.set_id}-${r.number}`;
+      const card = {
+        id: `mtg-${r.set_id}-${r.number}`,
+        name: logicalName,
+        set_id: r.set_id,
+        number: String(r.number)
+      };
       cards.push(card);
       pairs.push({ row: r, card });
     }
@@ -94,6 +100,21 @@ const DECKS = [
   assert.strictEqual(runs[0].params[0], 'Test Precon');
   assert.strictEqual(runs[0].params[7], 'precon', 'deck source is stamped precon');
   assert.deepStrictEqual(runs[3].params, [99, 'mtg-STX-373', 8], 'duplicate rows merged to 8');
+
+  // Alternate printings with one canonical name collapse to one logical deck row.
+  runs.length = 0;
+  out = await importPreconCardsIntoDeck({
+    name: 'Reprint Precon', description: '', format: 'Standard', category: 'Casual',
+    accentColor: '#eab308', targetSize: 60, userId: 7,
+    rows: [
+      { set_id: 'C21', number: '164', quantity: 1 },
+      { set_id: 'ALT', number: '999a', quantity: 2 },
+    ],
+    cardById, cacheCards: async () => {}, decksRun: run, cardsRun: run,
+  });
+  assert.strictEqual(out.cards, 1, 'reprints become one logical card type');
+  assert.strictEqual(runs.length, 2, 'one deck insert + one logical card insert');
+  assert.deepStrictEqual(runs[1].params, [99, 'mtg-C21-164', 3]);
 
   // Everything unresolvable → 422, no deck written.
   runs.length = 0;

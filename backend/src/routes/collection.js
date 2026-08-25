@@ -7,7 +7,8 @@ const cardApi = require('../utils/cardApi');
 const { searchLimiter } = require('../middleware/auth');
 const { resolveCardPrice, parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { parseSetList } = require('../utils/setQuery');
-const { checkedOutAllocation, setStackQuantity } = require('../utils/collectionHelpers');
+const { checkedOutAllocation, logicalInventoryStatus, setStackQuantity } = require('../utils/collectionHelpers');
+const { sqlCardKey } = require('../utils/cardIdentity');
 const { validateDeckAddition } = require('../utils/deckRules');
 const { splitPrice } = require('../utils/splitPrice');
 const { buildCardListText } = require('../../../shared/cardListText.js');
@@ -25,16 +26,23 @@ const PRINTING_VALUES = ['Normal', 'Holofoil'];
 // A collection-scope search already reports owned_qty from its own join.
 async function attachOwnedQty(cards, userId) {
   if (!Array.isArray(cards) || cards.length === 0 || !userId) return;
-  const ids = cards.map(c => c.id).filter(Boolean);
+  const ids = [...new Set(cards.map(card => card.id).filter(Boolean))];
   if (ids.length === 0) return;
   const rows = await db.all(
-    `SELECT card_id, SUM(quantity) AS qty FROM collection
-     WHERE user_id = ? AND card_id IN (${ids.map(() => '?').join(',')})
-     GROUP BY card_id`,
+    `SELECT target.id AS card_id, COALESCE(SUM(c.quantity), 0) AS qty
+     FROM card_cache target
+     LEFT JOIN card_cache owned_cc
+       ON ${sqlCardKey('owned_cc')} = ${sqlCardKey('target')}
+     LEFT JOIN collection c
+       ON c.card_id = owned_cc.id AND c.user_id = ?
+     WHERE target.id IN (${ids.map(() => '?').join(',')})
+     GROUP BY target.id`,
     [userId, ...ids]
   );
-  const owned = new Map(rows.map(r => [r.card_id, r.qty]));
-  for (const c of cards) c.owned_qty = owned.get(c.id) || 0;
+  const owned = new Map(rows.map(row => [row.card_id, row.qty]));
+  // Every search result keeps its own art/set/collector number, but the owned
+  // badge answers "how many of this game card do I own?" across all printings.
+  for (const card of cards) card.owned_qty = owned.get(card.id) || 0;
 }
 
 // 1. Search cards (Scryfall + database cache).
@@ -428,6 +436,23 @@ router.put('/collection/:id', async (req, res) => {
     if (favorite !== undefined) { updates.push('favorite = ?'); params.push(favorite ? 1 : 0); }
     if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
 
+    if (requestedQty !== null) {
+      const stack = await db.get(`
+        SELECT COALESCE(SUM(quantity), 0) AS quantity
+        FROM collection
+        WHERE user_id = ? AND card_id = ? AND condition = ? AND printing = ? AND language = ?
+      `, [req.user.id, entry.card_id, entry.condition, entry.printing, entry.language]);
+      const reduction = Math.max(0, Number(stack && stack.quantity) - requestedQty);
+      if (reduction > 0) {
+        const status = await logicalInventoryStatus(db, req.user.id, entry.card_id);
+        if (!status || Number(status.owned_qty) - reduction < Number(status.locked_qty)) {
+          return res.status(409).json({
+            error: 'Check in the deck using this card before reducing the owned quantity.'
+          });
+        }
+      }
+    }
+
     if (updates.length > 0) {
       params.push(id, req.user.id);
       await db.run(`UPDATE collection SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params);
@@ -454,6 +479,12 @@ router.put('/collection/:id', async (req, res) => {
 router.delete('/collection/:id', async (req, res) => {
   const { id } = req.params;
   try {
+    const entry = await db.get(`SELECT id, card_id, quantity FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    if (!entry) return res.status(404).json({ error: 'Collection entry not found' });
+    const status = await logicalInventoryStatus(db, req.user.id, entry.card_id);
+    if (!status || Number(status.owned_qty) - Number(entry.quantity) < Number(status.locked_qty)) {
+      return res.status(409).json({ error: 'Check in the deck using this card before removing it.' });
+    }
     const result = await db.run(`DELETE FROM collection WHERE id = ? AND user_id = ?`, [id, req.user.id]);
     if (result.changes === 0) {
       return res.status(404).json({ error: 'Collection entry not found' });
@@ -486,29 +517,92 @@ router.post('/collection/bulk', async (req, res) => {
     if (action === 'add_to_deck') {
       const deckId = parseInt(value, 10);
       if (!deckId) return res.status(400).json({ error: 'Invalid deck_id' });
-      const deck = await db.get(`SELECT id FROM decks WHERE id = ? AND user_id = ?`, [deckId, req.user.id]);
+      const deck = await db.get(`SELECT id, checked_out FROM decks WHERE id = ? AND user_id = ?`, [deckId, req.user.id]);
       if (!deck) return res.status(404).json({ error: 'Deck not found' });
+      if (deck.checked_out) {
+        return res.status(409).json({ error: 'Check this deck in before changing its cards.' });
+      }
 
+      // Selected rows can be different physical printings of one game card.
+      // Combine them before enforcing deck quantities.
       const rows = await db.all(
-        `SELECT card_id, SUM(quantity) as total_qty FROM collection WHERE id IN (${placeholders}) AND user_id = ? GROUP BY card_id`,
+        `SELECT MIN(c.card_id) AS card_id, SUM(c.quantity) AS total_qty
+         FROM collection c
+         JOIN card_cache selected_cc ON selected_cc.id = c.card_id
+         WHERE c.id IN (${placeholders}) AND c.user_id = ?
+         GROUP BY ${sqlCardKey('selected_cc')}`,
         [...ids, req.user.id]
       );
 
       let added = 0;
       const rejected = [];
       for (const row of rows) {
-        const existing = await db.get(`SELECT quantity FROM deck_cards WHERE deck_id = ? AND card_id = ?`, [deckId, row.card_id]);
+        const equivalent = await db.get(`
+          SELECT dc.card_id
+          FROM deck_cards dc
+          JOIN card_cache existing_cc ON existing_cc.id = dc.card_id
+          JOIN card_cache target_cc ON target_cc.id = ?
+          WHERE dc.deck_id = ?
+            AND ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+          ORDER BY (dc.card_id = ?) DESC, dc.card_id
+          LIMIT 1
+        `, [row.card_id, deckId, row.card_id]);
+        const effectiveCardId = equivalent ? equivalent.card_id : row.card_id;
+        const existing = await db.get(`
+          SELECT COALESCE(SUM(dc.quantity), 0) AS quantity
+          FROM deck_cards dc
+          JOIN card_cache existing_cc ON existing_cc.id = dc.card_id
+          JOIN card_cache target_cc ON target_cc.id = ?
+          WHERE dc.deck_id = ?
+            AND ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+        `, [effectiveCardId, deckId]);
         const current = existing ? existing.quantity : 0;
         const newQty = current + row.total_qty;
-        // Enforce deck rules (owned cap + max 4 per name) so this path can't
-        // bypass the limits the deck builder enforces.
-        const check = await validateDeckAddition({ deckId, userId: req.user.id, cardId: row.card_id, newQty });
+        const check = await validateDeckAddition({
+          deckId,
+          userId: req.user.id,
+          cardId: effectiveCardId,
+          newQty
+        });
         if (!check.ok) { rejected.push(check.error); continue; }
-        await db.run(
-          `INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, ?, ?)
-           ON CONFLICT(deck_id, card_id) DO UPDATE SET quantity = excluded.quantity`,
-          [deckId, row.card_id, newQty]
-        );
+        if (equivalent) {
+          const updated = await db.run(`
+            UPDATE deck_cards
+            SET quantity = CASE WHEN card_id = ? THEN ? ELSE 0 END
+            WHERE deck_id = ?
+              AND EXISTS (
+                SELECT 1 FROM decks guarded_deck
+                WHERE guarded_deck.id = deck_cards.deck_id
+                  AND guarded_deck.user_id = ?
+                  AND guarded_deck.checked_out = 0
+              )
+              AND card_id IN (
+                SELECT existing_cc.id
+                FROM card_cache existing_cc
+                JOIN card_cache target_cc ON target_cc.id = ?
+                WHERE ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+              )
+          `, [effectiveCardId, newQty, deckId, req.user.id, effectiveCardId]);
+          if (!updated.changes) {
+            return res.status(409).json({ error: 'The deck was checked out before all selected cards could be added.' });
+          }
+          await db.run(`DELETE FROM deck_cards WHERE deck_id = ? AND quantity <= 0`, [deckId]);
+        } else {
+          const inserted = await db.run(
+            `INSERT INTO deck_cards (deck_id, card_id, quantity)
+             SELECT ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM decks guarded_deck
+               WHERE guarded_deck.id = ?
+                 AND guarded_deck.user_id = ?
+                 AND guarded_deck.checked_out = 0
+             )`,
+            [deckId, effectiveCardId, newQty, deckId, req.user.id]
+          );
+          if (!inserted.changes) {
+            return res.status(409).json({ error: 'The deck was checked out before all selected cards could be added.' });
+          }
+        }
         added += row.total_qty;
       }
       const msg = rejected.length
@@ -518,6 +612,21 @@ router.post('/collection/bulk', async (req, res) => {
     }
 
     if (action === 'delete') {
+      const removals = await db.all(`
+        SELECT MIN(c.card_id) AS card_id, SUM(c.quantity) AS remove_qty
+        FROM collection c
+        JOIN card_cache selected_cc ON selected_cc.id = c.card_id
+        WHERE c.id IN (${placeholders}) AND c.user_id = ?
+        GROUP BY ${sqlCardKey('selected_cc')}
+      `, [...ids, req.user.id]);
+      for (const removal of removals) {
+        const status = await logicalInventoryStatus(db, req.user.id, removal.card_id);
+        if (!status || Number(status.owned_qty) - Number(removal.remove_qty) < Number(status.locked_qty)) {
+          return res.status(409).json({
+            error: 'Check in the deck using the selected card before removing it.'
+          });
+        }
+      }
       const result = await db.run(`DELETE FROM collection WHERE id IN (${placeholders}) AND user_id = ?`, [...ids, req.user.id]);
       return res.json({ message: `Deleted ${result.changes} card(s)`, affected: result.changes });
     }
