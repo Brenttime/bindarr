@@ -254,6 +254,12 @@ async function runTests() {
     const imported = await importRes.json();
     assert.strictEqual(imported.cards, 2, 'both card types land in the deck');
 
+    const vaultRes = await fetch(`http://localhost:${port}/api/decks`, { headers: authHeaders });
+    assert.strictEqual(vaultRes.status, 200);
+    const vaultDeck = (await vaultRes.json()).find(deck => deck.id === imported.id);
+    assert.ok(vaultDeck, 'imported precon is returned by the deck vault API');
+    assert.strictEqual(vaultDeck.source, 'precon', 'vault API exposes the source needed for the Precon label');
+
     // The imported deck carries the resolved printings, stamped as a precon.
     const importedDeck = await db.get(`SELECT id, source, name FROM decks WHERE id = ?`, [imported.id]);
     assert.ok(importedDeck, 'deck row exists');

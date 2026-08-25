@@ -1,7 +1,7 @@
 // Search WOTC preconstructed decks by name and import one as a deck.
 //
-// The button lives in the deck vault header ("Add Precon"). The modal lists
-// ranked matches (name + set + type + release date); picking one imports the
+// This is the fast path inside the unified Add Deck flow. The modal lists ranked
+// matches (name + set + type + release date); picking one imports the
 // product's exact card list — mainboard plus commander — as a new deck, each
 // card resolved to the printing the product actually ships, so the "export
 // what's missing" math afterwards is honest.
@@ -83,9 +83,9 @@ export default function PreconSearchModal({ open, onClose, onImported, showToast
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || t('precon.importFailed'));
-      if (body.notFound) {
-        showToast(t('precon.importedSome', { count: body.notFound }));
-      }
+      showToast(body.notFound
+        ? t('precon.importedSome', { count: body.notFound })
+        : t('precon.added', { name: deck.name }));
       onImported(body.id);
     } catch (err) {
       setError(err.message);
@@ -102,22 +102,31 @@ export default function PreconSearchModal({ open, onClose, onImported, showToast
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}
       onClick={(e) => { if (e.target === e.currentTarget && !importing) onClose(); }}
     >
-      <div className="glass-panel" style={{ width: '100%', maxWidth: '560px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '1.5rem', position: 'relative' }}>
+      <div className="glass-panel" role="dialog" aria-modal="true" aria-labelledby="precon-search-title" aria-describedby="precon-search-subtitle precon-fast-path-body" style={{ width: '100%', maxWidth: '560px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '1.5rem', position: 'relative' }}>
         <button
           className="btn btn-secondary btn-icon-only"
           onClick={onClose}
+          disabled={Boolean(importing)}
           style={{ position: 'absolute', top: '0.9rem', right: '0.9rem', borderRadius: '50%', opacity: importing ? 0.4 : 1 }}
           aria-label={t('common.cancel')}
         >
           <X size={16} />
         </button>
 
-        <h3 style={{ fontSize: '1.15rem', color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <h3 id="precon-search-title" style={{ fontSize: '1.15rem', color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <PackageOpen size={18} style={{ color: 'var(--accent-yellow)' }} /> {t('precon.title')}
         </h3>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.3rem 0 0.9rem 0' }}>
+        <p id="precon-search-subtitle" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.3rem 0 0.9rem 0' }}>
           {t('precon.subtitle')}
         </p>
+
+        <div className="precon-fast-path-note">
+          <PackageOpen size={16} />
+          <div>
+            <strong>{t('precon.fastPathTitle')}</strong>
+            <span id="precon-fast-path-body">{t('precon.fastPathBody')}</span>
+          </div>
+        </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <div style={{ position: 'relative', flex: 1 }}>

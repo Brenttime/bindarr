@@ -299,6 +299,229 @@ button, input, select, textarea {
     max(1rem, max(env(safe-area-inset-left, 0px), var(--sal, 0px)));
 }
 
+/* Unified deck intake: one clear Add Deck action, then three explicit paths. */
+.add-deck-chooser {
+  position: relative;
+  width: min(640px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 1.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.add-deck-chooser-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  border-radius: 50%;
+}
+
+.add-deck-chooser-heading {
+  padding-right: 2.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.add-deck-chooser-kicker {
+  color: var(--accent-yellow);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.add-deck-chooser-heading h3 {
+  color: var(--text-strong);
+  font-size: 1.35rem;
+  margin: 0.2rem 0 0;
+}
+
+.add-deck-chooser-heading p {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  margin: 0.35rem 0 0;
+}
+
+.add-deck-choice-grid {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.add-deck-choice {
+  appearance: none;
+  width: 100%;
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.9rem 1rem;
+  color: inherit;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.add-deck-choice:hover,
+.add-deck-choice:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.055);
+  outline: none;
+}
+
+.add-deck-choice-featured {
+  border-color: rgba(234, 179, 8, 0.36);
+  background: linear-gradient(120deg, rgba(234, 179, 8, 0.11), rgba(255, 255, 255, 0.025));
+}
+
+.add-deck-choice-featured:hover,
+.add-deck-choice-featured:focus-visible {
+  border-color: rgba(234, 179, 8, 0.7);
+  background: linear-gradient(120deg, rgba(234, 179, 8, 0.17), rgba(255, 255, 255, 0.05));
+}
+
+.add-deck-choice-icon {
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-yellow);
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.25);
+  border-radius: 11px;
+}
+
+.add-deck-choice-copy,
+.add-deck-choice-title-row {
+  min-width: 0;
+  display: flex;
+}
+
+.add-deck-choice-copy {
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.add-deck-choice-title-row {
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-strong);
+  font-size: 0.92rem;
+}
+
+.add-deck-choice-body,
+.add-deck-choice-note {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.add-deck-choice-note {
+  color: var(--accent-yellow);
+  font-weight: 650;
+}
+
+.add-deck-choice-badge {
+  padding: 0.1rem 0.4rem;
+  color: #111827;
+  background: var(--accent-yellow);
+  border-radius: 999px;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.add-deck-choice-arrow {
+  color: var(--text-muted);
+}
+
+.deck-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0.1rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.58rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  line-height: 1.35;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.deck-source-precon {
+  color: #facc15;
+  background: rgba(234, 179, 8, 0.12);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+}
+
+.deck-source-moxfield {
+  color: #67e8f9;
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+}
+
+.precon-fast-path-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin: 0 0 0.9rem;
+  padding: 0.7rem 0.8rem;
+  color: var(--accent-yellow);
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.25);
+  border-radius: 10px;
+}
+
+.precon-fast-path-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.precon-fast-path-note strong,
+.precon-fast-path-note span {
+  display: block;
+}
+
+.precon-fast-path-note strong {
+  color: var(--text-strong);
+  font-size: 0.76rem;
+}
+
+.precon-fast-path-note span {
+  margin-top: 0.12rem;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 520px) {
+  .add-deck-chooser {
+    padding: 1.3rem 1rem;
+  }
+
+  .add-deck-choice {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.7rem;
+    padding: 0.85rem;
+  }
+
+  .add-deck-choice-arrow {
+    display: none;
+  }
+
+  .add-deck-choice-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+}
+
 /* Glassmorphic Panel Component */
 .glass-panel {
   background: var(--bg-glass);
