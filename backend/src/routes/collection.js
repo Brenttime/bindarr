@@ -585,7 +585,7 @@ router.post('/collection/bulk', async (req, res) => {
         `SELECT MIN(c.card_id) AS card_id, SUM(c.quantity) AS total_qty
          FROM collection c
          JOIN card_cache selected_cc ON selected_cc.id = c.card_id
-         WHERE c.id IN (${placeholders}) AND c.user_id = ?
+         WHERE c.id IN (${placeholders}) AND c.user_id = ? AND c.quantity > 0
          GROUP BY ${sqlCardKey('selected_cc')}`,
         [...ids, req.user.id]
       );
@@ -673,7 +673,7 @@ router.post('/collection/bulk', async (req, res) => {
           SELECT MIN(c.card_id) AS card_id, SUM(c.quantity) AS remove_qty
           FROM collection c
           JOIN card_cache selected_cc ON selected_cc.id = c.card_id
-          WHERE c.id IN (${placeholders}) AND c.user_id = ?
+          WHERE c.id IN (${placeholders}) AND c.user_id = ? AND c.quantity > 0
           GROUP BY ${sqlCardKey('selected_cc')}
         `, [...ids, req.user.id]);
         for (const removal of removals) {

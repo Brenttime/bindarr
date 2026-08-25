@@ -162,6 +162,16 @@ async function runTests() {
     `, [stackEntry.lastID, userId]);
     assert.strictEqual(stackState.owned, 5);
     assert.strictEqual(stackState.original_unchanged, 1);
+    const negativeLegacy = await db.run(`
+      INSERT INTO collection (card_id, user_id, quantity, condition, printing, language)
+      VALUES ('stack-a', ?, -10, 'Damaged', 'Normal', 'English')
+    `, [userId]);
+    const guardedBulkDelete = await fetch(api('/collection/bulk'), {
+      method: 'POST', headers: json,
+      body: JSON.stringify({ entry_ids: [stackEntry.lastID, negativeLegacy.lastID], action: 'delete' })
+    });
+    assert.strictEqual(guardedBulkDelete.status, 409, 'negative legacy rows cannot mask a reserved positive deletion');
+    await db.run(`DELETE FROM collection WHERE id = ?`, [negativeLegacy.lastID]);
     assert.strictEqual((await fetch(api(`/decks/${stackDeck}/return`), { method: 'PUT', headers: auth })).status, 200);
     console.log('PASS: F8-TC3');
 
