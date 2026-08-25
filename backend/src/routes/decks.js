@@ -310,47 +310,103 @@ router.post('/:id/register-collection', async (req, res) => {
   const { id } = req.params;
   try {
     const deck = await db.get(
-      `SELECT id, name, checked_out FROM decks WHERE id = ? AND user_id = ?`,
+      `SELECT id, name FROM decks WHERE id = ? AND user_id = ?`,
       [id, req.user.id]
     );
     if (!deck) return res.status(404).json({ error: 'Deck not found or unauthorized' });
-    if (deck.checked_out) {
-      return res.status(409).json({ error: 'This deck is already checked out for play.' });
-    }
 
-    const cards = await db.all(`
+    // Keep the checked-out guard and the complete collection write in one SQLite
+    // statement. This makes register-vs-checkout linearizable: the INSERT either
+    // happens before checkout's guarded state becomes visible, or inserts nothing.
+    // The NOT EXISTS clause also fails closed if legacy/imported deck rows refer to
+    // card metadata that is no longer cached; an inner join must never turn "every
+    // card" into a partial registration.
+    const inserted = await db.all(`
+      INSERT INTO collection (
+        card_id, user_id, quantity, condition, printing, language,
+        purchase_price, is_trade
+      )
       SELECT
         dc.card_id,
+        d.user_id,
         dc.quantity,
-        COALESCE(NULLIF(cc.language, ''), 'English') AS language,
-        cc.price_trend
-      FROM deck_cards dc
+        'Near Mint',
+        'Normal',
+        COALESCE(NULLIF(cc.language, ''), 'English'),
+        0,
+        0
+      FROM decks d
+      JOIN deck_cards dc ON dc.deck_id = d.id
       JOIN card_cache cc ON cc.id = dc.card_id
-      WHERE dc.deck_id = ? AND dc.quantity > 0
+      WHERE d.id = ?
+        AND d.user_id = ?
+        AND d.checked_out = 0
+        AND dc.quantity > 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM deck_cards unresolved
+          LEFT JOIN card_cache cached ON cached.id = unresolved.card_id
+          WHERE unresolved.deck_id = d.id
+            AND unresolved.quantity > 0
+            AND cached.id IS NULL
+        )
       ORDER BY dc.card_id
-    `, [id]);
+      RETURNING card_id, quantity
+    `, [id, req.user.id]);
 
-    if (cards.length === 0) {
-      return res.status(400).json({ error: 'This deck has no cards to register.' });
+    if (inserted.length === 0) {
+      const current = await db.get(
+        `SELECT checked_out FROM decks WHERE id = ? AND user_id = ?`,
+        [id, req.user.id]
+      );
+      if (!current) return res.status(404).json({ error: 'Deck not found or unauthorized' });
+      if (current.checked_out) {
+        return res.status(409).json({ error: 'This deck is already checked out for play.' });
+      }
+
+      const sourceState = await db.get(`
+        SELECT
+          COUNT(*) AS card_types,
+          COALESCE(SUM(CASE WHEN cc.id IS NULL THEN 1 ELSE 0 END), 0) AS unresolved
+        FROM deck_cards dc
+        LEFT JOIN card_cache cc ON cc.id = dc.card_id
+        WHERE dc.deck_id = ? AND dc.quantity > 0
+      `, [id]);
+      if (!sourceState.card_types) {
+        return res.status(400).json({ error: 'This deck has no cards to register.' });
+      }
+      if (sourceState.unresolved) {
+        return res.status(422).json({
+          error: 'This deck contains cards whose details are unavailable. Refresh or re-import it before registering.'
+        });
+      }
+
+      // The deck changed between the guarded statement and diagnostics. Nothing
+      // was inserted; ask the client to reload rather than claiming success.
+      return res.status(409).json({ error: 'The deck changed before it could be registered. Refresh and try again.' });
     }
 
-    await db.withTransaction(async () => {
-      for (const card of cards) {
-        await db.run(`
-          INSERT INTO collection (
-            card_id, user_id, quantity, condition, printing, language,
-            purchase_price, is_trade
-          ) VALUES (?, ?, ?, 'Near Mint', 'Normal', ?, 0, 0)
-        `, [card.card_id, req.user.id, card.quantity, card.language]);
-        await recordPrice(card.card_id, card.price_trend);
+    // Price history is auxiliary bookkeeping. Registration has already committed
+    // atomically, so a history write must not turn a successful inventory change
+    // into a misleading 500 response.
+    const placeholders = inserted.map(() => '?').join(',');
+    const prices = await db.all(
+      `SELECT id, price_trend FROM card_cache WHERE id IN (${placeholders})`,
+      inserted.map(card => card.card_id)
+    );
+    for (const card of prices) {
+      try {
+        await recordPrice(card.id, card.price_trend);
+      } catch (priceError) {
+        console.error(`Failed to record registration price for ${card.id}:`, priceError);
       }
-    });
+    }
 
-    const total = cards.reduce((sum, card) => sum + Number(card.quantity || 0), 0);
+    const total = inserted.reduce((sum, card) => sum + Number(card.quantity || 0), 0);
     res.status(201).json({
       message: `Added ${total} cards from ${deck.name} to your collection.`,
       added: total,
-      card_types: cards.length
+      card_types: inserted.length
     });
   } catch (error) {
     console.error(error);

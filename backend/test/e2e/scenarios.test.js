@@ -349,6 +349,107 @@ async function runTests() {
     assert.strictEqual(hiddenStateRes.status, 409, 'a checked-out deck cannot be registered again');
     console.log('PASS: F6-TC8');
 
+    // F6-TC9: mixed valid/orphaned deck rows must fail closed. No valid
+    // subset may leak into the collection when one card has no cached metadata.
+    const orphanDeck = await db.run(
+      `INSERT INTO decks (user_id, name, source) VALUES (?, 'orphaned-registration-test', 'manual')`,
+      [adminId]
+    );
+    const validRegistrationCard = registrationDeckRows[0];
+    await db.run(
+      `INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, ?, 1)`,
+      [orphanDeck.lastID, validRegistrationCard.card_id]
+    );
+    await db.run(
+      `INSERT INTO deck_cards (deck_id, card_id, quantity) VALUES (?, 'missing-cache-card', 1)`,
+      [orphanDeck.lastID]
+    );
+    const validBeforeOrphanAttempt = await db.get(
+      `SELECT COALESCE(SUM(quantity), 0) AS qty FROM collection WHERE user_id = ? AND card_id = ?`,
+      [adminId, validRegistrationCard.card_id]
+    );
+    const orphanRegisterRes = await fetch(
+      `http://localhost:${port}/api/decks/${orphanDeck.lastID}/register-collection`,
+      { method: 'POST', headers: authHeaders }
+    );
+    assert.strictEqual(orphanRegisterRes.status, 422, 'unresolved deck cards reject the entire registration');
+    const validAfterOrphanAttempt = await db.get(
+      `SELECT COALESCE(SUM(quantity), 0) AS qty FROM collection WHERE user_id = ? AND card_id = ?`,
+      [adminId, validRegistrationCard.card_id]
+    );
+    assert.strictEqual(
+      validAfterOrphanAttempt.qty,
+      validBeforeOrphanAttempt.qty,
+      'a valid sibling card is not partially registered'
+    );
+    const orphanCollectionRow = await db.get(
+      `SELECT id FROM collection WHERE user_id = ? AND card_id = 'missing-cache-card'`,
+      [adminId]
+    );
+    assert.strictEqual(orphanCollectionRow, undefined);
+    console.log('PASS: F6-TC9');
+
+    // F6-TC10: concurrent register-vs-checkout requests must have a legal
+    // linearized result. Registration either commits before checkout (both
+    // succeed), or checkout wins and registration inserts nothing with 409.
+    const returnedForRace = await fetch(`http://localhost:${port}/api/decks/${imported.id}/return`, {
+      method: 'PUT', headers: authHeaders
+    });
+    assert.strictEqual(returnedForRace.status, 200);
+
+    const registeredTotal = async () => {
+      const row = await db.get(
+        `SELECT COALESCE(SUM(quantity), 0) AS qty FROM collection
+         WHERE user_id = ? AND card_id IN (${registrationPlaceholders})`,
+        [adminId, ...registrationIds]
+      );
+      return row.qty;
+    };
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (attempt > 0) {
+        const returned = await fetch(`http://localhost:${port}/api/decks/${imported.id}/return`, {
+          method: 'PUT', headers: authHeaders
+        });
+        assert.strictEqual(returned.status, 200);
+      }
+
+      const beforeRace = await registeredTotal();
+      let registerPromise;
+      let checkoutPromise;
+      if (attempt % 2 === 0) {
+        registerPromise = fetch(`http://localhost:${port}/api/decks/${imported.id}/register-collection`, {
+          method: 'POST', headers: authHeaders
+        });
+        checkoutPromise = fetch(`http://localhost:${port}/api/decks/${imported.id}/checkout`, {
+          method: 'PUT', headers: authHeaders
+        });
+      } else {
+        checkoutPromise = fetch(`http://localhost:${port}/api/decks/${imported.id}/checkout`, {
+          method: 'PUT', headers: authHeaders
+        });
+        registerPromise = fetch(`http://localhost:${port}/api/decks/${imported.id}/register-collection`, {
+          method: 'POST', headers: authHeaders
+        });
+      }
+
+      const [raceRegister, raceCheckout] = await Promise.all([registerPromise, checkoutPromise]);
+      assert.strictEqual(raceCheckout.status, 200, `checkout attempt ${attempt} succeeds with owned copies`);
+      assert.ok(
+        raceRegister.status === 201 || raceRegister.status === 409,
+        `registration attempt ${attempt} has a linearizable status, got ${raceRegister.status}`
+      );
+      const afterRace = await registeredTotal();
+      assert.strictEqual(
+        afterRace - beforeRace,
+        raceRegister.status === 201 ? 5 : 0,
+        `registration attempt ${attempt} is complete or inserts nothing`
+      );
+      const raceDeckState = await db.get(`SELECT checked_out FROM decks WHERE id = ?`, [imported.id]);
+      assert.strictEqual(raceDeckState.checked_out, 1, `checkout attempt ${attempt} leaves the deck in play`);
+    }
+    console.log('PASS: F6-TC10');
+
   } finally {
     try { server.kill('SIGKILL'); } catch {}
     try {
