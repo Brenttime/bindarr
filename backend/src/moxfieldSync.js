@@ -129,7 +129,7 @@ async function ensureLocalDeck(author, summary, dbClient = db) {
 // the local deck to it. Only creates the local mirror when the deck is
 // enabled — an unchecked deck is tracked (so re-enabling is instant) but
 // never imported.
-async function upsertTrackingRow(author, summary, { enabled = true } = {}) {
+async function upsertTrackingRow(author, summary) {
   return withAllocationLock(async () => db.withDedicatedTransaction(async tx => {
     // Discovery is remote work and may finish after the author was removed.
     // Revalidate lifecycle ownership inside the same lock/transaction used by
@@ -168,7 +168,10 @@ async function upsertTrackingRow(author, summary, { enabled = true } = {}) {
       `SELECT * FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
       [liveAuthor.id, summary.publicId]
     );
-    if (!row.bindarr_deck_id && enabled) {
+    // The caller's enabled snapshot may be stale after remote discovery. The
+    // tracking row inside this transaction is authoritative: a concurrent
+    // disable must never be undone by late deck-list work.
+    if (!row.bindarr_deck_id && row.enabled !== 0) {
       const deckId = await ensureLocalDeck(liveAuthor, summary, tx);
       const linked = await tx.run(
         `UPDATE moxfield_decks SET bindarr_deck_id = ? WHERE id = ?`,
@@ -234,10 +237,9 @@ async function syncDecklist(authorId, { user } = {}) {
 
   for (const summary of summaries) {
     if (!summary.publicId) continue;
-    const wasTracked = await db.get(`SELECT id, enabled FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
+    const wasTracked = await db.get(`SELECT id FROM moxfield_decks WHERE author_id = ? AND public_id = ?`,
       [author.id, summary.publicId]);
-    const enabled = wasTracked ? wasTracked.enabled !== 0 : true;
-    const liveTracking = await upsertTrackingRow(author, summary, { enabled });
+    const liveTracking = await upsertTrackingRow(author, summary);
     if (!liveTracking) {
       return {
         ok: true,
@@ -252,7 +254,7 @@ async function syncDecklist(authorId, { user } = {}) {
     }
     if (wasTracked) {
       kept += 1;
-    } else if (enabled) {
+    } else if (liveTracking.enabled !== 0) {
       created += 1;
       // Brand-new mirror: pull its contents right away rather than waiting for
       // the fast job to notice the unsynced stamp.

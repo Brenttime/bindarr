@@ -338,6 +338,60 @@ async function runTests() {
     }
     await moxfieldSync.removeAuthor(userId, author.lastID);
 
+    // Deck-list discovery can snapshot an enabled tracking row before a
+    // concurrent disable. The fresh row inside the lifecycle transaction must
+    // remain authoritative and the late sync must not recreate its mirror.
+    const disabledAuthor = await db.run(
+      `INSERT INTO moxfield_authors (user_id, moxfield_user) VALUES (?, 'disable-race')`,
+      [userId]
+    );
+    const disabledMirror = await db.run(
+      `INSERT INTO decks (name, user_id, source, moxfield_public_id) VALUES ('Disable Race Mirror', ?, 'moxfield', 'disable-race-deck')`,
+      [userId]
+    );
+    await db.run(
+      `INSERT INTO moxfield_decks (author_id, public_id, name, bindarr_deck_id, enabled)
+       VALUES (?, 'disable-race-deck', 'Disable Race Mirror', ?, 1)`,
+      [disabledAuthor.lastID, disabledMirror.lastID]
+    );
+    const originalDisableRaceGet = db.get;
+    const originalDisableRaceUser = moxfieldApi.getUser;
+    const originalDisableRaceSummaries = moxfieldApi.getAuthorDeckSummaries;
+    let markTrackingSnapshot;
+    const trackingSnapshot = new Promise(resolve => { markTrackingSnapshot = resolve; });
+    let releaseTrackingSnapshot;
+    db.get = async (sql, params) => {
+      const result = await originalDisableRaceGet(sql, params);
+      if (String(sql).includes('SELECT id FROM moxfield_decks') && params && params[1] === 'disable-race-deck') {
+        markTrackingSnapshot();
+        await new Promise(resolve => { releaseTrackingSnapshot = resolve; });
+      }
+      return result;
+    };
+    moxfieldApi.getUser = async () => ({ userName: 'disable-race', displayName: 'Disable Race', profileImageUrl: null });
+    moxfieldApi.getAuthorDeckSummaries = async () => ([{
+      publicId: 'disable-race-deck', name: 'Disable Race Mirror', format: 'commander', lastUpdatedAtUtc: '2026-08-25T00:00:00Z'
+    }]);
+    try {
+      const lateDecklistSync = moxfieldSync.syncDecklist(disabledAuthor.lastID, { user: { id: userId } });
+      await trackingSnapshot;
+      await moxfieldSync.setDeckEnabled(userId, 'disable-race-deck', false);
+      releaseTrackingSnapshot();
+      await lateDecklistSync;
+      const disabledTracking = await originalDisableRaceGet(
+        `SELECT enabled, bindarr_deck_id FROM moxfield_decks WHERE author_id = ? AND public_id = 'disable-race-deck'`,
+        [disabledAuthor.lastID]
+      );
+      assert.strictEqual(disabledTracking.enabled, 0);
+      assert.strictEqual(disabledTracking.bindarr_deck_id, null);
+      assert.strictEqual(await originalDisableRaceGet(`SELECT id FROM decks WHERE moxfield_public_id = 'disable-race-deck'`), undefined);
+    } finally {
+      db.get = originalDisableRaceGet;
+      moxfieldApi.getUser = originalDisableRaceUser;
+      moxfieldApi.getAuthorDeckSummaries = originalDisableRaceSummaries;
+    }
+    await moxfieldSync.removeAuthor(userId, disabledAuthor.lastID);
+
     // Discovery that finishes after author removal must not create an orphan
     // tracking row or local mirror.
     const discoveryAuthor = await db.run(
