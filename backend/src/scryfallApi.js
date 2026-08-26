@@ -5,6 +5,7 @@ const { parseSetList } = require('./utils/setQuery');
 const cardSearchSql = require('./utils/cardSearchSql');
 const languages = require('./utils/languages');
 const { cacheNormalizedCards } = require('./utils/cardCache');
+const { sqlCardKey } = require('./utils/cardIdentity');
 
 // Scryfall needs no API key but asks callers to identify themselves and accept
 // JSON. See https://scryfall.com/docs/api. IDs from Scryfall are UUIDs / set-num
@@ -220,10 +221,14 @@ function normalizeCard(raw, lang) {
   const prices = raw.prices || {};
   const money = (v) => (v != null ? parseFloat(v) : null);
   const eurOnly = money(prices.usd) == null && money(prices.usd_foil) == null
+    && money(prices.usd_etched) == null
     && (money(prices.eur) != null || money(prices.eur_foil) != null);
   const currency = eurOnly ? 'EUR' : 'USD';
   const usd = eurOnly ? money(prices.eur) : money(prices.usd);
   const usdFoil = eurOnly ? money(prices.eur_foil) : money(prices.usd_foil);
+  // Scryfall has no EUR etched field. An etched quote therefore always selects
+  // the USD row instead of being mixed into a EUR-normal/EUR-foil row.
+  const usdEtched = eurOnly ? null : money(prices.usd_etched);
   const cmc = raw.cmc != null ? parseFloat(raw.cmc) : null;
   const colorIdentity = raw.color_identity || face.color_identity || [];
 
@@ -239,9 +244,10 @@ function normalizeCard(raw, lang) {
     set_name: raw.set_name || '',
     number: raw.collector_number || '',
     image_url: imgSrc.normal || imgSrc.large || imgSrc.small || '',
-    price_trend: usd != null ? usd : (usdFoil != null ? usdFoil : 0),
+    price_trend: usd != null ? usd : (usdFoil != null ? usdFoil : (usdEtched != null ? usdEtched : 0)),
     price_normal: usd,
     price_holofoil: usdFoil,
+    price_etched: usdEtched,
     cmc: cmc,
     color_identity: colorIdentity.map(c => COLOR_NAMES[c] || c),
     // Which printing this row IS. The quick-add form defaults the copy's language
@@ -614,18 +620,29 @@ async function fetchAndCacheSets(force = false) {
   }
 }
 
-// Refresh prices for every owned/decked MTG card from Scryfall and record price
-// history. This is their only periodic refresh path.
+// Refresh prices for every owned MTG printing plus every cached printing of a
+// logical card used by a deck. Deck minimum values compare alternate printings,
+// so refreshing only the representative printing stored in deck_cards would
+// leave the supposedly cheapest option stale.
 // `force` bypasses the once-a-day gate (used by the scheduled daily run, which
 // is already on the right cadence by construction).
 async function updateCollectionPrices(force = false) {
   try {
     const cards = await db.all(`
-      SELECT DISTINCT c.card_id, cc.set_id, cc.number, cc.name FROM collection c
+      WITH deck_card_keys AS (
+        SELECT DISTINCT ${sqlCardKey('deck_cc')} AS card_key
+        FROM deck_cards dc
+        JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
+        WHERE dc.quantity > 0
+      )
+      SELECT DISTINCT c.card_id, cc.set_id, cc.number, cc.name
+      FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
+      WHERE c.quantity > 0
       UNION
-      SELECT DISTINCT d.card_id, cc.set_id, cc.number, cc.name FROM deck_cards d
-      JOIN card_cache cc ON d.card_id = cc.id
+      SELECT DISTINCT cc.id AS card_id, cc.set_id, cc.number, cc.name
+      FROM card_cache cc INDEXED BY idx_card_cache_logical_key
+      JOIN deck_card_keys deck_key ON deck_key.card_key = ${sqlCardKey('cc')}
     `);
     if (cards.length === 0) return;
     if (!force && !(await shouldSweepPrices('mtg'))) {

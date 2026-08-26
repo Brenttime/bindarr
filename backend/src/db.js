@@ -231,6 +231,7 @@ async function initDb() {
       price_trend REAL,
       price_normal REAL,
       price_holofoil REAL,
+      price_etched REAL,
       price_currency TEXT DEFAULT 'USD',
       price_source TEXT,
       cmc REAL,
@@ -414,6 +415,9 @@ async function initDb() {
     // Backfill from what each row's id already tells us: Scryfall is the only
     // source that ever wrote rows, and its ids are prefixed. No network needed.
     await run(`UPDATE card_cache SET price_source = 'scryfall', price_currency = 'USD' WHERE id LIKE 'mtg-%'`);
+  }
+  if (!cardCacheCols.some(c => c.name === 'price_etched')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN price_etched REAL`);
   }
   if (!cardCacheCols.some(c => c.name === 'tcgplayer_product_id')) {
     await run(`ALTER TABLE card_cache ADD COLUMN tcgplayer_product_id INTEGER`);
@@ -895,6 +899,8 @@ async function initDb() {
   await run(`DROP INDEX IF EXISTS idx_collection_user_game`);
   await run(`CREATE INDEX IF NOT EXISTS idx_collection_user ON collection(user_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_set_num ON card_cache(set_id, number)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_logical_key ON card_cache(LOWER(TRIM(COALESCE(name, ''))))`);
+  await run(`DROP INDEX IF EXISTS idx_card_cache_logical_name`);
   await run(`CREATE INDEX IF NOT EXISTS idx_deck_cards_checkout ON deck_cards(deck_id, checked_out)`);
   // Indexes on the retired tags/audit_logs tables. A fresh database never creates
   // those tables at all now; an upgraded one keeps them (dropping a table is not

@@ -5,6 +5,7 @@ const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { validateDeckAddition, isBasicLand } = require('../utils/deckRules');
 const { sqlCardKey, sqlIsBasicLand } = require('../utils/cardIdentity');
 const { withAllocationLock } = require('../utils/collectionHelpers');
+const { getDeckMinimumValues, emptyDeckMinimumValue } = require('../utils/deckPricing');
 
 const router = express.Router();
 
@@ -96,7 +97,11 @@ router.get('/', async (req, res) => {
       ORDER BY d.created_at DESC
     `;
     const rows = await db.all(query, [req.user.id]);
-    res.json(rows);
+    const values = await getDeckMinimumValues(db, rows.map(row => row.id));
+    res.json(rows.map(row => ({
+      ...row,
+      ...(values.get(Number(row.id)) || emptyDeckMinimumValue()),
+    })));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to retrieve decks' });
@@ -209,9 +214,11 @@ router.get('/:id', async (req, res) => {
     const cards = await db.all(cardsQuery, [id, req.user.id]);
 
     const formatted = cards.map(parseCardRow);
+    const values = await getDeckMinimumValues(db, [deck.id]);
 
     res.json({
       ...deck,
+      ...(values.get(Number(deck.id)) || emptyDeckMinimumValue()),
       cards: formatted
     });
   } catch (error) {

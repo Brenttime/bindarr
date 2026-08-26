@@ -112,6 +112,11 @@ function normalizeChecks() {
   assert.strictEqual(foilOnly.price_currency, 'USD');
   assert.strictEqual(foilOnly.price_trend, 7, 'trend falls back to the foil price');
 
+  const etchedOnly = priced({ usd: null, usd_foil: null, usd_etched: '1.23', eur: '4.50' });
+  assert.strictEqual(etchedOnly.price_currency, 'USD', 'a USD etched quote prevents an incompatible EUR fallback');
+  assert.strictEqual(etchedOnly.price_etched, 1.23);
+  assert.strictEqual(etchedOnly.price_trend, 1.23, 'trend falls back to an etched-only quote');
+
   // Nothing anywhere: unpriced, and still labelled USD, which is what every
   // consumer defaults to.
   const none = priced({});
