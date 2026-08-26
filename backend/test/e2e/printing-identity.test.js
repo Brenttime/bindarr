@@ -128,6 +128,22 @@ async function runTests() {
     assert.strictEqual(collectionPage[0].entry_id, collectionRows[1].entry_id, 'pagination preserves stable newest-first order');
     assert.ok(!Object.hasOwn(collectionPage[0], 'checked_out_qty'), 'fast paginated reads skip unused allocation work');
 
+    // A legacy/unresolved collection row has no card_cache metadata and is
+    // intentionally omitted by the data JOIN. It must not inflate the total or
+    // make the client request phantom background pages.
+    await db.run('PRAGMA foreign_keys = OFF');
+    const unresolved = await db.run(
+      `INSERT INTO collection (card_id, user_id, quantity) VALUES ('missing-card-cache-row', ?, 1)`,
+      [userId]
+    );
+    await db.run('PRAGMA foreign_keys = ON');
+    const unresolvedPageRead = await fetch(api('/collection?limit=1&offset=0'), { headers: auth });
+    assert.strictEqual(Number(unresolvedPageRead.headers.get('x-total-count')), collectionRows.length,
+      'pagination total excludes unresolved rows omitted by the card metadata join');
+    await db.run('PRAGMA foreign_keys = OFF');
+    await db.run(`DELETE FROM collection WHERE id = ?`, [unresolved.lastID]);
+    await db.run('PRAGMA foreign_keys = ON');
+
     const allocatedPageRead = await fetch(
       api('/collection?limit=3&offset=0&include_allocation=1'),
       { headers: auth }
