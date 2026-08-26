@@ -258,7 +258,10 @@ router.get('/collection', async (req, res) => {
     `;
     if (paginated && req.query.count !== '0') {
       const countRow = await db.get(
-        `SELECT COUNT(*) AS count FROM collection c ${filterSql}`,
+        `SELECT COUNT(*) AS count
+         FROM collection c
+         JOIN card_cache cc ON c.card_id = cc.id
+         ${filterSql}`,
         filterParams
       );
       res.set('X-Total-Count', String(Number(countRow && countRow.count) || 0));

@@ -7,6 +7,7 @@ import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass, getP
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
 import { sortCardsByOrder } from '../utils/cardSort';
 import { buildCardListText } from '../utils/cardList';
+import { fetchWithRetry } from '../utils/fetchWithRetry';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
 import CardInspectorModal from './CardInspectorModal';
@@ -134,7 +135,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
 
       // Cold path: request only what can be painted immediately. This stays fast
       // even when the physical collection grows to hundreds of thousands of rows.
-      const response = await fetch(`/api/collection?${params}`, { signal: controller.signal });
+      const response = await fetchWithRetry(
+        `/api/collection?${params}`,
+        { signal: controller.signal }
+      );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const firstPage = await response.json();
       const total = Math.max(firstPage.length, parseInt(response.headers.get('X-Total-Count'), 10) || 0);
@@ -153,7 +157,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           });
           if (tradeOnly) pageParams.set('is_trade', '1');
           pageRequests.push(
-            fetch(`/api/collection?${pageParams}`, { signal: controller.signal })
+            fetchWithRetry(`/api/collection?${pageParams}`, { signal: controller.signal })
               .then(pageResponse => {
                 if (!pageResponse.ok) throw new Error(`HTTP ${pageResponse.status}`);
                 return pageResponse.json();
@@ -164,7 +168,23 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         // Fetch the remaining slices concurrently, then commit once. The page is
         // already interactive while this runs, and one transition avoids sorting
         // and regrouping the growing collection after every network chunk.
-        const pages = await Promise.all(pageRequests);
+        let pages;
+        try {
+          pages = await Promise.all(pageRequests);
+        } catch (backgroundError) {
+          if (backgroundError?.name === 'AbortError' || controller.signal.aborted) throw backgroundError;
+
+          // Never leave filters, totals, or bulk operations working on a silent
+          // 96-row subset. If a page still fails after retries, fall back to the
+          // compatible full endpoint; this slower path is only for recovery.
+          const fallbackUrl = tradeOnly ? '/api/collection?is_trade=1' : '/api/collection';
+          const fallbackResponse = await fetchWithRetry(fallbackUrl, { signal: controller.signal });
+          if (!fallbackResponse.ok) throw backgroundError;
+          const fullCollection = await fallbackResponse.json();
+          if (generation !== fetchGenerationRef.current) return;
+          startTransition(() => setCollection(fullCollection));
+          return;
+        }
         if (generation !== fetchGenerationRef.current) return;
         startTransition(() => setCollection(firstPage.concat(...pages)));
       }
