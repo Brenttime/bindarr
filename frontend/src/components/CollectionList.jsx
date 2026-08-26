@@ -284,10 +284,11 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
 
   // Progressive rendering: a 20,000-card collection would otherwise mount every
   // tile at once (tens of thousands of DOM nodes + images) and freeze the page
-  // for many seconds. Render in batches of 480 and extend on scroll — the page
-  // paints the first screenful almost immediately and grows as you scroll.
-  const INITIAL_COUNT = 480;
-  const LOAD_MORE = 480;
+  // for many seconds. Render a small first batch and extend ahead of the scroll
+  // position. 120 is several desktop/mobile screens without asking the browser
+  // to create and image-track hundreds of off-screen cards up front.
+  const INITIAL_COUNT = 120;
+  const LOAD_MORE = 240;
   const [visibleCount, setVisibleCount] = useState(INITIAL_COUNT);
   const sentinelRef = useRef(null);
 

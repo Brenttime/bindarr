@@ -895,9 +895,13 @@ async function initDb() {
 
   // --- PERFORMANCE INDEXES ---
   // `user_id` first, because it is the predicate on essentially every read in the
-  // app — every collection query, every stats aggregate — and nothing indexed it.
+  // app. The collection page also reads newest-first; carrying that order in the
+  // index prevents SQLite from sorting tens of thousands of rows into a temporary
+  // B-tree on every visit while still serving user-only stats predicates.
   await run(`DROP INDEX IF EXISTS idx_collection_user_game`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_collection_user ON collection(user_id)`);
+  await run(`DROP INDEX IF EXISTS idx_collection_user`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_collection_user_added
+    ON collection(user_id, added_at DESC, id DESC)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_set_num ON card_cache(set_id, number)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_logical_key ON card_cache(LOWER(TRIM(COALESCE(name, ''))))`);
   await run(`DROP INDEX IF EXISTS idx_card_cache_logical_name`);

@@ -101,6 +101,24 @@ async function runTests() {
     assert.deepStrictEqual(concurrent.map(r => r.status).sort(), [200, 400]);
     const checked = await db.all(`SELECT id FROM decks WHERE id IN (?, ?) AND checked_out = 1`, [deckA, deckB]);
     assert.strictEqual(checked.length, 1, 'exactly one competing deck is checked out');
+
+    // The collection read assigns checked-out demand to the newest physical
+    // copies across equivalent printings. This also guards the batched allocation
+    // implementation against double-allocation or exact-printing regressions.
+    const collectionRead = await fetch(api('/collection'), { headers: auth });
+    assert.strictEqual(collectionRead.status, 200);
+    const collectionRows = await collectionRead.json();
+    const allocatedBolts = collectionRows.filter(row => row.name === 'Lightning Bolt');
+    assert.strictEqual(
+      allocatedBolts.reduce((sum, row) => sum + Number(row.checked_out_qty || 0), 0),
+      2,
+      'the one checked-out deck reserves exactly two logical copies'
+    );
+    assert.strictEqual(
+      allocatedBolts.find(row => row.card_id === 'bolt-b').checked_out_qty,
+      2,
+      'newest equivalent printing is allocated first'
+    );
     console.log('PASS: F8-TC2');
 
     // F8-TC3: checked-out allocation protects edits to both the deck and its logical inventory.

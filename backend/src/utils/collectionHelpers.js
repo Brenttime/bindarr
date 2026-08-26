@@ -40,27 +40,37 @@ async function checkedOutAllocation(userId) {
       AND NOT ${sqlIsBasicLand('needed_cc')}
     GROUP BY ${sqlCardKey('needed_cc')}
   `, [userId]);
+  if (required.length === 0) return new Map();
+
+  // Fetch owned rows once. The old implementation ran one collection query per
+  // required logical card, so a pair of checked-out Commander decks caused about
+  // 200 scans of a 20k-row collection before the page could respond. Grouping in
+  // memory preserves the same newest-first greedy allocation with two bounded SQL
+  // reads regardless of deck size.
+  const entries = await db.all(`
+    SELECT
+      c.id AS entry_id,
+      c.quantity,
+      ${sqlCardKey('owned_cc')} AS card_key
+    FROM collection c
+    JOIN card_cache owned_cc ON owned_cc.id = c.card_id
+    WHERE c.user_id = ?
+      AND c.quantity > 0
+    ORDER BY c.added_at DESC, c.id DESC
+  `, [userId]);
+
+  const remaining = new Map(required.map(({ card_key, req }) => [card_key, Number(req) || 0]));
   const alloc = new Map();
-  for (const { card_key, req } of required) {
-    let need = req;
+  for (const entry of entries) {
+    const need = remaining.get(entry.card_key) || 0;
+    if (need <= 0) continue;
     // Deliberately span every printing with this English card name. The chosen
     // physical rows are still exact collection entries, so the collection can
     // grey out the copies actually allocated while checkout stays art-agnostic.
-    const entries = await db.all(`
-      SELECT c.id AS entry_id, c.quantity
-      FROM collection c
-      JOIN card_cache owned_cc ON owned_cc.id = c.card_id
-      WHERE c.user_id = ?
-        AND c.quantity > 0
-        AND ${sqlCardKey('owned_cc')} = ?
-      ORDER BY c.added_at DESC, c.id DESC
-    `, [userId, card_key]);
-    for (const e of entries) {
-      if (need <= 0) break;
-      const take = Math.min(e.quantity, need);
-      need -= take;
-      alloc.set(e.entry_id, take);
-    }
+    const take = Math.min(Number(entry.quantity) || 0, need);
+    if (take <= 0) continue;
+    remaining.set(entry.card_key, need - take);
+    alloc.set(entry.entry_id, take);
   }
   return alloc;
 }
