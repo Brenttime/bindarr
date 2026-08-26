@@ -9,7 +9,8 @@ export function deckMinimumValueText(deck) {
 
 export function deckMinimumValueHint(deck, t) {
   const unpriced = Number(deck?.unpriced_cards) || 0;
-  if (unpriced > 0) return t('deck.minimumValueIncomplete', { count: unpriced });
+  if (unpriced === 1) return t('deck.minimumValueIncompleteOne');
+  if (unpriced > 1) return t('deck.minimumValueIncomplete', { count: unpriced });
   return t('deck.minimumValueComplete');
 }
 

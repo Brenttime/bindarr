@@ -18,6 +18,7 @@ assert.ok((deckBuilder.match(/tabIndex=\{0\}/g) || []).length >= 3,
 assert.ok((deckBuilder.match(/deckUnpricedCountText\(/g) || []).length >= 3,
   'unpriced-card counts must be visibly rendered in grid, table, and detail views');
 assert.match(en['deck.minimumValueComplete'], /cheapest known USD printing or finish/i);
+assert.match(en['deck.minimumValueIncompleteOne'], /1 card does not/i);
 assert.match(en['deck.minimumValueIncomplete'], /\{count\}/);
 assert.match(en['deck.minimumValueIncomplete'], /printings or finishes/i);
 assert.match(en['deck.unpricedCount'], /\{count\}/);
