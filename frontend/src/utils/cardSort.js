@@ -22,10 +22,10 @@ export const LANGUAGE_ORDER = cardOrder.language;
 // sort chronologically, matching the backend's placement engine — without it
 // the display order would disagree with where recommendSlot files cards.
 export function sortCardsByOrder(cards, sortOrder, foilSorting, setsList = []) {
+  const setRanks = new Map((setsList || []).map((set, index) => [set.name, index]));
   const setRank = (name) => {
-    if (!setsList || setsList.length === 0) return 0;
-    const idx = setsList.findIndex(s => s.name === name);
-    return idx >= 0 ? idx : 999999;
+    if (setRanks.size === 0) return 0;
+    return setRanks.get(name) ?? 999999;
   };
   let criteria = [];
   if (typeof sortOrder === 'string') {

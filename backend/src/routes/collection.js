@@ -203,6 +203,9 @@ router.get('/collection/cardlist', async (req, res) => {
 router.get('/collection', async (req, res) => {
   try {
     const isTrade = req.query.is_trade;
+    const paginated = req.query.limit !== undefined || req.query.offset !== undefined;
+    const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
     let filterSql = `WHERE c.user_id = ?`;
     let filterParams = [req.user.id];
@@ -250,17 +253,36 @@ router.get('/collection', async (req, res) => {
       FROM collection c
       JOIN card_cache cc ON c.card_id = cc.id
       ${filterSql}
-      ORDER BY c.added_at DESC
+      ORDER BY c.added_at DESC, c.id DESC
+      ${paginated ? 'LIMIT ? OFFSET ?' : ''}
     `;
-    const rows = await db.all(query, filterParams);
+    if (paginated && req.query.count !== '0') {
+      const countRow = await db.get(
+        `SELECT COUNT(*) AS count FROM collection c ${filterSql}`,
+        filterParams
+      );
+      res.set('X-Total-Count', String(Number(countRow && countRow.count) || 0));
+      res.set('Access-Control-Expose-Headers', 'X-Total-Count');
+    }
 
-    const alloc = await checkedOutAllocation(req.user.id);
+    const queryParams = paginated ? [...filterParams, limit, offset] : filterParams;
+    const rows = await db.all(query, queryParams);
 
-    const formatted = rows.map(row => ({
-      ...parseCardRow(row),
-      price_trend: resolveCardPrice(row),
-      checked_out_qty: alloc.get(row.entry_id) || 0
-    }));
+    // Keep the legacy full-response contract for API consumers. The paginated
+    // collection UI does not render checked_out_qty, so its cold path skips this
+    // collection-wide calculation unless a caller explicitly asks for it.
+    const alloc = !paginated || req.query.include_allocation === '1'
+      ? await checkedOutAllocation(req.user.id)
+      : null;
+
+    const formatted = rows.map(row => {
+      const card = {
+        ...parseCardRow(row),
+        price_trend: resolveCardPrice(row)
+      };
+      if (alloc) card.checked_out_qty = alloc.get(row.entry_id) || 0;
+      return card;
+    });
 
     res.json(formatted);
   } catch (error) {

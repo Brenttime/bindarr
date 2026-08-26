@@ -119,6 +119,22 @@ async function runTests() {
       2,
       'newest equivalent printing is allocated first'
     );
+
+    const collectionPageRead = await fetch(api('/collection?limit=1&offset=1'), { headers: auth });
+    assert.strictEqual(collectionPageRead.status, 200);
+    assert.strictEqual(Number(collectionPageRead.headers.get('x-total-count')), collectionRows.length);
+    const collectionPage = await collectionPageRead.json();
+    assert.strictEqual(collectionPage.length, 1);
+    assert.strictEqual(collectionPage[0].entry_id, collectionRows[1].entry_id, 'pagination preserves stable newest-first order');
+    assert.ok(!Object.hasOwn(collectionPage[0], 'checked_out_qty'), 'fast paginated reads skip unused allocation work');
+
+    const allocatedPageRead = await fetch(
+      api('/collection?limit=3&offset=0&include_allocation=1'),
+      { headers: auth }
+    );
+    const allocatedPage = await allocatedPageRead.json();
+    assert.ok(allocatedPage.every(row => Object.hasOwn(row, 'checked_out_qty')),
+      'paginated API consumers can opt back into allocation metadata');
     console.log('PASS: F8-TC2');
 
     // F8-TC3: checked-out allocation protects edits to both the deck and its logical inventory.

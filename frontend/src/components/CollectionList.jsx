@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { startTransition, useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
@@ -15,6 +15,9 @@ import PackPriceSplitter from './PackPriceSplitter';
 import CardImage from './CardImage';
 
 const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' };
+const INITIAL_RENDER_COUNT = 96;
+const LOAD_MORE_RENDER_COUNT = 240;
+const BACKGROUND_PAGE_SIZE = 2000;
 
 // Maps each Sort By option to sortCardsByOrder criteria so ordering remains
 // consistent (set = chronological via setsList, type = name order — there is no
@@ -51,6 +54,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const [collection, setCollection] = useState([]);
   const [setsList, setSetsList] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const fetchGenerationRef = useRef(0);
+  const fetchAbortRef = useRef(null);
 
   useEffect(() => {
     if (selectedCardFilter) {
@@ -92,32 +98,85 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const {
     selectMode, setSelectMode, selectedIds, setSelectedIds, toggleSelect, selectAt, clearSelection, exitSelectMode,
     pressHandlers, longPressFired, runBulk,
-  } = useMultiSelect({ showToast, onChanged: () => { onUpdate(); fetchCollection(); } });
+  } = useMultiSelect({ showToast, onChanged: onUpdate });
 
   useEffect(() => {
     fetchCollection();
-    fetchSets();
+    return () => {
+      fetchGenerationRef.current += 1;
+      fetchAbortRef.current?.abort();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statsTrigger, tradeOnly]);
 
+  useEffect(() => {
+    fetchSets();
+  // The set catalog is static collection-view metadata; card mutations should
+  // not download it again.
+  }, []);
+
   const fetchCollection = async () => {
+    const generation = ++fetchGenerationRef.current;
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+
     try {
       setLoading(true);
-      let url = '/api/collection';
-      if (tradeOnly) {
-        url += '?is_trade=1';
-      }
+      setLoadingMore(false);
+      setVisibleCount(INITIAL_RENDER_COUNT);
 
-      const response = await fetch(url);
-      if (response.ok) {
-        const data = await response.json();
-        setCollection(data);
+      const params = new URLSearchParams({
+        limit: String(INITIAL_RENDER_COUNT),
+        offset: '0'
+      });
+      if (tradeOnly) params.set('is_trade', '1');
+
+      // Cold path: request only what can be painted immediately. This stays fast
+      // even when the physical collection grows to hundreds of thousands of rows.
+      const response = await fetch(`/api/collection?${params}`, { signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const firstPage = await response.json();
+      const total = Math.max(firstPage.length, parseInt(response.headers.get('X-Total-Count'), 10) || 0);
+      if (generation !== fetchGenerationRef.current) return;
+      setCollection(firstPage);
+      setLoading(false);
+
+      if (firstPage.length < total) {
+        setLoadingMore(true);
+        const pageRequests = [];
+        for (let offset = firstPage.length; offset < total; offset += BACKGROUND_PAGE_SIZE) {
+          const pageParams = new URLSearchParams({
+            limit: String(BACKGROUND_PAGE_SIZE),
+            offset: String(offset),
+            count: '0'
+          });
+          if (tradeOnly) pageParams.set('is_trade', '1');
+          pageRequests.push(
+            fetch(`/api/collection?${pageParams}`, { signal: controller.signal })
+              .then(pageResponse => {
+                if (!pageResponse.ok) throw new Error(`HTTP ${pageResponse.status}`);
+                return pageResponse.json();
+              })
+          );
+        }
+
+        // Fetch the remaining slices concurrently, then commit once. The page is
+        // already interactive while this runs, and one transition avoids sorting
+        // and regrouping the growing collection after every network chunk.
+        const pages = await Promise.all(pageRequests);
+        if (generation !== fetchGenerationRef.current) return;
+        startTransition(() => setCollection(firstPage.concat(...pages)));
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error(err);
       showToast(t('collection.errLoad'));
     } finally {
-      setLoading(false);
+      if (generation === fetchGenerationRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -253,7 +312,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
 
     if (sortBy === 'qty-desc') {
       result.sort((a, b) => (b.quantity || 0) - (a.quantity || 0));
-    } else {
+    } else if (sortBy !== 'added-newest') {
+      // The server already guarantees added_at DESC, entry_id DESC. Preserve it
+      // instead of constructing and comparing Date objects for every cold load.
       sortCardsByOrder(result, SORT_CRITERIA[sortBy] || SORT_CRITERIA['added-newest'], undefined, setsList);
     }
     return result;
@@ -285,17 +346,15 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // Progressive rendering: a 20,000-card collection would otherwise mount every
   // tile at once (tens of thousands of DOM nodes + images) and freeze the page
   // for many seconds. Render a small first batch and extend ahead of the scroll
-  // position. 120 is several desktop/mobile screens without asking the browser
+  // position. 96 is several desktop/mobile screens without asking the browser
   // to create and image-track hundreds of off-screen cards up front.
-  const INITIAL_COUNT = 120;
-  const LOAD_MORE = 240;
-  const [visibleCount, setVisibleCount] = useState(INITIAL_COUNT);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT);
   const sentinelRef = useRef(null);
 
   // Reset to the first batch whenever the visible card set can change (filters,
   // sort, search, stacking, view mode, selection mode) or after a fresh fetch.
   useEffect(() => {
-    setVisibleCount(INITIAL_COUNT);
+    setVisibleCount(INITIAL_RENDER_COUNT);
   }, [displayCards, viewMode, selectMode, collection]);
 
   useEffect(() => {
@@ -303,7 +362,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     if (!el || visibleCount >= displayCards.length) return;
     const observer = new IntersectionObserver(entries => {
       if (entries[0]?.isIntersecting) {
-        setVisibleCount(c => Math.min(c + LOAD_MORE, displayCards.length));
+        setVisibleCount(c => Math.min(c + LOAD_MORE_RENDER_COUNT, displayCards.length));
       }
     }, { rootMargin: '800px' });
     observer.observe(el);
@@ -527,7 +586,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       {/* Result summary bar */}
       {!loading && !selectMode && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', fontSize: '0.78rem', color: 'var(--text-secondary)', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <span><strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {t('collection.cardUnit', { count: displayCards.length })}</span>
+          <span><strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {t('collection.cardUnit', { count: displayCards.length })}{loadingMore ? ` · ${t('common.loading')}` : ''}</span>
           <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
         </div>
       )}
@@ -557,7 +616,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <PackPriceSplitter
             entryIds={Array.from(selectedIds)}
             showToast={showToast}
-            onApplied={() => { clearSelection(); onUpdate(); fetchCollection(); }}
+            onApplied={() => { clearSelection(); onUpdate(); }}
           />
           <div style={{ width: '1px', height: '22px', background: 'var(--border-glass)' }} />
           <AddToDeckSelect
