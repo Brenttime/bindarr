@@ -121,6 +121,37 @@ axios.Axios.prototype.get = async function(url, config) {
       return { data: { object: 'list', total_cards: 0, has_more: false, data: [] } };
     }
 
+    // A CATALOG-only operator (otag:) is answered by a tagged list, not a name
+    // search. The collection route resolves this live and intersects it with
+    // the user's cards, so this branch returns a FIXED list of "tagged" cards:
+    // Black Lotus (the card the suite owns) plus a card it does not, so the
+    // intersect is observable. `otag` is URL-encoded to `otag%3A` in the q param.
+    if (/otag%3A/.test(fullUrl)) {
+      return {
+        data: {
+          object: 'list',
+          total_cards: 2,
+          has_more: false,
+          data: [
+            {
+              id: 'lea-232', name: 'Black Lotus', type_line: 'Artifact', rarity: 'rare',
+              set: 'lea', set_name: 'Limited Edition Alpha', collector_number: '232',
+              colors: [], color_identity: [], cmc: 0,
+              image_uris: { normal: 'https://images.scryfall.com/lotus.png' },
+              prices: { usd: '10000.00', usd_foil: null }
+            },
+            {
+              id: 'lea-241', name: 'Time Warp', type_line: 'Instant', rarity: 'rare',
+              set: 'lea', set_name: 'Limited Edition Alpha', collector_number: '241',
+              colors: ['B'], color_identity: ['B'], cmc: 3,
+              image_uris: { normal: 'https://images.scryfall.com/timewarp.png' },
+              prices: { usd: '8000.00', usd_foil: null }
+            }
+          ]
+        }
+      };
+    }
+
     if (fullUrl.includes('Lightning') || fullUrl.includes('146')) {
       name = 'Lightning Bolt';
       id = '54321';

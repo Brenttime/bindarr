@@ -10,7 +10,7 @@ import { buildCardListText } from '../utils/cardList';
 import { fetchWithRetry } from '../utils/fetchWithRetry';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
-import { compileQuery } from '../../../shared/scryfallQuery.js';
+import { compileQuery, classifyQuery } from '../../../shared/scryfallQuery.js';
 import CardInspectorModal from './CardInspectorModal';
 import AddToDeckSelect from './AddToDeckSelect';
 import PackPriceSplitter from './PackPriceSplitter';
@@ -95,6 +95,17 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const [sortBy, setSortBy] = useState('added-newest');
   const [tradeOnly, setTradeOnly] = useState(false);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
+
+  // Live-catalog mode: the query contains an operator only Scryfall's
+  // database can answer (otag:, availability:, artist: ...). Those cannot be
+  // evaluated against the loaded rows, so the query goes to the server, which
+  // resolves it against Scryfall and returns the user's OWN rows for the
+  // matches. Debounced, because a half-typed tag is not a query yet — and
+  // every half-typed query would otherwise be a real API call.
+  const [liveCatalog, setLiveCatalog] = useState(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState(null);
+  const liveFetchRef = useRef(0);
 
   // Stacking state (default to stacked)
   const [stackCards, setStackCards] = useState(true);
@@ -312,28 +323,90 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     setMaxPriceFilter(''); setTradeOnly(false); setFavoriteOnly(false);
   };
 
-  // The Scryfall-syntax query, compiled once per keystroke. An invalid query
-  // is reported inline rather than silently matching nothing — or everything.
+  // The Scryfall-syntax query, classified and compiled once per keystroke.
+  //   local   — every operator is answerable from the stored rows; the
+  //             compiled predicate filters the loaded rows in the browser.
+  //   catalog — some operator (otag:, availability:, artist:, ...) only
+  //             Scryfall's database can answer; the server resolves it live
+  //             and returns the user's owned rows (see liveCatalog below).
+  //   error   — invalid syntax; shown inline and does not filter, so the list
+  //             stays visible while the user fixes it.
   const scryfallPredicate = useMemo(() => {
-    if (!scryfallMode || !scryfallQuery.trim()) return null;
+    if (!scryfallMode || !scryfallQuery.trim()) return { mode: 'off' };
+    let classification;
     try {
-      return { ok: true, test: compileQuery(scryfallQuery) };
+      classification = classifyQuery(scryfallQuery);
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return { mode: 'error', error: err instanceof Error ? err.message : String(err) };
     }
+    if (classification.mode === 'catalog') return { mode: 'catalog' };
+    return { mode: 'local', test: compileQuery(scryfallQuery) };
   }, [scryfallMode, scryfallQuery]);
 
-  // Filter + sort
+  // The catalog query is the one that actually reaches Scryfall. Debounced,
+  // because a half-typed tag is not a query yet — and every half-typed query
+  // would otherwise be a real API call. Each new query supersedes in-flight
+  // answers so a slow response can never paint over a newer one.
+  useEffect(() => {
+    if (scryfallPredicate.mode !== 'catalog') {
+      liveFetchRef.current += 1;
+      setLiveCatalog(null);
+      setLiveLoading(false);
+      setLiveError(null);
+      return;
+    }
+    const generation = ++liveFetchRef.current;
+    const timer = setTimeout(async () => {
+      setLiveLoading(true);
+      setLiveError(null);
+      try {
+        const params = new URLSearchParams();
+        params.set('scope', 'collection');
+        params.set('q', scryfallQuery.trim());
+        const response = await fetchWithRetry(`/api/search?${params.toString()}`);
+        if (generation !== liveFetchRef.current) return;
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          setLiveCatalog([]);
+          if (response.status === 400) setLiveError(t('collection.scryfallInvalidQuery'));
+          else if (response.status === 429) setLiveError(t('collection.scryfallRateLimited'));
+          else setLiveError(errData.error || t('collection.scryfallLiveFailed'));
+          return;
+        }
+        setLiveCatalog(await response.json());
+      } catch (err) {
+        if (err?.name === 'AbortError' || generation !== liveFetchRef.current) return;
+        setLiveError(t('collection.scryfallLiveFailed'));
+        setLiveCatalog([]);
+      } finally {
+        if (generation === liveFetchRef.current) setLiveLoading(false);
+      }
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [scryfallPredicate, scryfallQuery, t]);
+
+  // In catalog mode the answer only exists on the server: the live result
+  // REPLACES the local rows — the binder behind it would read as "the query
+  // did nothing." While it is resolving, the list is empty and the results
+  // area shows the spinner (see below). A memo of its own, so the downstream
+  // filter memo sees a stable identity unless an input actually changes.
+  const baseCollection = useMemo(
+    () => (scryfallPredicate.mode === 'catalog' ? (liveCatalog || []) : collection),
+    [scryfallPredicate.mode, liveCatalog, collection]
+  );
+
+  // Filter + sort. Catalog-mode rows already came back filtered from the
+  // server, so the local predicate only ever runs in local mode; an invalid
+  // query shows its error and does not filter, so the list stays visible while
+  // the user fixes the syntax.
   const filteredCollection = useMemo(() => {
     const searchLower = searchFilter ? searchFilter.toLowerCase() : '';
-    const result = collection.filter(item => {
+    const result = baseCollection.filter(item => {
       const matchesSearch = item.name.toLowerCase().includes(searchLower) ||
                             (item.printed_name || '').toLowerCase().includes(searchLower) ||
                             (item.set_name || '').toLowerCase().includes(searchLower) ||
                             (item.number || '').includes(searchFilter);
-      // An invalid Scryfall query shows its error and does not filter, so the
-      // list stays visible while the user fixes the syntax.
-      const matchesScryfall = scryfallPredicate ? (scryfallPredicate.ok ? scryfallPredicate.test(item) : true) : true;
+      const matchesScryfall = scryfallPredicate.mode === 'local' ? scryfallPredicate.test(item) : true;
       const matchesRarity = rarityFilter === '' ? true : item.rarity === rarityFilter;
       const matchesCondition = conditionFilter === '' ? true : item.condition === conditionFilter;
       const matchesPrinting = printingFilter === '' ? true : item.printing === printingFilter;
@@ -361,7 +434,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       sortCardsByOrder(result, SORT_CRITERIA[sortBy] || SORT_CRITERIA['added-newest'], undefined, setsList);
     }
     return result;
-  }, [collection, searchFilter, scryfallPredicate, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, minPriceFilter, maxPriceFilter, sortBy, setsList]);
+  }, [baseCollection, searchFilter, scryfallPredicate, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, minPriceFilter, maxPriceFilter, sortBy, setsList]);
 
   // Group duplicate cards if stack option is active
   const processedCollection = useMemo(() => {
@@ -486,9 +559,11 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                   </div>
                   <p style={{
                     fontSize: '0.7rem', margin: 0, lineHeight: 1.4,
-                    color: scryfallPredicate && !scryfallPredicate.ok ? 'var(--accent-red)' : 'var(--text-muted)',
+                    color: scryfallPredicate.mode === 'error' ? 'var(--accent-red)' : 'var(--text-muted)',
                   }}>
-                    {scryfallPredicate && !scryfallPredicate.ok ? scryfallPredicate.error : t('collection.scryfallHint')}
+                    {scryfallPredicate.mode === 'error' ? scryfallPredicate.error
+                      : scryfallPredicate.mode === 'catalog' ? t('collection.scryfallLiveHint')
+                      : t('collection.scryfallHint')}
                   </p>
                 </div>
               ) : (
@@ -666,9 +741,13 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       </div>
 
       {/* Result summary bar */}
-      {!loading && !selectMode && (
+      {!loading && !liveLoading && !selectMode && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', fontSize: '0.78rem', color: 'var(--text-secondary)', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <span><strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {t('collection.cardUnit', { count: displayCards.length })}{loadingMore ? ` · ${t('common.loading')}` : ''}</span>
+          <span>
+            <strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {t('collection.cardUnit', { count: displayCards.length })}{loadingMore ? ` · ${t('common.loading')}` : ''}
+            {scryfallPredicate.mode === 'catalog' && !liveError ? ` · ${t('collection.scryfallLiveNote')}` : ''}
+            {liveError ? ` · ${liveError}` : ''}
+          </span>
           <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
         </div>
       )}
@@ -710,11 +789,15 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         </div>
       )}
 
-      {loading ? (
+      {loading || liveLoading ? (
         <div className="spinner"></div>
       ) : displayCards.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '3rem 1.5rem' }}>
-          <p>{t('collection.noMatches')} {t(activeFilterCount > 0 ? 'collection.noMatchesFiltered' : 'collection.noMatchesEmpty')}</p>
+          {scryfallPredicate.mode === 'catalog' ? (
+            <p>{liveError || t('collection.scryfallLiveEmpty')}</p>
+          ) : (
+            <p>{t('collection.noMatches')} {t(activeFilterCount > 0 ? 'collection.noMatchesFiltered' : 'collection.noMatchesEmpty')}</p>
+          )}
         </div>
       ) : viewMode === 'gallery' ? (
         /* Visual Cards Grid Gallery View */

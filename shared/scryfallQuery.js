@@ -278,21 +278,48 @@ function evalLeaf(leaf, card) {
 // Parse + validate once, return a predicate. The collection screen calls this
 // per keystroke and applies the predicate to every loaded row, so the parse
 // (and its errors) happen exactly once per query string.
-function compileQuery(query) {
+function parse(query) {
   const trimmed = String(query || '').trim();
   if (!trimmed) throw new QuerySyntaxError('Empty query');
-  const ast = parseTokens(tokenize(trimmed));
+  return parseTokens(tokenize(trimmed));
+}
+
+// Every operator name used anywhere in the parsed tree (negation and grouping
+// included), in order of first appearance.
+function collectOperators(ast) {
+  const ops = new Set();
   (function walk(n) {
     if (n.op === 'not') return walk(n.term);
-    if (n.op === 'and' || n.op === 'or') {
-      n.terms.forEach(walk);
-      return;
-    }
-    if (n.kind === 'op' && !KNOWN_OPERATORS.has(n.op)) {
-      throw new QuerySyntaxError(`Unknown operator: "${n.op}:"`);
-    }
+    if (n.op === 'and' || n.op === 'or') { n.terms.forEach(walk); return; }
+    if (n.kind === 'op') ops.add(n.op);
   })(ast);
+  return ops;
+}
+
+function compileQuery(query) {
+  const ast = parse(query);
+  for (const op of collectOperators(ast)) {
+    if (!KNOWN_OPERATORS.has(op)) throw new QuerySyntaxError(`Unknown operator: "${op}:"`);
+  }
   return (card) => evalNode(ast, card);
+}
+
+// How should a caller answer this query?
+//   { mode: 'local' }   — every operator is data-backed, so it can be evaluated
+//                          against stored rows with no API call.
+//   { mode: 'catalog' } — at least one operator (otag:, availability:, t:,
+//                          artist:, ...) only Scryfall's card database can
+//                          answer; the caller must resolve the query live and
+//                          intersect the result with what it holds.
+// A genuine parse error (unbalanced parenthesis, empty group, bare "or", ...)
+// still throws QuerySyntaxError, which is distinct from "needs the catalog" so
+// the UI can tell a typo from a feature it should route to the API.
+function classifyQuery(query) {
+  const ast = parse(query);
+  for (const op of collectOperators(ast)) {
+    if (!KNOWN_OPERATORS.has(op)) return { mode: 'catalog' };
+  }
+  return { mode: 'local' };
 }
 
 // One-shot convenience: parse + evaluate a single card.
@@ -300,4 +327,4 @@ function matches(card, query) {
   return compileQuery(query)(card);
 }
 
-module.exports = { QuerySyntaxError, compileQuery, matches };
+module.exports = { QuerySyntaxError, compileQuery, matches, classifyQuery };
