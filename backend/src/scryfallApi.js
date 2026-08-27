@@ -409,7 +409,10 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
   if (cleanRaw) {
     if (scope === 'collection') return [];
     try {
-      const { cards: hit, total } = await fetchWindow(cleanRaw, lang, offset, limit);
+      const rawWithLanguageScope = languages.resolve(lang).scryfall === 'en'
+        ? cleanRaw
+        : `(${cleanRaw})`;
+      const { cards: hit, total } = await fetchWindow(rawWithLanguageScope, lang, offset, limit);
       if (total != null) meta.total = total;
       const cards = hit.map(c => normalizeCard(c, lang));
       if (cards.length) await cacheCards(cards);

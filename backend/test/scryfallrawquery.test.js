@@ -63,11 +63,11 @@ async function main() {
   assert.strictEqual(r.cards[0].name, 'Card 61', 'page 2 must continue where page 1 left off');
   assert.strictEqual(requested[0].q, 'is:land color:g rarity:rare');
 
-  // 3. A non-English language is applied the same way the field path does it:
-  //    a lang: keyword plus include_multilingual, still verbatim otherwise.
+  // 3. A non-English language scopes the complete raw query, so an `or` in the
+  //    query cannot let a different-language branch through.
   requested = [];
-  r = await scryfallApi.searchCards({ q: 'is:land color:g', lang: 'ja', scope: 'internet' });
-  assert.strictEqual(requested[0].q, 'is:land color:g lang:ja');
+  r = await scryfallApi.searchCards({ q: 'is:land or is:creature', lang: 'ja', scope: 'internet' });
+  assert.strictEqual(requested[0].q, '(is:land or is:creature) lang:ja');
   assert.strictEqual(requested[0].include_multilingual, 'true');
 
   // 4. Results are cached like any other search: the first card of the result
