@@ -1,5 +1,5 @@
 import { startTransition, useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick } from 'lucide-react';
+import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick, Braces } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
 import { CONDITIONS, PRINTING_OPTIONS } from '../utils/cardOptions';
@@ -10,6 +10,7 @@ import { buildCardListText } from '../utils/cardList';
 import { fetchWithRetry } from '../utils/fetchWithRetry';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
+import { compileQuery } from '../../../shared/scryfallQuery.js';
 import CardInspectorModal from './CardInspectorModal';
 import AddToDeckSelect from './AddToDeckSelect';
 import PackPriceSplitter from './PackPriceSplitter';
@@ -41,9 +42,9 @@ const SORT_CRITERIA = {
 };
 
 // Small labelled field wrapper to keep the filter grid uniform.
-function Field({ label, children }) {
+function Field({ label, children, style }) {
   return (
-    <div className="form-group" style={{ marginBottom: 0 }}>
+    <div className="form-group" style={{ marginBottom: 0, ...style }}>
       <label style={labelStyle}>{label}</label>
       {children}
     </div>
@@ -76,6 +77,11 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
 
   // Search & Filter state
   const [searchFilter, setSearchFilter] = useState('');
+  // Scryfall-syntax mode: a raw operator query (is:land color:g r:r …) filters
+  // the loaded rows instead of the plain name/number/set text box. Same idea
+  // as the Add Cards toggle; the choice is remembered per browser.
+  const [scryfallMode, setScryfallMode] = useState(() => localStorage.getItem('collection_scryfall_mode') === '1');
+  const [scryfallQuery, setScryfallQuery] = useState('');
   const [rarityFilter, setRarityFilter] = useState('');
   const [conditionFilter, setConditionFilter] = useState('');
   const [printingFilter, setPrintingFilter] = useState('');
@@ -293,15 +299,29 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     rarityFilter, conditionFilter, printingFilter,
     setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter,
     minPriceFilter, maxPriceFilter
-  ].filter(v => v !== '').length + (tradeOnly ? 1 : 0) + (favoriteOnly ? 1 : 0);
+  ].filter(v => v !== '').length
+    + (scryfallMode && scryfallQuery.trim() ? 1 : 0)
+    + (tradeOnly ? 1 : 0) + (favoriteOnly ? 1 : 0);
 
   const clearAllFilters = () => {
     setSearchFilter('');
+    setScryfallQuery('');
     setRarityFilter(''); setConditionFilter('');
     setPrintingFilter(''); setSetFilter(''); setTypeFilter(''); setSupertypeFilter('');
     setCmcFilter(''); setLanguageFilter(''); setMinPriceFilter('');
     setMaxPriceFilter(''); setTradeOnly(false); setFavoriteOnly(false);
   };
+
+  // The Scryfall-syntax query, compiled once per keystroke. An invalid query
+  // is reported inline rather than silently matching nothing — or everything.
+  const scryfallPredicate = useMemo(() => {
+    if (!scryfallMode || !scryfallQuery.trim()) return null;
+    try {
+      return { ok: true, test: compileQuery(scryfallQuery) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }, [scryfallMode, scryfallQuery]);
 
   // Filter + sort
   const filteredCollection = useMemo(() => {
@@ -311,6 +331,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                             (item.printed_name || '').toLowerCase().includes(searchLower) ||
                             (item.set_name || '').toLowerCase().includes(searchLower) ||
                             (item.number || '').includes(searchFilter);
+      // An invalid Scryfall query shows its error and does not filter, so the
+      // list stays visible while the user fixes the syntax.
+      const matchesScryfall = scryfallPredicate ? (scryfallPredicate.ok ? scryfallPredicate.test(item) : true) : true;
       const matchesRarity = rarityFilter === '' ? true : item.rarity === rarityFilter;
       const matchesCondition = conditionFilter === '' ? true : item.condition === conditionFilter;
       const matchesPrinting = printingFilter === '' ? true : item.printing === printingFilter;
@@ -325,7 +348,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       const matchesMinPrice = minPriceFilter === '' ? true : price >= parseFloat(minPriceFilter);
       const matchesMaxPrice = maxPriceFilter === '' ? true : price <= parseFloat(maxPriceFilter);
 
-      return matchesSearch && matchesRarity && matchesCondition &&
+      return matchesSearch && matchesScryfall && matchesRarity && matchesCondition &&
              matchesPrinting && matchesSet && matchesType && matchesSupertype &&
              matchesCmc && matchesLanguage && matchesFavorite && matchesMinPrice && matchesMaxPrice;
     });
@@ -338,7 +361,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       sortCardsByOrder(result, SORT_CRITERIA[sortBy] || SORT_CRITERIA['added-newest'], undefined, setsList);
     }
     return result;
-  }, [collection, searchFilter, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, minPriceFilter, maxPriceFilter, sortBy, setsList]);
+  }, [collection, searchFilter, scryfallPredicate, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, minPriceFilter, maxPriceFilter, sortBy, setsList]);
 
   // Group duplicate cards if stack option is active
   const processedCollection = useMemo(() => {
@@ -443,19 +466,58 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       <div className="glass-panel" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
         {/* Always-visible top bar: search + sort + filters toggle */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2.5fr) minmax(150px, 1fr) auto', gap: '0.75rem', alignItems: 'flex-end' }}>
-          <Field label={t('collection.searchLabel')}>
-            <div style={{ position: 'relative' }}>
-              <input
-                type="text"
-                className="input-control"
-                placeholder={t('collection.searchPlaceholder')}
-                value={searchFilter}
-                onChange={(e) => setSearchFilter(e.target.value)}
-                style={{ width: '100%', paddingLeft: '2.5rem' }}
-              />
-              <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-            </div>
-          </Field>
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-end', minWidth: 0 }}>
+            <Field label={t('collection.searchLabel')} style={{ flex: 1 }}>
+              {scryfallMode ? (
+                // Scryfall-syntax mode: a raw operator query replaces the plain
+                // text box. Monospace on purpose — the query is a string with
+                // operators in it, not a card name.
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      className="input-control"
+                      placeholder={t('collection.scryfallPlaceholder')}
+                      value={scryfallQuery}
+                      onChange={(e) => setScryfallQuery(e.target.value)}
+                      style={{ width: '100%', paddingLeft: '2.5rem', fontFamily: 'var(--font-mono, monospace)' }}
+                    />
+                    <Braces size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  </div>
+                  <p style={{
+                    fontSize: '0.7rem', margin: 0, lineHeight: 1.4,
+                    color: scryfallPredicate && !scryfallPredicate.ok ? 'var(--accent-red)' : 'var(--text-muted)',
+                  }}>
+                    {scryfallPredicate && !scryfallPredicate.ok ? scryfallPredicate.error : t('collection.scryfallHint')}
+                  </p>
+                </div>
+              ) : (
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    className="input-control"
+                    placeholder={t('collection.searchPlaceholder')}
+                    value={searchFilter}
+                    onChange={(e) => setSearchFilter(e.target.value)}
+                    style={{ width: '100%', paddingLeft: '2.5rem' }}
+                  />
+                  <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                </div>
+              )}
+            </Field>
+            <button
+              className={`btn ${scryfallMode ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => {
+                const next = !scryfallMode;
+                setScryfallMode(next);
+                localStorage.setItem('collection_scryfall_mode', next ? '1' : '0');
+              }}
+              title={t('collection.scryfallToggle')}
+              style={{ padding: '0.4rem 0.55rem', height: '40px', display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap', fontSize: '0.7rem' }}
+            >
+              <Braces size={14} /> {t('collection.scryfallToggle')}
+            </button>
+          </div>
 
           <Field label={t('collection.sortBy')}>
             <select className="select-control" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
