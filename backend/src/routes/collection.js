@@ -49,13 +49,17 @@ async function attachOwnedQty(cards, userId) {
 
 router.get('/search', searchLimiter, async (req, res) => {
   const { name, number, set, scope = 'database', lang, prints } = req.query;
+  // `q` is a raw Scryfall-syntax query (e.g. "is:land color:g rarity:rare").
+  // When present it replaces the name/number/set fields entirely; the backend
+  // passes it through to Scryfall verbatim.
+  const q = typeof req.query.q === 'string' ? req.query.q : '';
   // 1-based page over `limit`-sized pages. 250 is a sane cap on how much one
   // Scryfall search will page through per request.
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(250, Math.max(1, parseInt(req.query.limit, 10) || 60));
   try {
     const { cards, total } = await scryfallApi.searchCards({
-      name, number, set, scope, userId: req.user.id, lang,
+      name, number, set, q, scope, userId: req.user.id, lang,
       allPrints: prints === '1', page, limit,
     });
     await attachOwnedQty(cards, req.user.id);
@@ -72,6 +76,9 @@ router.get('/search', searchLimiter, async (req, res) => {
     }
     if (error.message === 'RATE_LIMIT_EXCEEDED') {
       return res.status(429).json({ error: 'Rate limit exceeded' });
+    }
+    if (error.message === 'INVALID_QUERY') {
+      return res.status(400).json({ error: 'INVALID_QUERY' });
     }
     if (error.message === 'UPSTREAM_UNAVAILABLE') {
       return res.status(503).json({ error: 'Card API is having trouble. Try again in a moment.' });

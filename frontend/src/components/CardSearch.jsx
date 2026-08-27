@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Plus, X, ShieldAlert, Check, MousePointerClick, Zap, Undo2, Maximize2 } from 'lucide-react';
+import { Search, Plus, X, ShieldAlert, Check, MousePointerClick, Zap, Undo2, Maximize2, Braces } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { priceText } from '../utils/formatPrice';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
@@ -25,6 +25,11 @@ function CardSearch({ onAddSuccess, showToast }) {
   // Which language's printings to search. Magic comes from Scryfall in every
   // language.
   const [searchLang, setSearchLang] = useState('en');
+  // Scryfall-syntax mode: one raw query box (operators, set:, color:…)
+  // replaces the name/number/set fields. Remembered per browser, like the
+  // page size, since it is a personal search habit.
+  const [scryfallMode, setScryfallMode] = useState(() => localStorage.getItem('search_scryfall_mode') === '1');
+  const [scryfallQuery, setScryfallQuery] = useState('');
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -111,9 +116,15 @@ function CardSearch({ onAddSuccess, showToast }) {
     try {
       const params = new URLSearchParams();
       const finalQuery = query ? query : '';
-      if (finalQuery) params.append('name', finalQuery);
-      if (numberQuery) params.append('number', numberQuery);
-      if (setCodeQuery) params.append('set', setCodeQuery);
+      if (scryfallMode) {
+        // Raw query mode: the single box IS the search; name/number/set stay
+        // out of it so nothing can muddy the operator string.
+        if (scryfallQuery.trim()) params.append('q', scryfallQuery.trim());
+      } else {
+        if (finalQuery) params.append('name', finalQuery);
+        if (numberQuery) params.append('number', numberQuery);
+        if (setCodeQuery) params.append('set', setCodeQuery);
+      }
       params.append('scope', 'internet');
       params.append('lang', searchLang);
       params.append('page', pageNum);
@@ -138,14 +149,20 @@ function CardSearch({ onAddSuccess, showToast }) {
         if (!append && data.length === 1 && !selectMode) openQuickAdd(data[0]);
       } else {
         const errData = await response.json().catch(() => ({}));
+        let errKey = null;
         if (response.status === 403 || errData.error === 'Invalid API Key') {
-          setSearchError('invalid-key');
+          errKey = 'invalid-key';
         } else if (response.status === 429 || errData.error === 'Rate limit exceeded') {
-          setSearchError('rate-limit');
+          errKey = 'rate-limit';
+        } else if (response.status === 400 && errData.error === 'INVALID_QUERY') {
+          errKey = 'invalid-query';
         } else if (response.status === 503) {
-          setSearchError('upstream');
+          errKey = 'upstream';
         }
-        showToast(errData.error || t('search.errRequest'));
+        if (errKey) setSearchError(errKey);
+        // The banner already explains an invalid query; a toast on top of it
+        // is just noise.
+        if (errKey !== 'invalid-query') showToast(errData.error || t('search.errRequest'));
       }
     } catch (err) {
       console.error(err);
@@ -158,7 +175,7 @@ function CardSearch({ onAddSuccess, showToast }) {
 
   const handleSearch = (e) => {
     if (e) e.preventDefault();
-    if (!query && !numberQuery && !setCodeQuery) return;
+    if (scryfallMode ? !scryfallQuery.trim() : (!query && !numberQuery && !setCodeQuery)) return;
     runSearch(1);
   };
 
@@ -464,24 +481,48 @@ function CardSearch({ onAddSuccess, showToast }) {
         </div>
         <form onSubmit={handleSearch} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.75rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.cardName')}</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type="text"
-                  className="input-control"
-                  placeholder={t('search.namePlaceholderMtg')}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  style={{ width: '100%', paddingLeft: '2.5rem' }}
-                />
-                <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            {scryfallMode ? (
+              // Scryfall-syntax mode: one raw query box replaces the
+              // name/number/set trio. The box is monospace on purpose — the
+              // query is a string with operators in it, not a card name.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.scryfallQuery')}</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    className="input-control"
+                    placeholder={t('search.scryfallPlaceholder')}
+                    value={scryfallQuery}
+                    onChange={(e) => setScryfallQuery(e.target.value)}
+                    style={{ width: '100%', paddingLeft: '2.5rem', fontFamily: 'var(--font-mono, monospace)' }}
+                  />
+                  <Braces size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                </div>
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>{t('search.scryfallHint')}</p>
               </div>
-            </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.cardName')}</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    className="input-control"
+                    placeholder={t('search.namePlaceholderMtg')}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    style={{ width: '100%', paddingLeft: '2.5rem' }}
+                  />
+                  <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* auto-fit rather than a fixed 2 columns: language made this row three
-              fields wide, and they have to stay usable on a phone. */}
+              fields wide, and they have to stay usable on a phone. In
+              Scryfall-syntax mode only the language field remains (a language
+              picker still makes sense — a Japanese card queried by English
+              operator syntax is a normal request). */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
               {/* The language of the cards being searched for, not the app's. */}
@@ -503,6 +544,7 @@ function CardSearch({ onAddSuccess, showToast }) {
                 {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
               </select>
             </div>
+            {scryfallMode ? null : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.cardNumber')}</label>
               <input
@@ -513,6 +555,8 @@ function CardSearch({ onAddSuccess, showToast }) {
                 onChange={(e) => setNumberQuery(e.target.value)}
               />
             </div>
+            )}
+            {scryfallMode ? null : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('search.sets')}</label>
               <input
@@ -529,6 +573,7 @@ function CardSearch({ onAddSuccess, showToast }) {
                 {knownSets.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
               </datalist>
             </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
@@ -549,6 +594,27 @@ function CardSearch({ onAddSuccess, showToast }) {
             >
               <Zap size={18} />
               {t(rapidMode ? 'search.rapidOn' : 'search.rapid')}
+            </button>
+            {/* Scryfall-syntax mode: the query box above becomes a raw
+                Scryfall query. The preference is remembered per browser. */}
+            <button
+              type="button"
+              className={`btn ${scryfallMode ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => {
+                const next = !scryfallMode;
+                setScryfallMode(next);
+                localStorage.setItem('search_scryfall_mode', next ? '1' : '0');
+                if (next) {
+                  // A half-typed name is not a query; start the box clean.
+                  setScryfallQuery('');
+                  setSearchError(null);
+                }
+              }}
+              title={t('search.scryfallHint')}
+              style={{ flex: '0 1 auto' }}
+            >
+              <Braces size={18} />
+              {t('search.scryfallToggle')}
             </button>
           </div>
         </form>

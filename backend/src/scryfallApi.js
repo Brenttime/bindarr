@@ -382,21 +382,54 @@ async function fetchWindow(q, lang, offset, limit, order) {
 // exist upstream in all (null when the answer came from cache, which has no
 // such count). Wrapping keeps the many early returns in the body unchanged.
 async function searchCards({
-  name = '', number = '', set = '', scope = 'database', userId = null,
+  name = '', number = '', set = '', q = '', scope = 'database', userId = null,
   lang = null, allPrints = false, page = 1, limit = 60,
 } = {}) {
   const meta = { total: null };
-  const cards = await runSearch(meta, name, number, set, scope, userId, lang, allPrints, page, limit);
+  const cards = await runSearch(meta, name, number, set, q, scope, userId, lang, allPrints, page, limit);
   return { cards, total: meta.total };
 }
 
 // Search MTG cards: local card_cache first, then Scryfall.
 // `page` is 1-based over `limit`-sized pages; the caller keeps asking for the
 // next page while a full page comes back.
-async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', scope = 'database', userId = null, lang = null, allPrints = false, page = 1, limit = 60) {
+async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', rawQuery = '', scope = 'database', userId = null, lang = null, allPrints = false, page = 1, limit = 60) {
   const offset = (page - 1) * limit;
   const cleanName = (nameQuery || '').trim();
   const cleanNumber = (numberQuery || '').trim();
+  const cleanRaw = String(rawQuery || '').trim();
+
+  // Scryfall-syntax searches ("is:land color:g rarity:rare") are
+  // authoritative: they replace the name/number/set fields entirely. The local
+  // cache cannot interpret Scryfall operators, so these skip it and go straight
+  // to the API; the results are cached on the way home like any other search.
+  // Collection scope answers "what do I own" with plain field filters, so a raw
+  // query has no meaning there and yields nothing rather than a LIKE on the
+  // whole operator string.
+  if (cleanRaw) {
+    if (scope === 'collection') return [];
+    try {
+      const rawWithLanguageScope = languages.resolve(lang).scryfall === 'en'
+        ? cleanRaw
+        : `(${cleanRaw})`;
+      const { cards: hit, total } = await fetchWindow(rawWithLanguageScope, lang, offset, limit);
+      if (total != null) meta.total = total;
+      const cards = hit.map(c => normalizeCard(c, lang));
+      if (cards.length) await cacheCards(cards);
+      return cards;
+    } catch (err) {
+      // 404 = the query matched nothing — that is an answer, not a failure.
+      // 422 = a page past the end of the results — also an answer.
+      if (err.response && (err.response.status === 404 || err.response.status === 422)) return [];
+      // 400 = Scryfall could not parse the query itself ("All of your terms
+      // were ignored"). That is fixable by the user, so name it instead of
+      // reporting the API as down.
+      if (err.response && err.response.status === 400) throw new Error('INVALID_QUERY');
+      console.error('Scryfall raw query failed:', err.message);
+      if (err.response && err.response.status === 429) throw new Error('RATE_LIMIT_EXCEEDED');
+      throw new Error('UPSTREAM_UNAVAILABLE');
+    }
+  }
   // Set field may list several sets ("ltr, ltc") — match any of them. Scryfall
   // uses `(set:ltr or set:ltc)`; a single set stays the plain `set:ltr` form.
   const setList = parseSetList(setQuery);
