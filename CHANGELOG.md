@@ -7,6 +7,16 @@ release also carries fuller notes on its
 ## [Unreleased]
 
 ### Added
+- **Scryfall-syntax search.** The card search page now has a **Scryfall syntax**
+  toggle (the braces button next to Rapid add) that swaps the card-name /
+  number / set fields for a single query box. What you type goes to Scryfall
+  **verbatim** — operators (`is:land`, `color:g`, `set:…`, `rarity:…`,
+  `cmc`), quoted names, `or`/`-` and everything else Scryfall accepts. The
+  language picker still applies (it appends `lang:xx` + the multilingual flag),
+  results page the same way, and a new `q` query parameter carries the raw
+  query to `GET /api/search`. An unparseable query surfaces a dedicated
+  "Invalid Search Query" message instead of a generic error. The preference is
+  remembered per browser. (Field-based search is unchanged.)
 - **Card lists.** A new **Lists** tab for ManaBox-style wishlists, buylists and
   missing-card lists — cards you track without owning. Each list is its own
   named, colored set of cards with a *wanted* quantity (no deck
