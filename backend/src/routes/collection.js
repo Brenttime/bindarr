@@ -58,6 +58,34 @@ router.get('/search', searchLimiter, async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(250, Math.max(1, parseInt(req.query.limit, 10) || 60));
   try {
+    // A raw query against the collection scope that uses an operator the
+    // stored rows cannot answer (otag:, availability:, artist:, ...) is
+    // resolved LIVE against Scryfall and intersected with what this user
+    // owns — that is the only way a tag can be answered at all. Queries made
+    // of data-backed operators only (is:land color:g …) stay out of the API:
+    // the client evaluates those against its loaded rows, and the field-filter
+    // path below keeps searchCards' pinned no-API contract for collection scope.
+    if (scope === 'collection' && q.trim()) {
+      const { classifyQuery, QuerySyntaxError } = require('../../../shared/scryfallQuery.js');
+      let mode;
+      try {
+        mode = classifyQuery(q).mode;
+      } catch (e) {
+        // A genuine syntax error is a fixable query, not a down API.
+        if (e instanceof QuerySyntaxError) {
+          return res.status(400).json({ error: 'INVALID_QUERY' });
+        }
+        throw e;
+      }
+      if (mode === 'catalog') {
+        const { cards, total } = await scryfallApi.resolveCollectionQuery({
+          q, userId: req.user.id, lang,
+        });
+        res.set('X-Total-Count', String(total));
+        res.set('Access-Control-Expose-Headers', 'X-Total-Count');
+        return res.json(cards);
+      }
+    }
     const { cards, total } = await scryfallApi.searchCards({
       name, number, set, q, scope, userId: req.user.id, lang,
       allPrints: prints === '1', page, limit,

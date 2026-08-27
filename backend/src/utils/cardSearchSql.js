@@ -108,4 +108,60 @@ function localCacheQuery({ language, name, number, setList = [], limit, offset }
   return { sql, params };
 }
 
-module.exports = { collectionQuery, localCacheQuery, nameClause, numberClause };
+// The user's owned rows whose game card is in `names`. The caller already
+// decided WHICH cards a (catalog-only) Scryfall query matches — this is just
+// the "of those, what do I own" half. Names are the canonical English names,
+// which is the app's card identity (see cardIdentity.sqlCardKey), so the
+// compare is the same LOWER(TRIM(name)) join every other ownership query uses.
+//
+// The projection and ORDER BY mirror the /api/collection endpoint exactly, so
+// the returned rows drop into the collection screen's tiles unchanged (entry_id
+// drives bulk actions; quantity/condition/printing/language are per-entry).
+// One row per owned printing, same as the collection list.
+function ownedByNames(userId, names) {
+  const clean = [...new Set(names.map(n => String(n || '').trim().toLowerCase()).filter(Boolean))];
+  if (!clean.length) return { sql: null, params: [] };
+  const placeholders = clean.map(() => '?').join(', ');
+  const sql = `
+    SELECT
+      c.id AS entry_id,
+      c.card_id,
+      c.quantity,
+      c.condition,
+      c.printing,
+      c.language,
+      c.purchase_price,
+      c.added_at,
+      c.is_trade,
+      c.favorite,
+      c.notes,
+      cc.name,
+      cc.printed_name,
+      cc.supertype,
+      cc.subtypes,
+      cc.types,
+      cc.cmc,
+      cc.color_identity,
+      cc.rarity,
+      cc.set_id,
+      cc.set_name,
+      cc.number,
+      cc.image_url,
+      cc.price_trend,
+      cc.price_normal,
+      cc.price_holofoil,
+      cc.price_currency,
+      cc.price_source,
+      cc.tcgplayer_url,
+      cc.cardmarket_url,
+      cc.tcgplayer_product_id
+    FROM collection c
+    JOIN card_cache cc ON c.card_id = cc.id
+    WHERE c.user_id = ? AND c.quantity > 0
+      AND ${sqlCardKey('cc')} IN (${placeholders})
+    ORDER BY c.added_at DESC, c.id DESC
+  `;
+  return { sql, params: [userId, ...clean] };
+}
+
+module.exports = { collectionQuery, localCacheQuery, ownedByNames, nameClause, numberClause };

@@ -1,6 +1,6 @@
 const axios = require('axios');
 const db = require('./db');
-const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept } = require('./utils/priceHelpers');
+const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept, resolveCardPrice } = require('./utils/priceHelpers');
 const { parseSetList } = require('./utils/setQuery');
 const cardSearchSql = require('./utils/cardSearchSql');
 const languages = require('./utils/languages');
@@ -754,5 +754,79 @@ async function getCardById(cardId) {
   return null;
 }
 
+// Resolve a CATALOG-ONLY Scryfall query ("otag:sneak", "availability:modern",
+// any operator the stored rows cannot answer) and intersect the result with
+// the user's collection. Returns the user's OWNED rows for the matching game
+// cards — same projection as the /api/collection endpoint, so they render in
+// the collection screen's tiles unchanged.
+//
+// Why a separate function instead of searchCards: searchCards pages the
+// UPSTREAM result, but "what do I own of these" needs the whole match list to
+// intersect, then returns LOCAL rows. The query still reaches Scryfall verbatim
+// through the same rate-limited queue and language scoping as every other raw
+// search; only the answer's shape differs.
+//
+// `limit` caps how far upstream paging may walk (6000 ≈ 35 Scryfall pages —
+// covers every tag short of the broadest functional ones) so one request
+// cannot turn into an unbounded crawl.
+async function resolveCollectionQuery({ q = '', userId = null, lang = null, limit = 6000 } = {}) {
+  const cleanRaw = String(q || '').trim();
+  if (!cleanRaw || !userId) return { cards: [], total: 0 };
+  const rawWithLanguageScope = languages.resolve(lang).scryfall === 'en'
+    ? cleanRaw
+    : `(${cleanRaw})`;
+  let fetched;
+  try {
+    ({ cards: fetched } = await fetchWindow(rawWithLanguageScope, lang, 0, limit));
+  } catch (err) {
+    // Same answer-vs-failure split as the raw-search path: 404/422 are valid
+    // "nothing matched" answers, 400 is a fixable query, 429 is throttling.
+    if (err.response && (err.response.status === 404 || err.response.status === 422)) {
+      return { cards: [], total: 0 };
+    }
+    if (err.response && err.response.status === 400) throw new Error('INVALID_QUERY');
+    if (err.response && err.response.status === 429) throw new Error('RATE_LIMIT_EXCEEDED');
+    console.error('Scryfall collection query failed:', err.message);
+    throw new Error('UPSTREAM_UNAVAILABLE');
+  }
+  if (!fetched.length) return { cards: [], total: 0 };
+
+  // Which game cards did the query match? Scryfall's top-level `name` is the
+  // full "A // B" form for BOTH split cards and DFCs, but the cache stores
+  // splits under that full name and DFCs under the FRONT face only (that is
+  // what normalizeCard writes). So a match counts if the owned row's name is
+  // the full string OR any face of it.
+  const names = new Set();
+  for (const raw of fetched) {
+    const full = String(raw.name || '').trim().toLowerCase();
+    if (!full) continue;
+    names.add(full);
+    if (full.includes(' // ')) {
+      full.split(' // ').forEach(part => {
+        const p = part.trim();
+        if (p) names.add(p);
+      });
+    }
+  }
+
+  // Cache the resolved cards on the way home, exactly like every other raw
+  // search does — the next price sweep or card lookup finds them locally.
+  try {
+    const normalized = fetched.map(c => normalizeCard(c, lang));
+    await cacheCards(normalized);
+  } catch (e) {
+    console.error('Scryfall collection query caching failed:', e.message);
+  }
+
+  const { sql, params } = cardSearchSql.ownedByNames(userId, [...names]);
+  const owned = sql ? await db.all(sql, params) : [];
+  return {
+    // The /api/collection endpoint's row shape, including the resolved
+    // price_trend, so the tiles price identically to a normal collection load.
+    cards: owned.map(row => ({ ...parseCardRow(row), price_trend: resolveCardPrice(row) })),
+    total: owned.length,
+  };
+}
+
 // `client` and `fetchWindow` are exported for tests that stub the axios adapter.
-module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow };
+module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow, resolveCollectionQuery };
