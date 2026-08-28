@@ -754,6 +754,56 @@ async function getCardById(cardId) {
   return null;
 }
 
+// A CATALOG query can match thousands of game cards, which means walking
+// dozens of rate-limited Scryfall pages. That walk is the expensive part and
+// it is a property of the QUERY, not of the user — every owner of the same
+// collection gets the same match list. Cache the resolved set of card names
+// per (scoped query) for a short TTL so:
+//   - re-running the same tag (re-render, remount, typo-retry) is instant;
+//   - two users on the same install resolve the tag only ONCE;
+//   - a failed upstream call is NOT cached, so the next try re-fetches.
+// The TTL is deliberately short: the intersect runs against the LIVE local
+// collection every time, so a user who adds cards sees them without waiting
+// for expiry — only the expensive upstream match list is reused.
+const COLLECTION_QUERY_TTL_MS = 10 * 60 * 1000;
+const collectionQueryCache = new Map();
+const inflightCollectionNames = new Map();
+async function fetchCollectionNames(scoped, lang, limit) {
+  const key = `${scoped}\u0000${lang || ''}`;
+  const now = Date.now();
+  const hit = collectionQueryCache.get(key);
+  if (hit && hit.expires > now) return { names: hit.names, fetched: null };
+  if (inflightCollectionNames.has(key)) return inflightCollectionNames.get(key);
+  const p = (async () => {
+    const { cards: fetched } = await fetchWindow(scoped, lang, 0, limit);
+    const names = new Set();
+    for (const raw of fetched) {
+      const full = String(raw.name || '').trim().toLowerCase();
+      if (!full) continue;
+      names.add(full);
+      // A game card matches if owned under the FULL "A // B" string OR under a
+      // face (the cache stores DFCs under the front face only).
+      if (full.includes(' // ')) {
+        full.split(' // ').forEach(part => {
+          const p2 = part.trim();
+          if (p2) names.add(p2);
+        });
+      }
+    }
+    collectionQueryCache.set(key, { names, expires: Date.now() + COLLECTION_QUERY_TTL_MS });
+    // Expired entries are dead weight (a Set of names per query) — reap them
+    // opportunistically as new ones land so the map never outgrows recent use.
+    for (const [k, v] of collectionQueryCache) if (v.expires <= Date.now()) collectionQueryCache.delete(k);
+    // `fetched` is only returned on a MISS so the caller backfills the card
+    // cache exactly once per query (a cache hit means the cards are already
+    // stored from the first resolve).
+    return { names, fetched };
+  })();
+  inflightCollectionNames.set(key, p);
+  p.catch(() => {}).finally(() => inflightCollectionNames.delete(key));
+  return p;
+}
+
 // Resolve a CATALOG-ONLY Scryfall query ("otag:sneak", "availability:modern",
 // any operator the stored rows cannot answer) and intersect the result with
 // the user's collection. Returns the user's OWNED rows for the matching game
@@ -775,12 +825,15 @@ async function resolveCollectionQuery({ q = '', userId = null, lang = null, limi
   const rawWithLanguageScope = languages.resolve(lang).scryfall === 'en'
     ? cleanRaw
     : `(${cleanRaw})`;
-  let fetched;
+  let names;
+  let fetched = null;
   try {
-    ({ cards: fetched } = await fetchWindow(rawWithLanguageScope, lang, 0, limit));
+    ({ names, fetched } = await fetchCollectionNames(rawWithLanguageScope, lang, limit));
   } catch (err) {
     // Same answer-vs-failure split as the raw-search path: 404/422 are valid
     // "nothing matched" answers, 400 is a fixable query, 429 is throttling.
+    // (A failure is not cached — see fetchCollectionNames — so a retry
+    // re-fetches.)
     if (err.response && (err.response.status === 404 || err.response.status === 422)) {
       return { cards: [], total: 0 };
     }
@@ -789,33 +842,18 @@ async function resolveCollectionQuery({ q = '', userId = null, lang = null, limi
     console.error('Scryfall collection query failed:', err.message);
     throw new Error('UPSTREAM_UNAVAILABLE');
   }
-  if (!fetched.length) return { cards: [], total: 0 };
+  if (!names.size) return { cards: [], total: 0 };
 
-  // Which game cards did the query match? Scryfall's top-level `name` is the
-  // full "A // B" form for BOTH split cards and DFCs, but the cache stores
-  // splits under that full name and DFCs under the FRONT face only (that is
-  // what normalizeCard writes). So a match counts if the owned row's name is
-  // the full string OR any face of it.
-  const names = new Set();
-  for (const raw of fetched) {
-    const full = String(raw.name || '').trim().toLowerCase();
-    if (!full) continue;
-    names.add(full);
-    if (full.includes(' // ')) {
-      full.split(' // ').forEach(part => {
-        const p = part.trim();
-        if (p) names.add(p);
-      });
-    }
-  }
-
-  // Cache the resolved cards on the way home, exactly like every other raw
-  // search does — the next price sweep or card lookup finds them locally.
-  try {
-    const normalized = fetched.map(c => normalizeCard(c, lang));
-    await cacheCards(normalized);
-  } catch (e) {
-    console.error('Scryfall collection query caching failed:', e.message);
+  // Backfill the local card cache EXACTLY once per query, and WITHOUT blocking
+  // the answer — a broad tag resolves thousands of cards, and awaiting those
+  // writes here would add seconds to every request that only needs the
+  // intersect. The writes finish in the background; a cache hit (fetched ===
+  // null) means the cards are already stored, so nothing to do.
+  if (fetched && fetched.length) {
+    Promise.resolve()
+      .then(() => fetched.map(c => normalizeCard(c, lang)))
+      .then(cards => cards.length ? cacheCards(cards) : null)
+      .catch(e => console.error('Scryfall collection query caching failed:', e.message));
   }
 
   const { sql, params } = cardSearchSql.ownedByNames(userId, [...names]);

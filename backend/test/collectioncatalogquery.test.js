@@ -120,6 +120,34 @@ async function main() {
   await assert.rejects(() => scryfallApi.resolveCollectionQuery({ q: 'bogus:1', userId: userId7 }),
     (err) => err.message === 'INVALID_QUERY');
 
+  // The upstream match list is cached per query: a broad tag can be dozens of
+  // rate-limited pages, so re-running it must NOT re-walk them. Restore the
+  // real adapter for these calls.
+  scryfallApi.client.defaults.adapter = async (config) => {
+    const url = new URL(config.url, 'https://api.scryfall.com');
+    const q = url.searchParams.get('q');
+    requested.push({ q });
+    if (q === QUERY || q === `(${QUERY})`) {
+      return { status: 200, statusText: 'OK', headers: {}, config,
+        data: { data: SCRYFALL_MATCHES, has_more: false, total_cards: SCRYFALL_MATCHES.length } };
+    }
+    throw httpError(404);
+  };
+  requested = [];
+  await scryfallApi.resolveCollectionQuery({ q: QUERY, userId: userId7 });
+  await scryfallApi.resolveCollectionQuery({ q: QUERY, userId: userId7 });
+  assert.strictEqual(requested.length, 0, 'cached query makes no upstream round trips');
+
+  // But the INTERSECT runs live against the collection every time: a new
+  // printing of a matched card, added after the first resolve, must show up.
+  await cacheRow('cca1b', 'Lightning Bolt', 'unh', 'UNH', '145', 'Common', 0.4);
+  await own(userId7, 'cca1b', 3);
+  requested = [];
+  const after = await scryfallApi.resolveCollectionQuery({ q: QUERY, userId: userId7 });
+  assert.strictEqual(requested.length, 0, 'still no upstream round trip after the addition');
+  assert.ok(after.cards.some(c => c.name === 'Lightning Bolt' && c.set_name === 'UNH' && c.quantity === 3),
+    'live intersect sees a card added after the match list was cached');
+
   console.log('collectioncatalogquery.test.js: all assertions passed');
 }
 
