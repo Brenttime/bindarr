@@ -357,21 +357,56 @@ async function fetchFromScryfall(q, lang, retries = 3) {
 // window out of them so search can page by its own limit instead of being capped
 // at one Scryfall page. Returns the raw cards plus whether more exist after them.
 const SCRY_PAGE_SIZE = 175;
+
+// One upstream /cards/search page, cached for a short TTL. A raw query (any
+// operator, any language) walks several of these per request at 2/sec; caching
+// each (query, page) pair means a REPEAT of the same search — the far more
+// common case, since the UI re-runs a query on every render and "load more"
+// re-requests page 1 — costs zero rate-limit budget and returns instantly.
+// This generalizes the collection-scope match-list cache (fetchCollectionNames)
+// to the whole raw path, internet scope included.
+//
+// Keyed on the language-scoped query (langSearch already folds in lang:xx and
+// include_multilingual) so an English and a Japanese run of the same operators
+// never share a page. Bounded so a session of varied queries cannot grow it
+// without bound; failures are NOT cached, so a retry re-fetches.
+const RAW_PAGE_TTL_MS = 5 * 60 * 1000;
+const rawPageCache = new Map(); // key -> { expires, value }
+async function scryPage(q, lang, page, order) {
+  const scoped = langSearch(q, lang);
+  let url = `/cards/search?q=${encodeURIComponent(scoped.q)}&page=${page}${scoped.params}`;
+  if (order) url += `&order=${order}`;
+  const key = `${scoped.q}\u0000${lang || ''}\u0000${page}\u0000${order || ''}`;
+  const now = Date.now();
+  const hit = rawPageCache.get(key);
+  if (hit && hit.expires > now) return hit.value;
+  const resp = await scryGetRetried(url);
+  const value = {
+    data: (resp.data && resp.data.data) || [],
+    total: resp.data && resp.data.total_cards != null ? resp.data.total_cards : null,
+    hasMore: !!(resp.data && resp.data.has_more),
+  };
+  rawPageCache.set(key, { expires: Date.now() + RAW_PAGE_TTL_MS, value });
+  // Reap expired pages opportunistically as new ones land, so the map tracks
+  // recent use rather than every query ever typed this process.
+  if (rawPageCache.size > 400) {
+    for (const [k, v] of rawPageCache) if (v.expires <= Date.now()) rawPageCache.delete(k);
+  }
+  return value;
+}
+
 async function fetchWindow(q, lang, offset, limit, order) {
   let page = Math.floor(offset / SCRY_PAGE_SIZE) + 1;
   let skip = offset % SCRY_PAGE_SIZE;
   const out = [];
   let hasMore = false;
   let total = null;
-  const scoped = langSearch(q, lang);
   while (out.length < limit) {
-    let url = `/cards/search?q=${encodeURIComponent(scoped.q)}&page=${page}${scoped.params}`;
-    if (order) url += `&order=${order}`;
-    const resp = await scryGetRetried(url);
-    if (resp.data && resp.data.total_cards != null) total = resp.data.total_cards;
-    out.push(...(((resp.data && resp.data.data) || []).slice(skip)));
+    const p = await scryPage(q, lang, page, order);
+    if (p.total != null) total = p.total;
+    out.push(...(p.data.slice(skip)));
     skip = 0;
-    hasMore = !!(resp.data && resp.data.has_more);
+    hasMore = p.hasMore;
     if (!hasMore) break;
     page++;
   }
@@ -387,7 +422,7 @@ async function searchCards({
 } = {}) {
   const meta = { total: null };
   const cards = await runSearch(meta, name, number, set, q, scope, userId, lang, allPrints, page, limit);
-  return { cards, total: meta.total };
+  return { cards, total: meta.total, source: meta.source || null };
 }
 
 // Search MTG cards: local card_cache first, then Scryfall.
@@ -400,20 +435,80 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
   const cleanRaw = String(rawQuery || '').trim();
 
   // Scryfall-syntax searches ("is:land color:g rarity:rare") are
-  // authoritative: they replace the name/number/set fields entirely. The local
-  // cache cannot interpret Scryfall operators, so these skip it and go straight
-  // to the API; the results are cached on the way home like any other search.
+  // authoritative: they replace the name/number/set fields entirely.
+  //
+  // They are answered from the local card_cache when they can be — the moment
+  // every operator is data-backed (is:, color:, set:, rarity:, ...), the rows
+  // this install already holds ARE the answer, and a database query is instant
+  // and never touches the 2/sec rate limit. That is the common case: someone
+  // typing "set:lea color:g rarity:rare" has a fully cached set they are adding
+  // from. Only queries that reach past the cache (otag:, availability:, artist:,
+  // t:, ... — catalog operators) fall through to the live API.
+  //
   // Collection scope answers "what do I own" with plain field filters, so a raw
   // query has no meaning there and yields nothing rather than a LIKE on the
   // whole operator string.
   if (cleanRaw) {
     if (scope === 'collection') return [];
+    const { analyze, QuerySyntaxError } = require('../../shared/scryfallQuery.js');
+    let parsed;
+    try {
+      parsed = analyze(cleanRaw);
+    } catch (err) {
+      // A genuine syntax error (unbalanced paren, empty group, bare "or") is a
+      // fixable query, not a down API. Name it exactly like the upstream 400.
+      if (err instanceof QuerySyntaxError) throw new Error('INVALID_QUERY');
+      throw err;
+    }
+    // LOCAL mode + a language the cache actually holds -> answer from the rows.
+    // An empty/uncached language falls through to Scryfall (the cache has
+    // nothing to answer with there, and the API is the source of truth).
+    //
+    // This mirrors the field-search contract: the local card_cache is the source
+    // of truth for operators the rows can answer (is:, color:, set:, rarity:...).
+    // It is instant and never touches the 2/sec rate limit. Only CATALOG
+    // operators (otag:, availability:, artist:, t:, ...) — which need data the
+    // rows do not carry — go live, and those are backed by the raw-page cache
+    // above so a repeat is instant. The result is `X-Source: cache|scryfall`.
+    if (parsed.mode === 'local') {
+      const langName = languages.toName(lang);
+      const cachedLang = await db.get(
+        `SELECT COUNT(*) AS n FROM card_cache WHERE language = ?`, [langName]
+      );
+      if (cachedLang && cachedLang.n > 0) {
+        const rawSql = require('./utils/rawQuerySql');
+        const { sql, params, countSql, countParams } = rawSql.compileRawQuery({
+          ast: parsed.ast, language: langName, limit, offset,
+        });
+        const rows = await db.all(sql, params);
+        const count = await db.get(countSql, countParams);
+        meta.total = count ? count.n : null;
+        meta.source = 'cache';
+        // Warm the prices in the background, exactly like the field path does
+        // for its local-cache hits — the answer itself is returned instantly.
+        const stale = rows.filter(r => (Date.now() - new Date(r.last_updated).getTime()) > CACHE_AGE_LIMIT_MS);
+        if (stale.length > 0) {
+          (async () => {
+            try {
+              const { cards: fresh } = await bulkFetchByIdentifier(stale);
+              if (fresh.length) await cacheCards(fresh);
+            } catch (e) {
+              console.error('MTG raw-query background refresh failed:', e.message);
+            }
+          })();
+        }
+        return rows.map(parseCardRow);
+      }
+    }
+    // CATALOG mode, or local mode with no cached language: go straight to the
+    // API. The results are cached on the way home like any other search.
     try {
       const rawWithLanguageScope = languages.resolve(lang).scryfall === 'en'
         ? cleanRaw
         : `(${cleanRaw})`;
       const { cards: hit, total } = await fetchWindow(rawWithLanguageScope, lang, offset, limit);
       if (total != null) meta.total = total;
+      meta.source = 'scryfall';
       const cards = hit.map(c => normalizeCard(c, lang));
       if (cards.length) await cacheCards(cards);
       return cards;
@@ -499,6 +594,7 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
           }
         })();
       }
+      meta.source = 'cache';
       return localResults.map(parseCardRow);
     }
   }
@@ -571,7 +667,10 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
     // Merge: exact matches first, then broad alternatives deduped.
     const seen = new Set(exact.map(c => c.id));
     const merged = [...exact, ...broad.filter(c => !seen.has(c.id))];
-    if (merged.length === 0) return localResults.map(parseCardRow);
+    if (merged.length === 0) {
+      meta.source = 'cache';
+      return localResults.map(parseCardRow);
+    }
 
     const cards = merged.slice(0, limit);
     // Sort alternatives (after exact) by collector number. A set browse has no
@@ -589,6 +688,7 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
     });
 
     await cacheCards(cards);
+    meta.source = 'scryfall';
     return cards;
   } catch (err) {
     console.error('Scryfall search failed:', err.message);
@@ -599,6 +699,7 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
     const cached = scope === 'internet' ? await queryLocal() : localResults;
     if (cached.length > 0) {
       console.warn(`Scryfall unavailable — serving ${cached.length} cached match(es).`);
+      meta.source = 'cache';
       return cached.map(parseCardRow);
     }
     const status = err.response && err.response.status;

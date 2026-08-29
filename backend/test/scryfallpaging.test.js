@@ -35,23 +35,28 @@ async function main() {
   assert.strictEqual(ids(r)[59], 'card-60');
   assert.strictEqual(r.hasMore, true);
 
-  // 2. A window inside page 1 must skip, not refetch from the top.
+  // 2. A window inside page 1 must skip, not refetch from the top. With the
+  // page cache in place "not refetch" is even stronger: page 1 is already
+  // warm from the first call, so a repeated "load more" costs zero upstream.
   requested = [];
   r = await scryfallApi.fetchWindow('set:tst', null, 60, 60);
   assert.deepStrictEqual(ids(r), Array.from({ length: 60 }, (_, i) => `card-${61 + i}`));
-  assert.deepStrictEqual(requested, [1], 'offset 60 lives in Scryfall page 1');
+  assert.deepStrictEqual(requested, [], 'offset 60 lives in cached Scryfall page 1 — no refetch');
   assert.strictEqual(r.hasMore, true);
 
-  // 3. A window straddling a Scryfall page boundary stitches both pages.
+  // 3. A window straddling a Scryfall page boundary stitches both pages: the
+  // warm page 1 is served from cache, only cold page 2 is pulled.
   requested = [];
   r = await scryfallApi.fetchWindow('set:tst', null, 150, 60);
   assert.deepStrictEqual(ids(r), Array.from({ length: 60 }, (_, i) => `card-${151 + i}`));
-  assert.deepStrictEqual(requested, [1, 2], 'must pull the next page to fill the window');
+  assert.deepStrictEqual(requested, [2], 'must pull page 2 to fill the window; page 1 stays cached');
   assert.strictEqual(r.hasMore, true);
 
   // 4. The last window returns the remainder and reports the end.
+  requested = [];
   r = await scryfallApi.fetchWindow('set:tst', null, 340, 60);
   assert.deepStrictEqual(ids(r), Array.from({ length: 60 }, (_, i) => `card-${341 + i}`));
+  assert.deepStrictEqual(requested, [3], 'page 2 is warm from step 3; only page 3 is cold');
   assert.strictEqual(r.hasMore, false, 'no cards left after 400');
 
   // 5. Past the end is empty, not an error.

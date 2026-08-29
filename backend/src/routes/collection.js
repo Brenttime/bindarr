@@ -86,7 +86,7 @@ router.get('/search', searchLimiter, async (req, res) => {
         return res.json(cards);
       }
     }
-    const { cards, total } = await scryfallApi.searchCards({
+    const { cards, total, source } = await scryfallApi.searchCards({
       name, number, set, q, scope, userId: req.user.id, lang,
       allPrints: prints === '1', page, limit,
     });
@@ -95,6 +95,13 @@ router.get('/search', searchLimiter, async (req, res) => {
     if (total != null) {
       res.set('X-Total-Count', String(total));
       res.set('Access-Control-Expose-Headers', 'X-Total-Count');
+    }
+    // Where the answer came from: 'cache' (answered from the local card_cache —
+    // instant, no rate limit) or 'scryfall' (a live call). The UI uses this to
+    // show "local" vs "live" so a user knows when a search is instant.
+    if (source) {
+      res.set('X-Source', source);
+      res.set('Access-Control-Expose-Headers', 'X-Total-Count, X-Source');
     }
     res.json(cards);
   } catch (error) {

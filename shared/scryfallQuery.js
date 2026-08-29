@@ -54,6 +54,28 @@ const RARITY_ALIASES = { c: 'common', u: 'uncommon', r: 'rare', m: 'mythic', s: 
 // stored in color_identity.
 const COLOR_NAMES = { w: 'white', u: 'blue', b: 'black', r: 'red', g: 'green' };
 
+// Pure target resolution for the value-based operators. Exposed so the
+// SQL-side evaluator (utils/rawQuerySql.js) resolves an operator value to the
+// SAME stored form the JS evaluator does — one definition, two runtimes,
+// no drift.
+function resolveColorTarget(value) {
+  const v = String(value).trim().toLowerCase();
+  return v === 'c' ? 'colorless' : (COLOR_NAMES[v] || v);
+}
+
+function resolveRarityTarget(value) {
+  const v = String(value).trim().toLowerCase();
+  return RARITY_ALIASES[v] || v;
+}
+
+// The display name a stored `language` column carries, or null when the value
+// names no known language (unknown values match nothing — like the JS
+// evaluator, which returns false rather than throwing).
+function resolveLanguageTarget(value) {
+  const v = String(value).trim().toLowerCase();
+  return LANG_INDEX.get(v) || null;
+}
+
 const KNOWN_OPERATORS = new Set([
   'name', 'is', 'type', 'color', 'c', 'rarity', 'r', 'set', 'number', 'lang', 'language', 'm', 'cmc',
 ]);
@@ -233,14 +255,14 @@ function evalLeaf(leaf, card) {
     case 'color':
     case 'c': {
       const ci = (card.color_identity || []).map(x => String(x).toLowerCase());
-      const target = v === 'c' ? 'colorless' : (COLOR_NAMES[v] || v);
+      const target = resolveColorTarget(leaf.value);
       if (target === 'colorless') return ci.length === 0;
       return ci.includes(target);
     }
     case 'rarity':
     case 'r': {
       const stored = String(card.rarity || '').toLowerCase().replace(/_/g, ' ');
-      const target = RARITY_ALIASES[v] || v;
+      const target = resolveRarityTarget(leaf.value);
       if (target.length === 1) return stored.startsWith(target);
       // Word-level: a stored two-word rarity matches each of its words,
       // mirroring Scryfall's own matching for rarity:.
@@ -260,7 +282,7 @@ function evalLeaf(leaf, card) {
     }
     case 'lang':
     case 'language': {
-      const target = LANG_INDEX.get(v);
+      const target = resolveLanguageTarget(leaf.value);
       if (!target) return false;
       return String(card.language || '').toLowerCase() === target.toLowerCase();
     }
@@ -304,22 +326,28 @@ function compileQuery(query) {
   return (card) => evalNode(ast, card);
 }
 
-// How should a caller answer this query?
-//   { mode: 'local' }   — every operator is data-backed, so it can be evaluated
-//                          against stored rows with no API call.
-//   { mode: 'catalog' } — at least one operator (otag:, availability:, t:,
-//                          artist:, ...) only Scryfall's card database can
-//                          answer; the caller must resolve the query live and
-//                          intersect the result with what it holds.
+// Parse once and report everything a caller needs to route the query:
+//   mode       'local'  — every operator is data-backed, so a server can answer it
+//                        from stored rows (or the client from loaded rows) with
+//                        no API call.
+//               'catalog' — at least one operator (otag:, availability:, t:,
+//                        artist:, ...) only Scryfall's card database can answer.
+//   ast        the parsed tree, ready for a SQL/JS evaluator to walk.
+//   operators  every operator name used, in order of first appearance.
 // A genuine parse error (unbalanced parenthesis, empty group, bare "or", ...)
 // still throws QuerySyntaxError, which is distinct from "needs the catalog" so
 // the UI can tell a typo from a feature it should route to the API.
-function classifyQuery(query) {
+function analyze(query) {
   const ast = parse(query);
-  for (const op of collectOperators(ast)) {
-    if (!KNOWN_OPERATORS.has(op)) return { mode: 'catalog' };
-  }
-  return { mode: 'local' };
+  const operators = [...collectOperators(ast)];
+  const mode = operators.some(op => !KNOWN_OPERATORS.has(op)) ? 'catalog' : 'local';
+  return { mode, ast, operators };
+}
+
+// How should a caller answer this query? Thin wrapper over analyze() for the
+// callers that only care about the routing decision (mode) and not the AST.
+function classifyQuery(query) {
+  return { mode: analyze(query).mode };
 }
 
 // One-shot convenience: parse + evaluate a single card.
@@ -327,4 +355,13 @@ function matches(card, query) {
   return compileQuery(query)(card);
 }
 
-module.exports = { QuerySyntaxError, compileQuery, matches, classifyQuery };
+module.exports = {
+  QuerySyntaxError,
+  compileQuery,
+  matches,
+  analyze,
+  classifyQuery,
+  resolveColorTarget,
+  resolveRarityTarget,
+  resolveLanguageTarget,
+};
