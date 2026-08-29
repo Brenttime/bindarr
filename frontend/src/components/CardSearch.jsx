@@ -117,7 +117,11 @@ function CardSearch({ onAddSuccess, showToast }) {
   // nothing can muddy the operator string); everything else is a plain name.
   const runSearch = async (pageNum, size = pageSize) => {
     const text = searchText.trim();
-    if (!text) return;
+    // A search is a raw query, a card name, or the number/set fields —
+    // number + set alone is a legitimate fast path (rapid add without the
+    // rapid panel).
+    if (!text && !numberQuery && !setCodeQuery) return;
+    const isSyntax = looksLikeSyntax(text);
     const append = pageNum > 1;
     if (append) setLoadingMore(true); else setLoading(true);
     setSearchError(null);
@@ -133,7 +137,7 @@ function CardSearch({ onAddSuccess, showToast }) {
     }
     try {
       const params = new URLSearchParams();
-      if (looksLikeSyntax(text)) {
+      if (isSyntax) {
         params.append('q', text);
       } else {
         if (text) params.append('name', text);
@@ -192,7 +196,8 @@ function CardSearch({ onAddSuccess, showToast }) {
 
   const handleSearch = (e) => {
     if (e) e.preventDefault();
-    if (!searchText.trim()) return;
+    // runSearch knows what is a valid search (raw query, name, or
+    // number/set fields) — an empty box simply no-ops.
     runSearch(1);
   };
 
@@ -209,7 +214,7 @@ function CardSearch({ onAddSuccess, showToast }) {
   const liveText = searchText.trim();
   const liveLang = searchLang;
   useEffect(() => {
-    if (!searching || !liveText || looksLikeSyntax(liveText) || liveText.length < 2) {
+    if (!liveText || looksLikeSyntax(liveText) || liveText.length < 2) {
       return; // live search is for plain names; syntax fires on Enter
     }
     clearTimeout(debounceRef.current);
@@ -220,12 +225,9 @@ function CardSearch({ onAddSuccess, showToast }) {
       const doLive = async () => {
         try {
           const params = new URLSearchParams();
-          if (looksLikeSyntax(liveText)) params.append('q', liveText);
-          else {
-            params.append('name', liveText);
-            if (numberQuery) params.append('number', numberQuery);
-            if (setCodeQuery) params.append('set', setCodeQuery);
-          }
+          params.append('name', liveText);
+          if (numberQuery) params.append('number', numberQuery);
+          if (setCodeQuery) params.append('set', setCodeQuery);
           params.append('scope', 'internet');
           params.append('lang', liveLang);
           params.append('page', '1');
@@ -238,9 +240,12 @@ function CardSearch({ onAddSuccess, showToast }) {
             if (Number.isFinite(reported)) setTotal(reported);
             const src = res.headers.get('X-Source');
             if (src) setSource(src);
+            // Merge, never clobber: a shorter answer must not shrink a longer
+            // visible list (a typo mid-typing is still typed text).
             setCards(prev => {
+              if (data.length <= prev.length && prev.length > 0) return prev;
               const seen = new Set(prev.map(c => c.id));
-              return data.length ? [...data, ...prev.filter(c => !seen.has(c.id))] : prev;
+              return [...data, ...prev.filter(c => !seen.has(c.id))];
             });
           }
         } catch (err) {
@@ -251,7 +256,7 @@ function CardSearch({ onAddSuccess, showToast }) {
       doLive();
     }, 450);
     return () => clearTimeout(debounceRef.current);
-  }, [liveText, liveLang, numberQuery, setCodeQuery, searching, pageSize]);
+  }, [liveText, liveLang, numberQuery, setCodeQuery, pageSize]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
