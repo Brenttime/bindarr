@@ -347,6 +347,17 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     return { mode: 'local', test: compileQuery(text) };
   }, [searchFilter]);
 
+  // No hint copy under the box (it made the panel jumbled on phones), so a
+  // query that does not parse is named once via toast instead — and only
+  // once per distinct bad string, not on every keystroke of it.
+  const lastErrorToast = useRef('');
+  useEffect(() => {
+    if (scryfallPredicate.mode === 'error' && scryfallPredicate.error !== lastErrorToast.current) {
+      lastErrorToast.current = scryfallPredicate.error;
+      showToast(scryfallPredicate.error);
+    }
+  }, [scryfallPredicate, showToast]);
+
   // The catalog query is the one that actually reaches Scryfall. Debounced,
   // because a half-typed tag is not a query yet — and every half-typed query
   // would otherwise be a real API call. Each new query supersedes in-flight
@@ -553,34 +564,26 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-end', minWidth: 0 }}>
             <Field label={t('collection.searchLabel')} style={{ flex: 1 }}>
               {/* One box, two languages: plain card name/number/set, or
-                  Scryfall syntax — auto-detected, no toggle. Monospace when
-                  it is a query; the icon changes with it. */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    type="text"
-                    className="input-control"
-                    placeholder={t('collection.searchPlaceholder')}
-                    value={searchFilter}
-                    onChange={(e) => setSearchFilter(e.target.value)}
-                    style={{
-                      width: '100%',
-                      paddingLeft: '2.5rem',
-                      fontFamily: looksLikeSyntax(searchFilter.trim()) ? 'var(--font-mono, monospace)' : undefined,
-                    }}
-                  />
-                  {looksLikeSyntax(searchFilter.trim())
-                    ? <Braces size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                    : <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />}
-                </div>
-                <p style={{
-                  fontSize: '0.7rem', margin: 0, lineHeight: 1.4,
-                  color: scryfallPredicate.mode === 'error' ? 'var(--accent-red)' : 'var(--text-muted)',
-                }}>
-                  {scryfallPredicate.mode === 'error' ? scryfallPredicate.error
-                    : scryfallPredicate.mode === 'catalog' ? t('collection.scryfallLiveHint')
-                    : t('collection.scryfallHint')}
-                </p>
+                  Scryfall syntax — auto-detected, no toggle, no hint copy.
+                  The box IS the documentation: monospace + braces icon the
+                  moment it holds a query. (A hint paragraph here wrapped to
+                  ten lines on phones and made the whole panel jumbled.) */}
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  className="input-control"
+                  placeholder={t('collection.searchPlaceholder')}
+                  value={searchFilter}
+                  onChange={(e) => setSearchFilter(e.target.value)}
+                  style={{
+                    width: '100%',
+                    paddingLeft: '2.5rem',
+                    fontFamily: looksLikeSyntax(searchFilter.trim()) ? 'var(--font-mono, monospace)' : undefined,
+                  }}
+                />
+                {looksLikeSyntax(searchFilter.trim())
+                  ? <Braces size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  : <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />}
               </div>
             </Field>
           </div>

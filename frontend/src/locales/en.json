@@ -559,8 +559,6 @@
   "collection.listView": "List Table View",
   "collection.searchLabel": "Search Cards",
   "collection.searchPlaceholder": "Search name, set, card number...",
-  "collection.scryfallHint": "Pro tip: this box also speaks Scryfall syntax — is:land, color:g, rarity:rare, set:lea, m:3. Plain names work as before.",
-  "collection.scryfallLiveHint": "Operators like otag:, availability: or artist: can't be answered locally — they are resolved live on Scryfall, narrowed to the cards you own.",
   "collection.scryfallLiveNote": "live Scryfall query",
   "collection.scryfallLiveEmpty": "No cards in your collection match this query.",
   "collection.scryfallInvalidQuery": "Invalid query — check the syntax.",
