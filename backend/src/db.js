@@ -336,6 +336,23 @@ async function initDb() {
     )
   `);
 
+  // Resolved match lists for CATALOG-ONLY collection queries (otag:,
+  // availability:, ...). The upstream walk is the expensive part and is a
+  // property of the query, not the user — so the resolved set of game-card
+  // names is persisted here, not just in memory, and survives container
+  // restarts. The intersect against the LIVE collection still runs on every
+  // request, so only the (rarely-changing) upstream tag assignments can go
+  // stale, up to the TTL.
+  await run(`
+    CREATE TABLE IF NOT EXISTS collection_query_cache (
+      query TEXT NOT NULL,
+      lang TEXT NOT NULL DEFAULT '',
+      names TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (query, lang)
+    )
+  `);
+
   // --- MIGRATIONS ---
   // When the price sweep last ran. Scryfall updates prices once a day, so a
   // sweep more often than that cannot return anything new — and the boot sweep
