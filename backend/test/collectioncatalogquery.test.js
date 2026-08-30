@@ -2,9 +2,11 @@
 // stored rows cannot answer (otag:, availability:, ...) is resolved LIVE
 // against Scryfall, then intersected with the user's owned cards. Pinned here:
 // the intersect is by canonical English name (front-face for DFCs, full
-// "A // B" for splits), other users' cards never leak in, and the answer shape
-// is the /api/collection row shape. No framework — plain node + assert, same
-// adapter-stub pattern as scryfallrawquery.
+// "A // B" for splits), other users' cards never leak in, the answer shape
+// is the /api/collection row shape, and the walk is by GAME CARD (the
+// upstream query carries unique:cards) with the resolved names persisted to
+// collection_query_cache so a restart does not re-walk. No framework —
+// plain node + assert, same adapter-stub pattern as scryfallrawquery.
 // Run: `node test/collectioncatalogquery.test.js`
 const assert = require('assert');
 const os = require('os');
@@ -38,12 +40,18 @@ const httpError = (status) => {
   err.response = { status };
   return err;
 };
+// The walk carries unique:cards (game-card dedup), and a non-English request
+// appends lang:xx after the scope. Match both shapes the code produces.
+const MATCHES = new Set([
+  `${QUERY} unique:cards`,
+  `(${QUERY}) unique:cards lang:ja`,
+]);
 let requested = [];
 scryfallApi.client.defaults.adapter = async (config) => {
   const url = new URL(config.url, 'https://api.scryfall.com');
   const q = url.searchParams.get('q');
   requested.push({ q });
-  if (q === QUERY || q === `(${QUERY})`) {
+  if (MATCHES.has(q)) {
     return { status: 200, statusText: 'OK', headers: {}, config,
       data: { data: SCRYFALL_MATCHES, has_more: false, total_cards: SCRYFALL_MATCHES.length } };
   }
@@ -84,7 +92,8 @@ async function main() {
   const { cards, total } = await scryfallApi.resolveCollectionQuery({ q: QUERY, userId: userId7 });
 
   assert.strictEqual(requested.length, 1, 'exactly one Scryfall round trip');
-  assert.strictEqual(requested[0].q, QUERY, 'query passed through verbatim (English)');
+  assert.strictEqual(requested[0].q, `${QUERY} unique:cards`,
+    'the walk is by game card, not by printing (verbatim query + unique:cards)');
   assert.strictEqual(total, 4, `expected 4 owned matches, got ${total}`);
   const names = new Set(cards.map(c => c.name));
   assert.ok(names.has('Lightning Bolt'), 'owned plain card matches by full name');
@@ -102,10 +111,13 @@ async function main() {
   assert.strictEqual(bolt.price_trend, 0.5, 'resolved price_trend');
   assert.ok(Array.isArray(bolt.subtypes), 'parseCardRow hydrated the JSON array columns');
 
-  // Language scope: a non-English request wraps the whole query.
+  // Language scope: a non-English request wraps the whole query so an `or`
+  // inside it cannot let a different-language branch through — the unique:cards
+  // dedup rides along, OUTSIDE the language scope.
   requested = [];
   await scryfallApi.resolveCollectionQuery({ q: QUERY, userId: userId7, lang: 'ja' });
-  assert.strictEqual(requested[0].q, `(${QUERY}) lang:ja`, 'non-English scopes the full query');
+  assert.strictEqual(requested[0].q, `(${QUERY}) unique:cards lang:ja`,
+    'non-English scopes the full query; unique:cards rides outside the scope');
 
   // A catalog query that matches nothing upstream is an empty answer, not an error.
   requested = [];
@@ -127,7 +139,7 @@ async function main() {
     const url = new URL(config.url, 'https://api.scryfall.com');
     const q = url.searchParams.get('q');
     requested.push({ q });
-    if (q === QUERY || q === `(${QUERY})`) {
+    if (MATCHES.has(q)) {
       return { status: 200, statusText: 'OK', headers: {}, config,
         data: { data: SCRYFALL_MATCHES, has_more: false, total_cards: SCRYFALL_MATCHES.length } };
     }
@@ -147,6 +159,20 @@ async function main() {
   assert.strictEqual(requested.length, 0, 'still no upstream round trip after the addition');
   assert.ok(after.cards.some(c => c.name === 'Lightning Bolt' && c.set_name === 'UNH' && c.quantity === 3),
     'live intersect sees a card added after the match list was cached');
+
+  // The resolved name set is also persisted to disk (collection_query_cache):
+  // a container restart must be able to serve the walk from the database
+  // instead of re-walking Scryfall. Written per (scoped query, lang), names
+  // lowercased, DFC faces included — exactly what the intersect matches on.
+  const persisted = await db.all(
+    'SELECT names, expires_at FROM collection_query_cache WHERE query = ? AND lang = ?',
+    [QUERY, '']
+  );
+  assert.strictEqual(persisted.length, 1, 'the match list is persisted per scoped query + lang');
+  const storedNames = new Set(JSON.parse(persisted[0].names));
+  assert.ok(storedNames.has('lightning bolt'), 'persisted names include the matched cards');
+  assert.ok(storedNames.has('delver of secrets'), 'DFC front face is persisted (an intersect key)');
+  assert.ok(persisted[0].expires_at > Date.now(), 'persisted entry is not already expired');
 
   console.log('collectioncatalogquery.test.js: all assertions passed');
 }

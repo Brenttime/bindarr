@@ -859,14 +859,24 @@ async function getCardById(cardId) {
 // dozens of rate-limited Scryfall pages. That walk is the expensive part and
 // it is a property of the QUERY, not of the user — every owner of the same
 // collection gets the same match list. Cache the resolved set of card names
-// per (scoped query) for a short TTL so:
+// per (scoped query) so:
 //   - re-running the same tag (re-render, remount, typo-retry) is instant;
 //   - two users on the same install resolve the tag only ONCE;
 //   - a failed upstream call is NOT cached, so the next try re-fetches.
-// The TTL is deliberately short: the intersect runs against the LIVE local
-// collection every time, so a user who adds cards sees them without waiting
-// for expiry — only the expensive upstream match list is reused.
-const COLLECTION_QUERY_TTL_MS = 10 * 60 * 1000;
+//
+// The cache lives in the collection_query_cache table, not just in memory:
+// the in-process Map is the fast path, but it evaporates on every container
+// restart — which turned every restart into a fresh ~20-30s cold walk of the
+// first broad tag someone typed. On disk, a restart serves the walk from the
+// database in milliseconds.
+//
+// The TTL is a day, not minutes, precisely because it is durable: the
+// intersect runs against the LIVE local collection on every request, so a
+// user who adds cards sees them immediately — only the upstream tag
+// assignments (Scryfall's otag: curation, which changes rarely) can go stale,
+// bounded by the TTL. A new set's cards only match an existing tag through a
+// fresh walk after that.
+const COLLECTION_QUERY_TTL_MS = 24 * 60 * 60 * 1000;
 const collectionQueryCache = new Map();
 const inflightCollectionNames = new Map();
 async function fetchCollectionNames(scoped, lang, limit) {
@@ -876,7 +886,28 @@ async function fetchCollectionNames(scoped, lang, limit) {
   if (hit && hit.expires > now) return { names: hit.names, fetched: null };
   if (inflightCollectionNames.has(key)) return inflightCollectionNames.get(key);
   const p = (async () => {
-    const { cards: fetched } = await fetchWindow(scoped, lang, 0, limit);
+    // Disk hit: an earlier run (possibly a previous container) already paid
+    // for the walk. A read failure must never break a search — fall through
+    // to a fresh walk.
+    try {
+      const row = await db.get(
+        'SELECT names, expires_at FROM collection_query_cache WHERE query = ? AND lang = ? AND expires_at > ?',
+        [scoped, lang || '', now]
+      );
+      if (row) {
+        const names = new Set(JSON.parse(row.names));
+        collectionQueryCache.set(key, { names, expires: row.expires_at });
+        return { names, fetched: null };
+      }
+    } catch (e) {
+      console.error('collection_query_cache read failed:', e.message);
+    }
+    // Walk by GAME CARD, not by printing: the answer is a set of names, and
+    // hundreds of printings per card would otherwise inflate the walk ~4x
+    // (otag:ramp is 2,287 cards but 9,231 printings → 13 pages instead of
+    // 53 at the 2 req/s ceiling). unique:cards returns the same names —
+    // English canonical, front face for DFCs — that the intersect matches on.
+    const { cards: fetched } = await fetchWindow(`${scoped} unique:cards`, lang, 0, limit);
     const names = new Set();
     for (const raw of fetched) {
       const full = String(raw.name || '').trim().toLowerCase();
@@ -895,6 +926,18 @@ async function fetchCollectionNames(scoped, lang, limit) {
     // Expired entries are dead weight (a Set of names per query) — reap them
     // opportunistically as new ones land so the map never outgrows recent use.
     for (const [k, v] of collectionQueryCache) if (v.expires <= Date.now()) collectionQueryCache.delete(k);
+    // Durability: persist for the next restart. Best-effort — a write failure
+    // degrades to the pre-persistence in-memory-only behavior, never to a
+    // broken search.
+    try {
+      await db.run(
+        `INSERT INTO collection_query_cache (query, lang, names, expires_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(query, lang) DO UPDATE SET names = excluded.names, expires_at = excluded.expires_at`,
+        [scoped, lang || '', JSON.stringify([...names]), Date.now() + COLLECTION_QUERY_TTL_MS]
+      );
+    } catch (e) {
+      console.error('collection_query_cache write failed:', e.message);
+    }
     // `fetched` is only returned on a MISS so the caller backfills the card
     // cache exactly once per query (a cache hit means the cards are already
     // stored from the first resolve).
