@@ -77,7 +77,23 @@ function resolveLanguageTarget(value) {
 }
 
 const KNOWN_OPERATORS = new Set([
-  'name', 'is', 'type', 'color', 'c', 'rarity', 'r', 'set', 'number', 'lang', 'language', 'm', 'cmc',
+  'name', 'is', 'type', 't', 'color', 'c', 'rarity', 'r', 'set', 'number', 'lang', 'language', 'm', 'cmc',
+]);
+
+// Scryfall operator aliases that mean exactly what the target operator means,
+// verified against the live API (t:creature === type:creature: 18,753 cards
+// both). Aliases are folded into the target at parse time, so every evaluator
+// (JS in the browser, SQL in the backend) sees one canonical operator and the
+// routing decision ("can the cache answer this") is made on the alias too.
+// Without this, `t:creature` would be an unknown operator → CATALOG mode → a
+// ~77-second upstream walk of 18,753 cards at the 2 req/s limit, instead of
+// the ~25ms cache answer `type:creature` already gets.
+//
+// (Note: `subtype:` is a DISTINCT Scryfall operator — it matches a specific
+// subtype, not the whole type line like `type:` — so it is deliberately NOT
+// aliased here. It stays a catalog operator and resolves live.)
+const OPERATOR_ALIASES = new Map([
+  ['t', 'type'],
 ]);
 
 function tokenize(query) {
@@ -199,7 +215,12 @@ function parseTokens(tokens) {
     }
     let leaf;
     if (t.op) {
-      leaf = { kind: 'op', op: t.op, value: t.value };
+      // Fold verified operator aliases (t: -> type:) into the canonical op at
+      // parse time. The AST therefore carries the operator both evaluators
+      // understand, and analyze()/collectOperators() route on the alias too —
+      // so `t:creature` is a local (cache-answerable) query, not a catalog one.
+      const canonical = OPERATOR_ALIASES.get(t.op) || t.op;
+      leaf = { kind: 'op', op: canonical, value: t.value };
     } else {
       // "colorless" is Scryfall's own keyword for cards with no colors —
       // treat the bare word as the operator, so `-colorless` works too.

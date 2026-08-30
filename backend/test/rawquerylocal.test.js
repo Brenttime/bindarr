@@ -93,6 +93,8 @@ async function main() {
     'set:lea m:1',
     'set:lea rarity:m',
     'set:lea type:artifact',
+    'set:lea t:artifact',        // Scryfall's short form for type: — must route local too
+    'set:lea t:land',
     'is:creature or is:land',
     'set:lea -color:g',
     'set:lea name:swamp',
@@ -107,6 +109,18 @@ async function main() {
       `${q}: cache answer must match the JS evaluator`
     );
   }
+
+  // 2b. Alias routing: t: is a verified alias of type:, so it is LOCAL; the
+  // distinct operator subtype: is NOT an alias and must stay CATALOG.
+  const { analyze } = require('../../shared/scryfallQuery.js');
+  assert.strictEqual(analyze('t:creature').mode, 'local', 't: must route local like type:');
+  assert.strictEqual(analyze('type:creature').mode, 'local', 'type: routes local');
+  assert.strictEqual(analyze('subtype:creature').mode, 'catalog', 'subtype: is distinct and stays catalog');
+  assert.deepStrictEqual(
+    jsMatches('t:creature'),
+    jsMatches('type:creature'),
+    't:creature and type:creature must match the same cards'
+  );
 
   // 3. Paging a local query walks the offset with no provider traffic.
   r = await scryfallApi.searchCards({ q: 'set:lea', scope: 'internet', lang: 'en', page: 2, limit: 3 });
