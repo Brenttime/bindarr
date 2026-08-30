@@ -47,16 +47,17 @@ async function attachOwnedQty(cards, userId) {
 
 // 1. Search cards (Scryfall + database cache).
 
-router.get('/search', searchLimiter, async (req, res) => {
-  const { name, number, set, scope = 'database', lang, prints } = req.query;
+router.all('/search', searchLimiter, async (req, res) => {
+  const query = req.method === 'POST' ? { ...req.query, ...req.body } : req.query;
+  const { name, number, set, scope = 'database', lang, prints, image, cropped } = query;
   // `q` is a raw Scryfall-syntax query (e.g. "is:land color:g rarity:rare").
   // When present it replaces the name/number/set fields entirely; the backend
   // passes it through to Scryfall verbatim.
-  const q = typeof req.query.q === 'string' ? req.query.q : '';
+  const q = typeof query.q === 'string' ? query.q : '';
   // 1-based page over `limit`-sized pages. 250 is a sane cap on how much one
   // Scryfall search will page through per request.
-  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const limit = Math.min(250, Math.max(1, parseInt(req.query.limit, 10) || 60));
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(250, Math.max(1, parseInt(query.limit, 10) || 60));
   try {
     // A raw query against the collection scope that uses an operator the
     // stored rows cannot answer (otag:, availability:, artist:, ...) is
@@ -86,10 +87,25 @@ router.get('/search', searchLimiter, async (req, res) => {
         return res.json(cards);
       }
     }
-    const { cards, total, source } = await scryfallApi.searchCards({
+    let { cards, total, source } = await scryfallApi.searchCards({
       name, number, set, q, scope, userId: req.user.id, lang,
       allPrints: prints === '1', page, limit,
     });
+    // A scanner-assisted search keeps Scryfall's candidate recall, then orders
+    // those printings by similarity to the captured card. This is MTG-only even
+    // though the upstream implementation was game-generic.
+    if (image && Array.isArray(cards) && cards.length > 0) {
+      const base64 = typeof image === 'string' ? image.replace(/^data:image\/\w+;base64,/, '') : '';
+      if (base64) {
+        const langName = languages.toName(lang);
+        if (cvScan.isBuilt('mtg', langName)) {
+          cards = await cvScan.scoreCards(Buffer.from(base64, 'base64'), 'mtg', cards, {
+            lang: langName,
+            cropped: !!cropped,
+          });
+        }
+      }
+    }
     await attachOwnedQty(cards, req.user.id);
     // Header, not the body: every existing caller expects a bare array here.
     if (total != null) {

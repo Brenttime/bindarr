@@ -16,6 +16,7 @@ import CardInspectorModal from './CardInspectorModal';
 import AddToDeckSelect from './AddToDeckSelect';
 import PackPriceSplitter from './PackPriceSplitter';
 import CardImage from './CardImage';
+import MultiSelectDropdown from './MultiSelectDropdown';
 
 const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' };
 const INITIAL_RENDER_COUNT = 96;
@@ -84,14 +85,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // detection cannot misfire on a name; a string that LOOKS like syntax but
   // does not parse is shown inline as an error and does not filter.
   const [searchFilter, setSearchFilter] = useState('');
-  const [rarityFilter, setRarityFilter] = useState('');
-  const [conditionFilter, setConditionFilter] = useState('');
-  const [printingFilter, setPrintingFilter] = useState('');
-  const [setFilter, setSetFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
-  const [supertypeFilter, setSupertypeFilter] = useState('');
-  const [cmcFilter, setCmcFilter] = useState('');
-  const [languageFilter, setLanguageFilter] = useState('');
+  const [rarityFilter, setRarityFilter] = useState([]);
+  const [conditionFilter, setConditionFilter] = useState([]);
+  const [printingFilter, setPrintingFilter] = useState([]);
+  const [setFilter, setSetFilter] = useState([]);
+  const [typeFilter, setTypeFilter] = useState([]);
+  const [supertypeFilter, setSupertypeFilter] = useState([]);
+  const [cmcFilter, setCmcFilter] = useState([]);
+  const [languageFilter, setLanguageFilter] = useState([]);
   const [minPriceFilter, setMinPriceFilter] = useState('');
   const [maxPriceFilter, setMaxPriceFilter] = useState('');
   const [sortBy, setSortBy] = useState('added-newest');
@@ -308,20 +309,23 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     [collection]
   );
 
-  const activeFilterCount = [
-    rarityFilter, conditionFilter, printingFilter,
-    setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter,
-    minPriceFilter, maxPriceFilter
-  ].filter(v => v !== '').length
+  const activeFilterCount =
+    [rarityFilter, conditionFilter, printingFilter,
+    setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter]
+      .filter(v => v.length > 0).length
     + (searchFilter.trim() ? 1 : 0)
-    + (tradeOnly ? 1 : 0) + (favoriteOnly ? 1 : 0);
+    + (minPriceFilter !== '' ? 1 : 0)
+    + (maxPriceFilter !== '' ? 1 : 0)
+    + (tradeOnly ? 1 : 0)
+    + (favoriteOnly ? 1 : 0);
 
   const clearAllFilters = () => {
     setSearchFilter('');
-    setRarityFilter(''); setConditionFilter('');
-    setPrintingFilter(''); setSetFilter(''); setTypeFilter(''); setSupertypeFilter('');
-    setCmcFilter(''); setLanguageFilter(''); setMinPriceFilter('');
-    setMaxPriceFilter(''); setTradeOnly(false); setFavoriteOnly(false);
+    setRarityFilter([]); setConditionFilter([]);
+    setPrintingFilter([]); setSetFilter([]); setTypeFilter([]); setSupertypeFilter([]);
+    setCmcFilter([]); setLanguageFilter([]);
+    setMinPriceFilter(''); setMaxPriceFilter('');
+    setTradeOnly(false); setFavoriteOnly(false);
   };
 
   // The unified box, classified and compiled once per keystroke. Plain names
@@ -435,14 +439,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         (item.set_name || '').toLowerCase().includes(searchLower) ||
         (item.number || '').includes(searchFilter);
       const matchesScryfall = scryfallPredicate.mode === 'local' ? scryfallPredicate.test(item) : true;
-      const matchesRarity = rarityFilter === '' ? true : item.rarity === rarityFilter;
-      const matchesCondition = conditionFilter === '' ? true : item.condition === conditionFilter;
-      const matchesPrinting = printingFilter === '' ? true : item.printing === printingFilter;
-      const matchesSet = setFilter === '' ? true : item.set_name === setFilter;
-      const matchesType = typeFilter === '' ? true : (item.types || []).includes(typeFilter);
-      const matchesSupertype = supertypeFilter === '' ? true : item.supertype === supertypeFilter;
-      const matchesCmc = cmcFilter === '' ? true : String(item.cmc) === cmcFilter;
-      const matchesLanguage = languageFilter === '' ? true : item.language === languageFilter;
+      const matchesRarity = rarityFilter.length === 0 ? true : rarityFilter.includes(item.rarity);
+      const matchesCondition = conditionFilter.length === 0 ? true : conditionFilter.includes(item.condition);
+      const matchesPrinting = printingFilter.length === 0 ? true : printingFilter.includes(item.printing);
+      const matchesSet = setFilter.length === 0 ? true : setFilter.includes(item.set_name);
+      const matchesType = typeFilter.length === 0 ? true : typeFilter.some(t => (item.types || []).includes(t));
+      const matchesSupertype = supertypeFilter.length === 0 ? true : supertypeFilter.includes(item.supertype);
+      const matchesCmc = cmcFilter.length === 0 ? true : cmcFilter.includes(String(item.cmc));
+      const matchesLanguage = languageFilter.length === 0 ? true : languageFilter.includes(item.language);
       const matchesFavorite = favoriteOnly ? item.favorite === 1 : true;
 
       const price = item.price_trend || 0;
@@ -620,64 +624,87 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>
             {/* Selector filters grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.75rem' }}>
+
               <Field label={t('collection.fSet')}>
-                <select className="select-control" value={setFilter} onChange={(e) => setSetFilter(e.target.value)}>
-                  <option value="">{t('collection.allSets')}</option>
-                  {uniqueSets.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <MultiSelectDropdown
+                  label={t('collection.fSet')}
+                  allLabel={t('collection.allSets')}
+                  value={setFilter}
+                  onChange={setSetFilter}
+                  options={uniqueSets.map(s => ({ value: s, label: s }))}
+                />
               </Field>
 
               <Field label={t('collection.fSupertype')}>
-                <select className="select-control" value={supertypeFilter} onChange={(e) => setSupertypeFilter(e.target.value)}>
-                  <option value="">{t('collection.allSupertypes')}</option>
-                  {uniqueSupertypes.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <MultiSelectDropdown
+                  label={t('collection.fSupertype')}
+                  allLabel={t('collection.allSupertypes')}
+                  value={supertypeFilter}
+                  onChange={setSupertypeFilter}
+                  options={uniqueSupertypes.map(s => ({ value: s, label: s }))}
+                />
               </Field>
 
               <Field label={t('collection.fType')}>
-                <select className="select-control" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-                  <option value="">{t('collection.allTypes')}</option>
-                  {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+                <MultiSelectDropdown
+                  label={t('collection.fType')}
+                  allLabel={t('collection.allTypes')}
+                  value={typeFilter}
+                  onChange={setTypeFilter}
+                  options={uniqueTypes.map(t => ({value: t, label: t}))}
+                />
               </Field>
 
               <Field label={t('collection.fRarity')}>
-                <select className="select-control" value={rarityFilter} onChange={(e) => setRarityFilter(e.target.value)}>
-                  <option value="">{t('collection.allRarities')}</option>
-                  {uniqueRarities.map(rarity => (
-                    <option key={rarity} value={rarity}>{rarity}</option>
-                  ))}
-                </select>
+                <MultiSelectDropdown
+                  label={t('collection.fRarity')}
+                  allLabel={t('collection.allRarities')}
+                  value={rarityFilter}
+                  onChange={setRarityFilter}
+                  options={uniqueRarities.map(r => ({value: r, label: r}))}
+                />
               </Field>
 
               <Field label={t('card.condition')}>
-                <select className="select-control" value={conditionFilter} onChange={(e) => setConditionFilter(e.target.value)}>
-                  <option value="">{t('collection.allConditions')}</option>
-                  {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <MultiSelectDropdown
+                  label={t('card.condition')}
+                  allLabel={t('collection.allConditions')}
+                  value={conditionFilter}
+                  onChange={setConditionFilter}
+                  options={CONDITIONS.map(c => ({value: c, label: c}))}
+                />
               </Field>
 
               <Field label={t('card.printing')}>
-                <select className="select-control" value={printingFilter} onChange={(e) => setPrintingFilter(e.target.value)}>
-                  <option value="">{t('collection.allPrintings')}</option>
-                  {PRINTING_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                </select>
+                <MultiSelectDropdown
+                  label={t('card.printing')}
+                  allLabel={t('collection.allPrintings')}
+                  value={printingFilter}
+                  onChange={setPrintingFilter}
+                  options={PRINTING_OPTIONS}
+                />
               </Field>
 
               {uniqueCmcs.length > 0 && (
                 <Field label={t('collection.fManaValue')}>
-                  <select className="select-control" value={cmcFilter} onChange={(e) => setCmcFilter(e.target.value)}>
-                    <option value="">{t('collection.allManaValues')}</option>
-                    {uniqueCmcs.map(c => <option key={c} value={String(c)}>{c}</option>)}
-                  </select>
+                  <MultiSelectDropdown
+                    label={t('collection.fManaValue')}
+                    allLabel={t('collection.allManaValues')}
+                    value={cmcFilter}
+                    onChange={setCmcFilter}
+                    options={uniqueCmcs.map(c => ({ value: String(c), label: String(c) }))}
+                  />
                 </Field>
               )}
 
               <Field label={t('card.language')}>
-                <select className="select-control" value={languageFilter} onChange={(e) => setLanguageFilter(e.target.value)}>
-                  <option value="">{t('collection.allLanguages')}</option>
-                  {uniqueLanguages.map(l => <option key={l} value={l}>{l}</option>)}
-                </select>
+                <MultiSelectDropdown
+                  label={t('card.language')}
+                  allLabel={t('collection.allLanguages')}
+                  value={languageFilter}
+                  onChange={setLanguageFilter}
+                  options={uniqueLanguages.map(l => ({ value: l, label: l }))}
+                />
               </Field>
 
               <Field label={t('collection.fMinPrice')}>

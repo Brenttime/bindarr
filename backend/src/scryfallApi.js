@@ -431,7 +431,7 @@ async function searchCards({
 async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', rawQuery = '', scope = 'database', userId = null, lang = null, allPrints = false, page = 1, limit = 60) {
   const offset = (page - 1) * limit;
   const cleanName = (nameQuery || '').trim();
-  const cleanNumber = (numberQuery || '').trim();
+  const cleanNumber = (numberQuery || '').trim().replace(/^#/, '').split('/')[0].trim();
   const cleanRaw = String(rawQuery || '').trim();
 
   // Scryfall-syntax searches ("is:land color:g rarity:rare") are

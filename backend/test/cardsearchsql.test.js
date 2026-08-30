@@ -34,6 +34,14 @@ function testNumberMatching() {
   const numeric = numberClause('number', '25');
   assert.ok(numeric.clause.includes('CAST'), 'CAST still applies where it means something');
 
+  // Fractions (for example 5/64) and hash prefixes (#5) extract the collector number.
+  const frac = numberClause('number', '5/64');
+  assert.ok(frac.clause.includes('CAST'), 'CAST applies to the numeric part of a fraction');
+  assert.deepStrictEqual(frac.params, ['5/64', '5', '5']);
+
+  const hashNum = numberClause('number', '#5');
+  assert.deepStrictEqual(hashNum.params, ['#5', '5', '5']);
+
   // Column name is honoured, so the aliased collection query and the bare local
   // one cannot diverge.
   assert.ok(numberClause('cc.number', '7').clause.includes('cc.number'));
