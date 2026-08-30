@@ -560,6 +560,7 @@
   "collection.searchLabel": "Search Cards",
   "collection.searchPlaceholder": "Search name, set, card number...",
   "collection.scryfallLiveNote": "live Scryfall query",
+  "collection.scryfallLiveUpdating": "updating live results…",
   "collection.scryfallLiveEmpty": "No cards in your collection match this query.",
   "collection.scryfallInvalidQuery": "Invalid query — check the syntax.",
   "collection.scryfallRateLimited": "Search API rate limit hit — try again in a moment.",
