@@ -1,15 +1,12 @@
-import { useState } from 'react';
-import { Camera, Search } from 'lucide-react';
+import { Camera } from 'lucide-react';
 import CameraScanner from './CameraScanner';
-import CardSearch from './CardSearch';
 import { useT } from '../utils/i18n';
 
-function AddCards({ onAddSuccess, showToast, setActiveTab, initialMode = 'scan' }) {
+function AddCards({ onAddSuccess, showToast, setActiveTab }) {
   const { t } = useT();
-  const [mode, setMode] = useState(initialMode);
 
-  // Demo build has no backend: the camera scanner and live card search can't
-  // work, so show a notice instead of a broken UI.
+  // Demo build has no backend: the camera scanner can't work, so show a
+  // notice instead of a broken UI.
   if (import.meta.env.VITE_DEMO) {
     return (
       <div className="glass-panel" style={{ maxWidth: '520px', margin: '2rem auto', padding: '2rem', textAlign: 'center' }}>
@@ -23,30 +20,8 @@ function AddCards({ onAddSuccess, showToast, setActiveTab, initialMode = 'scan' 
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', gap: '1rem', position: 'relative' }}>
-        <div className="sub-nav-tabs" style={{ width: '100%', maxWidth: '400px', margin: 0 }}>
-          <button 
-            className={`sub-nav-tab ${mode === 'scan' ? 'active' : ''}`}
-            onClick={() => setMode('scan')}
-          >
-            <Camera size={18} />
-            <span>{t('addCards.scan')}</span>
-          </button>
-          <button
-            className={`sub-nav-tab ${mode === 'search' ? 'active' : ''}`}
-            onClick={() => setMode('search')}
-          >
-            <Search size={18} />
-            <span>{t('addCards.search')}</span>
-          </button>
-        </div>
-      </div>
-
-      <div>
-        {mode === 'scan' && <CameraScanner onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
-        {mode === 'search' && <CardSearch onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
-      </div>
+    <div>
+      <CameraScanner onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />
     </div>
   );
 }
