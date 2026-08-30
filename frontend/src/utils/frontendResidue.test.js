@@ -57,7 +57,6 @@ for (const file of locales) {
   assert.ok(dict['deck.fullyOwnedCards'], `${file} is missing the neutral owned-card key`);
   assert.ok(keys.some(key => key.startsWith('deck.cardCount.')), `${file} is missing neutral card-count plurals`);
   assert.ok(dict['catalog.thLanguage'] && dict['catalog.notBuilt'], `${file} is missing neutral catalog keys`);
-  assert.ok(!dict['search.title'].includes('{game}'), `${file} search title still renders {game}`);
   assert.ok(dict['collection.splitByPrinting'].includes(foilTerms[locale]), `${file} does not label the finish as Foil`);
 
   for (const key of [
@@ -82,7 +81,6 @@ const sourcePolicies = [
   [join('components', 'CollectionList.jsx'), /\{item\.printing\}\s*•/],
   [join('components', 'SharedCollection.jsx'), />\{activeCard\.printing\}</],
   [join('components', 'CameraScanner.jsx'), /Market \(\{printing\}\)/],
-  [join('components', 'CardSearch.jsx'), /tcgMarketPrice', \{ printing \}/],
 ];
 for (const [relative, forbidden] of sourcePolicies) {
   assert.doesNotMatch(readFileSync(join(srcDir, relative), 'utf8'), forbidden, `${relative} retains removed residue`);

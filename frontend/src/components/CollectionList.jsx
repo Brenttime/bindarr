@@ -11,6 +11,7 @@ import { fetchWithRetry } from '../utils/fetchWithRetry';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
 import { compileQuery, classifyQuery } from '../../../shared/scryfallQuery.js';
+import { looksLikeSyntax } from '../utils/scryfallSyntax';
 import CardInspectorModal from './CardInspectorModal';
 import AddToDeckSelect from './AddToDeckSelect';
 import PackPriceSplitter from './PackPriceSplitter';
@@ -76,12 +77,13 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const [showFilters, setShowFilters] = useState(false);
 
   // Search & Filter state
+  // One unified box: a plain card name/number/set OR Scryfall syntax
+  // (is:land color:g, otag:..., quoted phrases, -negation, (groups)). Syntax
+  // is auto-detected from the text — no mode toggle. Real card names never
+  // contain an operator token, a quote, a paren, or a leading "-", so the
+  // detection cannot misfire on a name; a string that LOOKS like syntax but
+  // does not parse is shown inline as an error and does not filter.
   const [searchFilter, setSearchFilter] = useState('');
-  // Scryfall-syntax mode: a raw operator query (is:land color:g r:r …) filters
-  // the loaded rows instead of the plain name/number/set text box. Same idea
-  // as the Add Cards toggle; the choice is remembered per browser.
-  const [scryfallMode, setScryfallMode] = useState(() => localStorage.getItem('collection_scryfall_mode') === '1');
-  const [scryfallQuery, setScryfallQuery] = useState('');
   const [rarityFilter, setRarityFilter] = useState('');
   const [conditionFilter, setConditionFilter] = useState('');
   const [printingFilter, setPrintingFilter] = useState('');
@@ -311,37 +313,39 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter,
     minPriceFilter, maxPriceFilter
   ].filter(v => v !== '').length
-    + (scryfallMode && scryfallQuery.trim() ? 1 : 0)
+    + (searchFilter.trim() ? 1 : 0)
     + (tradeOnly ? 1 : 0) + (favoriteOnly ? 1 : 0);
 
   const clearAllFilters = () => {
     setSearchFilter('');
-    setScryfallQuery('');
     setRarityFilter(''); setConditionFilter('');
     setPrintingFilter(''); setSetFilter(''); setTypeFilter(''); setSupertypeFilter('');
     setCmcFilter(''); setLanguageFilter(''); setMinPriceFilter('');
     setMaxPriceFilter(''); setTradeOnly(false); setFavoriteOnly(false);
   };
 
-  // The Scryfall-syntax query, classified and compiled once per keystroke.
+  // The unified box, classified and compiled once per keystroke. Plain names
+  // stay 'off' (the plain name/number/set match below does the work); a
+  // string that looks like syntax but does not parse is 'error' — shown
+  // inline and does not filter, so the list stays visible while the user
+  // fixes it.
   //   local   — every operator is answerable from the stored rows; the
   //             compiled predicate filters the loaded rows in the browser.
   //   catalog — some operator (otag:, availability:, artist:, ...) only
   //             Scryfall's database can answer; the server resolves it live
   //             and returns the user's owned rows (see liveCatalog below).
-  //   error   — invalid syntax; shown inline and does not filter, so the list
-  //             stays visible while the user fixes it.
   const scryfallPredicate = useMemo(() => {
-    if (!scryfallMode || !scryfallQuery.trim()) return { mode: 'off' };
+    const text = searchFilter.trim();
+    if (!text || !looksLikeSyntax(text)) return { mode: 'off' };
     let classification;
     try {
-      classification = classifyQuery(scryfallQuery);
+      classification = classifyQuery(text);
     } catch (err) {
       return { mode: 'error', error: err instanceof Error ? err.message : String(err) };
     }
     if (classification.mode === 'catalog') return { mode: 'catalog' };
-    return { mode: 'local', test: compileQuery(scryfallQuery) };
-  }, [scryfallMode, scryfallQuery]);
+    return { mode: 'local', test: compileQuery(text) };
+  }, [searchFilter]);
 
   // The catalog query is the one that actually reaches Scryfall. Debounced,
   // because a half-typed tag is not a query yet — and every half-typed query
@@ -362,7 +366,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       try {
         const params = new URLSearchParams();
         params.set('scope', 'collection');
-        params.set('q', scryfallQuery.trim());
+        params.set('q', searchFilter.trim());
         const response = await fetchWithRetry(`/api/search?${params.toString()}`);
         if (generation !== liveFetchRef.current) return;
         if (!response.ok) {
@@ -383,7 +387,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       }
     }, 450);
     return () => clearTimeout(timer);
-  }, [scryfallPredicate, scryfallQuery, t]);
+  }, [scryfallPredicate, searchFilter, t]);
 
   // In catalog mode the answer only exists on the server: the live result
   // REPLACES the local rows — the binder behind it would read as "the query
@@ -401,11 +405,18 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // the user fixes the syntax.
   const filteredCollection = useMemo(() => {
     const searchLower = searchFilter ? searchFilter.toLowerCase() : '';
+    // The box speaks syntax: when it does, the predicate (local) or the live
+    // server answer (catalog) IS the search — the plain name/number/set
+    // substring match would double-filter on the whole operator string and
+    // empty the list, so it only runs for plain text. 'error' also skips it:
+    // an unparseable query must not hide the list while it is being fixed.
+    const plainSearch = scryfallPredicate.mode === 'off';
     const result = baseCollection.filter(item => {
-      const matchesSearch = item.name.toLowerCase().includes(searchLower) ||
-                            (item.printed_name || '').toLowerCase().includes(searchLower) ||
-                            (item.set_name || '').toLowerCase().includes(searchLower) ||
-                            (item.number || '').includes(searchFilter);
+      const matchesSearch = !plainSearch ? true :
+        item.name.toLowerCase().includes(searchLower) ||
+        (item.printed_name || '').toLowerCase().includes(searchLower) ||
+        (item.set_name || '').toLowerCase().includes(searchLower) ||
+        (item.number || '').includes(searchFilter);
       const matchesScryfall = scryfallPredicate.mode === 'local' ? scryfallPredicate.test(item) : true;
       const matchesRarity = rarityFilter === '' ? true : item.rarity === rarityFilter;
       const matchesCondition = conditionFilter === '' ? true : item.condition === conditionFilter;
@@ -541,32 +552,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2.5fr) minmax(150px, 1fr) auto', gap: '0.75rem', alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-end', minWidth: 0 }}>
             <Field label={t('collection.searchLabel')} style={{ flex: 1 }}>
-              {scryfallMode ? (
-                // Scryfall-syntax mode: a raw operator query replaces the plain
-                // text box. Monospace on purpose — the query is a string with
-                // operators in it, not a card name.
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      type="text"
-                      className="input-control"
-                      placeholder={t('collection.scryfallPlaceholder')}
-                      value={scryfallQuery}
-                      onChange={(e) => setScryfallQuery(e.target.value)}
-                      style={{ width: '100%', paddingLeft: '2.5rem', fontFamily: 'var(--font-mono, monospace)' }}
-                    />
-                    <Braces size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                  </div>
-                  <p style={{
-                    fontSize: '0.7rem', margin: 0, lineHeight: 1.4,
-                    color: scryfallPredicate.mode === 'error' ? 'var(--accent-red)' : 'var(--text-muted)',
-                  }}>
-                    {scryfallPredicate.mode === 'error' ? scryfallPredicate.error
-                      : scryfallPredicate.mode === 'catalog' ? t('collection.scryfallLiveHint')
-                      : t('collection.scryfallHint')}
-                  </p>
-                </div>
-              ) : (
+              {/* One box, two languages: plain card name/number/set, or
+                  Scryfall syntax — auto-detected, no toggle. Monospace when
+                  it is a query; the icon changes with it. */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                 <div style={{ position: 'relative' }}>
                   <input
                     type="text"
@@ -574,24 +563,26 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                     placeholder={t('collection.searchPlaceholder')}
                     value={searchFilter}
                     onChange={(e) => setSearchFilter(e.target.value)}
-                    style={{ width: '100%', paddingLeft: '2.5rem' }}
+                    style={{
+                      width: '100%',
+                      paddingLeft: '2.5rem',
+                      fontFamily: looksLikeSyntax(searchFilter.trim()) ? 'var(--font-mono, monospace)' : undefined,
+                    }}
                   />
-                  <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  {looksLikeSyntax(searchFilter.trim())
+                    ? <Braces size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                    : <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />}
                 </div>
-              )}
+                <p style={{
+                  fontSize: '0.7rem', margin: 0, lineHeight: 1.4,
+                  color: scryfallPredicate.mode === 'error' ? 'var(--accent-red)' : 'var(--text-muted)',
+                }}>
+                  {scryfallPredicate.mode === 'error' ? scryfallPredicate.error
+                    : scryfallPredicate.mode === 'catalog' ? t('collection.scryfallLiveHint')
+                    : t('collection.scryfallHint')}
+                </p>
+              </div>
             </Field>
-            <button
-              className={`btn ${scryfallMode ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => {
-                const next = !scryfallMode;
-                setScryfallMode(next);
-                localStorage.setItem('collection_scryfall_mode', next ? '1' : '0');
-              }}
-              title={t('collection.scryfallToggle')}
-              style={{ padding: '0.4rem 0.55rem', height: '40px', display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap', fontSize: '0.7rem' }}
-            >
-              <Braces size={14} /> {t('collection.scryfallToggle')}
-            </button>
           </div>
 
           <Field label={t('collection.sortBy')}>
