@@ -362,6 +362,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // because a half-typed tag is not a query yet — and every half-typed query
   // would otherwise be a real API call. Each new query supersedes in-flight
   // answers so a slow response can never paint over a newer one.
+  //
+  // The PREVIOUS result stays visible while a new catalog answer is in flight
+  // (see baseCollection + the "updating" pill below): a cold walk can take
+  // seconds, and blanking the whole collection to a spinner for that long is
+  // what made a cached tag feel "slow". The previous list is the honest
+  // fallback — it is the same tag's answer from minutes/hours ago.
   useEffect(() => {
     if (scryfallPredicate.mode !== 'catalog') {
       liveFetchRef.current += 1;
@@ -734,7 +740,8 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         )}
       </div>
 
-      {/* Result summary bar */}
+      {/* Result summary bar. Hidden while a catalog answer is in flight: its
+          count would be the STALE result's count, which reads as wrong. */}
       {!loading && !liveLoading && !selectMode && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', fontSize: '0.78rem', color: 'var(--text-secondary)', flexWrap: 'wrap', gap: '0.5rem' }}>
           <span>
@@ -743,6 +750,15 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             {liveError ? ` · ${liveError}` : ''}
           </span>
           <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
+        </div>
+      )}
+
+      {/* Updating pill: a catalog answer is on the way but we already have a
+          result to show, so the list stays up with a small note instead of a
+          full-screen spinner. */}
+      {scryfallPredicate.mode === 'catalog' && liveLoading && displayCards.length > 0 && !liveError && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+          <span>{displayCards.length} {t('collection.cardUnit', { count: displayCards.length })} · {t('collection.scryfallLiveNote')} · {t('collection.scryfallLiveUpdating')}</span>
         </div>
       )}
 
@@ -783,7 +799,11 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         </div>
       )}
 
-      {loading || liveLoading ? (
+      {/* The full-screen spinner only when there is nothing else to show.
+          In catalog mode with a previous result, that list stays up while the
+          new answer is in flight (the pill above carries the state); in
+          local mode `loading` covers the initial fetch. */}
+      {(loading || (liveLoading && !liveCatalog)) ? (
         <div className="spinner"></div>
       ) : displayCards.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '3rem 1.5rem' }}>
