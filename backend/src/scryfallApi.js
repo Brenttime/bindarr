@@ -431,7 +431,7 @@ async function searchCards({
 async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', rawQuery = '', scope = 'database', userId = null, lang = null, allPrints = false, page = 1, limit = 60) {
   const offset = (page - 1) * limit;
   const cleanName = (nameQuery || '').trim();
-  const cleanNumber = (numberQuery || '').trim();
+  const cleanNumber = (numberQuery || '').trim().replace(/^#/, '').split('/')[0].trim();
   const cleanRaw = String(rawQuery || '').trim();
 
   // Scryfall-syntax searches ("is:land color:g rarity:rare") are
@@ -538,9 +538,14 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
       // A set code narrows to that printing (exact, usually one result -> fast
       // path in the scanner); without it, return every printing to pick from.
       const q = setList.length ? `!"${cleanName}" ${scrySet} unique:prints` : `!"${cleanName}" unique:prints`;
-      const raw = await fetchFromScryfall(q, lang);
+      // Use the normal paging helper rather than reading only Scryfall's first
+      // 175-card page. The caller chooses a bounded window (the scanner asks for
+      // 250) so heavily reprinted cards do not silently lose later printings.
+      const { cards: raw, total } = await fetchWindow(q, lang, offset, limit);
+      if (total != null) meta.total = total;
+      meta.source = 'scryfall';
       if (raw.length) {
-        const cards = raw.map(c => normalizeCard(c, lang)).slice(0, 60);
+        const cards = raw.map(c => normalizeCard(c, lang));
         await cacheCards(cards);
         return cards;
       }

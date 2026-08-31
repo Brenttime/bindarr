@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Camera, RefreshCw, AlertTriangle, X, Zap, ZapOff, Settings, ScanLine, ListFilter } from 'lucide-react';
+import { Camera, RefreshCw, AlertTriangle, X, Zap, ZapOff, Settings, ScanLine, ListFilter, Layers, Search } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getCardDisplayName } from '../utils/langHelper';
 import { priceText } from '../utils/formatPrice';
@@ -15,6 +15,7 @@ import { LANGUAGES, langName, langCode, displayName } from '../utils/languages';
 import { requestDetect, stopDetect, smoothQuad, meanCornerDrift, DETECT_W } from '../utils/cardDetector';
 import { getPerspectiveTransform, warpPerspective } from '../../../shared/imgproc.mjs';
 import { shouldCapture, shouldRearm, autoStatusKey } from '../utils/autoCapture';
+import { manualSearchFields } from '../utils/cardSearchInput';
 import { isNative } from '../apiBase';
 import { useT } from '../utils/i18n';
 import SetTree from './SetTree';
@@ -146,6 +147,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const [detectQuad, setDetectQuad] = useState(null);
   const [showDetectOutline, setShowDetectOutline] = useState(() => localStorage.getItem('scan_outline') !== '0');
   const outlineCanvas = useRef(null);   // one canvas, reused every update
+  const orientedCanvas = useRef(null);  // reused for video orientation (zero allocation per frame)
+  const dewarpCanvas = useRef(null);    // reused for client dewarp
   const smoothed = useRef(null);        // eased corners, what actually gets drawn
   const lastRawQuad = useRef(null);     // previous RAW detection, for drift
   const steadyFrames = useRef(0);       // consecutive low-drift detections
@@ -217,7 +220,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // exposureCompensation, else null (slider hidden). value = current setting.
   const [exposureCaps, setExposureCaps] = useState(null);
   const [exposure, setExposure] = useState(0);
-  // This scanner is MTG-only: no game picker, no game params in the API calls.
+  // This scanner is MTG-only: no game picker or game-selection abstraction.
   // Which language of card is being fed in. Card art is language-specific, so
   // this selects which set index the scan is matched against — and it becomes the
   // language each added copy is recorded as. Remembered across sessions because
@@ -301,6 +304,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const currentScanId = useRef(0);
+  // Manual and alternate-printing searches are cancellable UI work separate
+  // from the scan request itself. Incrementing this invalidates stale responses.
+  const lookupRequestId = useRef(0);
+  const lastScanImgRef = useRef(null);
+  const lastScanCroppedRef = useRef(false);
 
   // Auto-capture duplicate guard: a physical card lingers in frame across the
   // 3s auto-scan cycle. lastAddedId = the card just auto-added; a repeat match
@@ -366,6 +374,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const handleCancelScan = () => {
     currentScanId.current += 1;
     setLoading(false);
+    resolvedDupIdRef.current = null;
     const msg = t('scan.cancelled');
     setScanStatus(msg);
     setTimeout(() => {
@@ -449,6 +458,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // reaching the alternatives from the drawer was impossible.
   const [lastMatches, setLastMatches] = useState([]);
   // True while the "different printing" lookup is in flight.
+  const [findingPrintings, setFindingPrintings] = useState(false);
+  const [manualSearchText, setManualSearchText] = useState('');
+  const [manualSearching, setManualSearching] = useState(false);
   // Tap the countdown popup to pause auto-add and tweak these before adding
   // (slower tiers only — Turbo adds instantly with no overlay).
   const [autoAddEditing, setAutoAddEditing] = useState(false);
@@ -458,10 +470,28 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const [dupConfirmCard, setDupConfirmCard] = useState(null);
   const [dupQty, setDupQty] = useState(1);
 
-  useBackGuard(scanMatches.length > 0, () => setScanMatches([]));
-  useBackGuard(!!dupConfirmCard, () => setDupConfirmCard(null));
+  useBackGuard(scanMatches.length > 0, () => {
+    setScanMatches([]);
+    autoArmed.current = true;
+    capturedQuad.current = null;
+    resolvedDupIdRef.current = null;
+  });
+  useBackGuard(!!dupConfirmCard, () => {
+    setDupConfirmCard(null);
+    resolvedDupIdRef.current = null;
+  });
   useBackGuard(!!inspectorEntry, () => setInspectorEntry(null));
   useBackGuard(recentSelect.selectMode, recentSelect.exitSelectMode);
+
+  // Closing both the add drawer and candidate picker cancels whichever lookup
+  // produced them. A late response must not reopen UI the user dismissed.
+  useEffect(() => {
+    if (!isDrawerOpen && scanMatches.length === 0) {
+      lookupRequestId.current += 1;
+      setFindingPrintings(false);
+      setManualSearching(false);
+    }
+  }, [isDrawerOpen, scanMatches.length]);
   
   // Form states
   const [quantity, setQuantity] = useState(1);
@@ -488,17 +518,39 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // On language switch: restore that language's remembered set filter and load
   // its set tree (families + subsets).
   useEffect(() => {
+    let cancelled = false;
     setScanSetCodesState((localStorage.getItem(setsKey(scanLang)) || '').split(',').map(s => s.trim()).filter(Boolean));
     setSetInput('');
+    setSetList([]);
+    setScanSets(null);
+    setDebugCandidates([]);
+    setDebugHashImg('');
+    setDebugScoped(null);
+
     // tree=1: parents carrying their subsets, so the filter can offer a release
     // family as one tick and still let its tokens/art cards be dropped.
     fetch(`/api/sets?lang=${encodeURIComponent(scanLang)}&tree=1`)
-      .then(r => r.ok ? r.json() : []).then(setSetList).catch(() => setSetList([]));
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        if (!cancelled) setSetList(data);
+      })
+      .catch(() => {
+        if (!cancelled) setSetList([]);
+      });
     // How much of each set the scanner actually holds. Without this the filter
     // offers sets that match NOTHING, and a filter that matches no rows makes
     // cvScan fall back to an unscoped scan without saying so.
     fetch(`/api/scan-sets?lang=${encodeURIComponent(scanLang)}`)
-      .then(r => r.ok ? r.json() : null).then(setScanSets).catch(() => setScanSets(null));
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!cancelled) setScanSets(data);
+      })
+      .catch(() => {
+        if (!cancelled) setScanSets(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [scanLang]);
 
   // Selecting a set no longer builds anything. It is a FILTER over the catalog
@@ -658,6 +710,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
     // the picture; the outline is a readout of that same work, so drawing it while
     // nothing can fire would be paying ~1.5 inferences a second to animate a box.
     if (!cameraActive || !autoScan) { setDetectQuad(null); setAutoState(null); return; }
+    refreshAutoState();
     let stopped = false;
     let timer;
     const schedule = (ms) => { if (!stopped) timer = setTimeout(tick, ms); };
@@ -698,6 +751,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         if (shouldRearm({ armed: autoArmed.current, emptyFrames: emptyFrames.current, quad: null, capturedQuad: capturedQuad.current })) {
           autoArmed.current = true;
           capturedQuad.current = null;
+          resolvedDupIdRef.current = null;
         }
         lastDrift.current = null;
         lastCorners.current = found.corners ?? null;
@@ -728,6 +782,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
       if (shouldRearm({ armed: autoArmed.current, emptyFrames: 0, quad: found.quad, capturedQuad: capturedQuad.current })) {
         autoArmed.current = true;
         capturedQuad.current = null;
+        resolvedDupIdRef.current = null;
       }
       setDetectQuad({ ...found, quad: smoothed.current });
       tryAutoCapture();
@@ -743,7 +798,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         const v = videoRef.current;
         if (!loadingRef.current && guideElement && v?.videoWidth && v.readyState >= 2) {
           if (!outlineCanvas.current) outlineCanvas.current = document.createElement('canvas');
-          const c = buildFramedCanvas(v, guideElement, DETECT_W, outlineCanvas.current);
+          const c = buildFramedCanvas(v, guideElement, DETECT_W, outlineCanvas.current, true);
           // Fire-and-forget: the worker answers on its own schedule and a frame
           // is skipped rather than queued while one is in flight. Queueing would
           // only produce results describing a scene that has already moved.
@@ -831,6 +886,10 @@ function CameraScanner({ onAddSuccess, showToast }) {
     setDebugHashImg('');
     setDebugCandidates([]);
     setDebugScoped(null);
+    lastAddedIdRef.current = null;
+    resolvedDupIdRef.current = null;
+    autoArmed.current = true;
+    capturedQuad.current = null;
     // getUserMedia only exists in a secure context. Served over plain HTTP on a
     // LAN address (the usual Docker setup, http://host:3001) navigator.mediaDevices
     // is undefined, and the browser never shows a permission prompt at all — so
@@ -940,7 +999,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const getOrientedVideoCanvas = (video, maxW = 0) => {
     const videoWidth = video.videoWidth;
     const videoHeight = video.videoHeight;
-    const canvas = document.createElement('canvas');
+    const canvas = orientedCanvas.current || (orientedCanvas.current = document.createElement('canvas'));
 
     const videoRect = video.getBoundingClientRect();
     const streamRatio = videoWidth / videoHeight;
@@ -983,7 +1042,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // than a match does); `target` reuses a canvas rather than allocating one per
   // frame, which is what mobile browsers punish by handing back BLANK canvases
   // once their per-tab canvas memory is exhausted.
-  const buildFramedCanvas = (video, guideElement, maxW = 0, target = null) => {
+  // `square` scales both axes to maxW directly in hardware (384x384), eliminating
+  // software bilinear resize in the detect worker.
+  const buildFramedCanvas = (video, guideElement, maxW = 0, target = null, square = false) => {
     if (!video?.videoWidth || !guideElement) return null;
     const oc = getOrientedVideoCanvas(video);
     const videoRect = video.getBoundingClientRect();
@@ -1001,9 +1062,10 @@ function CameraScanner({ onAddSuccess, showToast }) {
     // does not change them, so fold guideScale in here.
     const fullW = Math.max(1, Math.round((guideElement.offsetWidth * guideScale / k) * (1 + 2 * CROP_PAD)));
     const fullH = Math.max(1, Math.round((guideElement.offsetHeight * guideScale / k) * (1 + 2 * CROP_PAD)));
-    const s = (maxW && fullW > maxW) ? maxW / fullW : 1;
-    const destW = Math.max(1, Math.round(fullW * s));
-    const destH = Math.max(1, Math.round(fullH * s));
+    const sX = square ? (maxW ? maxW / fullW : 1) : ((maxW && fullW > maxW) ? maxW / fullW : 1);
+    const sY = square ? (maxW ? maxW / fullH : 1) : sX;
+    const destW = Math.max(1, Math.round(fullW * sX));
+    const destH = Math.max(1, Math.round(fullH * sY));
 
     const canvas = target || document.createElement('canvas');
     canvas.width = destW;                       // also resets pixels + transform
@@ -1012,7 +1074,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
     // Sample the (possibly rotated, off-centre) box region upright: dest centre
     // maps to the box centre, undo the box rotation, draw the frame. Pixels past
     // the box come through black; the server auto-detects the card inside.
-    fctx.scale(s, s);
+    fctx.scale(sX, sY);
     fctx.translate(fullW / 2, fullH / 2);
     fctx.rotate(-(guideAngle * Math.PI) / 180);
     fctx.translate(-cx, -cy);
@@ -1040,7 +1102,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
       const dst = [{ x: 0, y: 0 }, { x: N, y: 0 }, { x: N, y: N }, { x: 0, y: N }];
       const rgba = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
       const out = warpPerspective(rgba, w, h, getPerspectiveTransform(src, dst), EMBED_SIZE, EMBED_SIZE);
-      const c = document.createElement('canvas');
+      const c = dewarpCanvas.current || (dewarpCanvas.current = document.createElement('canvas'));
       c.width = EMBED_SIZE; c.height = EMBED_SIZE;
       c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out), EMBED_SIZE, EMBED_SIZE), 0, 0);
       return c.toDataURL('image/jpeg', 0.9);
@@ -1234,6 +1296,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
             return up.toDataURL('image/jpeg', 0.85);
           })();
           setDebugHashImg(imageData);
+          lastScanImgRef.current = imageData;
+          lastScanCroppedRef.current = !!cropped;
           try {
             const resp = await fetch('/api/scan-match', {
               method: 'POST',
@@ -1388,6 +1452,138 @@ function CameraScanner({ onAddSuccess, showToast }) {
     setIsDrawerOpen(true);
   };
 
+  // "Change printing"
+  //
+  // Visual scanning matches artwork, but the same illustration is reprinted across sets.
+  // This asks for every printing of this card's name across sets, sorted by visual match to the scan.
+  const findOtherPrintings = async () => {
+    if (!selectedCard || findingPrintings) return;
+    const requestId = ++lookupRequestId.current;
+    const searchLang = scanLang;
+    const cardName = selectedCard.name;
+    const selectedCardId = selectedCard.id;
+    const hasImage = !!lastScanImgRef.current;
+    const limit = 250;
+    setFindingPrintings(true);
+    try {
+      const all = [];
+      let page = 1;
+      let total = null;
+      let hasMore = true;
+
+      while (hasMore) {
+        const fields = {
+          lang: searchLang,
+          name: cardName,
+          prints: '1',
+          limit,
+          page,
+          scope: 'internet',
+        };
+        const res = hasImage
+          ? await fetch('/api/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...fields,
+                image: lastScanImgRef.current,
+                cropped: lastScanCroppedRef.current,
+              }),
+            })
+          : await fetch(`/api/search?${new URLSearchParams(fields).toString()}`);
+        if (requestId !== lookupRequestId.current) return;
+        if (!res.ok) throw new Error(`printing search returned ${res.status}`);
+        const batch = await res.json();
+        if (requestId !== lookupRequestId.current) return;
+        all.push(...batch);
+        const reported = Number.parseInt(res.headers.get('X-Total-Count'), 10);
+        if (Number.isFinite(reported)) total = reported;
+        hasMore = batch.length === limit && (total === null || all.length < total);
+        if (hasMore) page += 1;
+      }
+
+      const found = [...new Map(all.map(card => [card.id, card])).values()].sort((a, b) => {
+        const aScore = a.score !== undefined && a.score !== null ? a.score : -Infinity;
+        const bScore = b.score !== undefined && b.score !== null ? b.score : -Infinity;
+        if (aScore !== bScore) return bScore - aScore;
+        return (b.image_url ? 1 : 0) - (a.image_url ? 1 : 0);
+      });
+      if (!found.some(card => card.id !== selectedCardId)) {
+        showToast(t('scan.noOtherPrintings'));
+        return;
+      }
+      setLastMatches(found);
+      closeDrawer();
+      setScanMatches(found);
+      setShowAllMatches(true);
+    } catch {
+      if (requestId === lookupRequestId.current) showToast(t('scan.noOtherPrintings'));
+    } finally {
+      if (requestId === lookupRequestId.current) setFindingPrintings(false);
+    }
+  };
+
+  const handleManualSearch = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const q = manualSearchText.trim();
+    if (!q || manualSearching) return;
+    const requestId = ++lookupRequestId.current;
+    setManualSearching(true);
+    try {
+      const fields = manualSearchFields(q);
+      const p = new URLSearchParams({
+        lang: scanLang,
+        scope: 'internet',
+        ...fields,
+      });
+      const hasImage = lastScanImgRef.current;
+      const searchResponse = hasImage
+        ? await fetch('/api/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lang: scanLang,
+              scope: 'internet',
+              ...fields,
+              image: lastScanImgRef.current,
+              cropped: lastScanCroppedRef.current,
+            }),
+          })
+        : await fetch(`/api/search?${p.toString()}`);
+      if (requestId !== lookupRequestId.current) return;
+      if (searchResponse.ok) {
+        const m = await searchResponse.json();
+        if (requestId !== lookupRequestId.current) return;
+        if (m.length) {
+          const sorted = [...m].sort((a, b) => {
+            const aScore = a.score !== undefined && a.score !== null ? a.score : -Infinity;
+            const bScore = b.score !== undefined && b.score !== null ? b.score : -Infinity;
+            if (aScore !== bScore) return bScore - aScore;
+            return (b.image_url ? 1 : 0) - (a.image_url ? 1 : 0);
+          });
+          setScanMatches(sorted);
+          setShowAllMatches(true);
+        } else {
+          showToast(t('scan.errManualSearch'));
+        }
+      } else {
+        showToast(t('scan.errManualSearch'));
+      }
+    } catch {
+      if (requestId === lookupRequestId.current) showToast(t('scan.errManualSearch'));
+    } finally {
+      if (requestId === lookupRequestId.current) setManualSearching(false);
+    }
+  };
+
+  const changeManualSearchText = (value) => {
+    // Editing the query cancels any response for the previous text and releases
+    // the submit button immediately for the new search.
+    lookupRequestId.current += 1;
+    setManualSearching(false);
+    setManualSearchText(value);
+  };
+
   const closeDrawer = () => {
     setIsDrawerOpen(false);
     setSelectedCard(null);
@@ -1397,6 +1593,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
     setPrinting('Normal');
     setLanguage(langName(scanLang));
     setPurchasePrice(0);
+    // Keep the captured quad disarmed. A close/save must not immediately scan the
+    // same physical card again; scene-change detection or explicit Rescan rearms.
+    resolvedDupIdRef.current = null;
     // Restart camera on close only if stream was stopped
     if (!stream || !cameraActive) {
       startCamera();
@@ -1944,8 +2143,14 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 setAutoScan(next);
                 // Turning it back on should act on the card already in frame
                 // rather than waiting for the user to lift and replace it.
-                if (next) { autoArmed.current = true; capturedQuad.current = null; }
-                else { setAutoState(null); if (loading) handleCancelScan(); }
+                if (next) {
+                  autoArmed.current = true;
+                  capturedQuad.current = null;
+                  resolvedDupIdRef.current = null;
+                } else {
+                  setAutoState(null);
+                  if (loading) handleCancelScan();
+                }
               }}
               style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
               title={t('scan.scanningHint')}
@@ -2111,6 +2316,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       setAutoAddTargetCard(null);
                       setAutoAddCountdown(null);
                       setAutoAddEditing(false);
+                      // Leave this card disarmed until it leaves or changes.
+                      resolvedDupIdRef.current = null;
                       showToast(t('scan.autoAddCancelled'));
                     }}
                     style={{ flex: 1, fontSize: '0.75rem', padding: '0.45rem 0' }}
@@ -2145,6 +2352,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       setAutoAddTargetCard(null);
                       setAutoAddCountdown(null);
                       setAutoAddAlternatives([]);
+                      // Leave this card disarmed until it leaves or changes.
+                      resolvedDupIdRef.current = null;
                       showToast(t('scan.autoAddCancelled'));
                     }}
                     style={{ flex: 1, fontSize: '0.75rem', padding: '0.45rem 0' }}
@@ -2331,6 +2540,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 onClick={() => {
                   setScanMatches([]);
                   setScanStatus('');
+                  autoArmed.current = true;
+                  capturedQuad.current = null;
+                  resolvedDupIdRef.current = null;
                   if (!stream || !cameraActive) startCamera();
                 }} 
                 style={{ borderRadius: '50%' }}
@@ -2346,39 +2558,47 @@ function CameraScanner({ onAddSuccess, showToast }) {
               </p>
               
               {/* Manual search fallback within the modal */}
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input 
-                  type="text" 
-                  placeholder={t('scan.manualSearchPlaceholder')} 
-                  className="input-control"
-                  style={{ flex: 1, padding: '0.4rem 0.5rem', fontSize: '0.8rem' }}
-                  onKeyDown={async (e) => {
-                    if (e.key === 'Enter' && e.target.value.trim()) {
-                      const q = e.target.value.trim();
-                      const p = new URLSearchParams({ lang: scanLang });
-
-                      // Very simple fallback: try to parse set code and number if format looks like "SET 123"
-                      const match = q.match(/^([A-Z0-9]{3,5})\s+(\d+[A-Z★]?)$/i);
-                      if (match) {
-                        p.append('set', match[1]);
-                        p.append('number', match[2]);
-                      } else {
-                        p.append('name', q);
-                      }
-
-                      const searchResponse = await fetch(`/api/search?${p.toString()}`);
-                      if (searchResponse.ok) {
-                        const m = await searchResponse.json();
-                        if (m.length) {
-                          setScanMatches(m);
-                        } else {
-                          showToast(t('scan.errManualSearch'));
-                        }
-                      }
-                    }
-                  }}
-                />
-              </div>
+              <form onSubmit={handleManualSearch} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder={t('scan.manualSearchPlaceholder')}
+                    className="input-control"
+                    value={manualSearchText}
+                    onChange={(e) => changeManualSearchText(e.target.value)}
+                    style={{ width: '100%', padding: '0.4rem 2rem 0.4rem 0.6rem', fontSize: '0.8rem' }}
+                  />
+                  {manualSearchText && (
+                    <button
+                      type="button"
+                      onClick={() => changeManualSearchText('')}
+                      aria-label={t('scan.clearManualSearch')}
+                      style={{
+                        position: 'absolute',
+                        right: '0.4rem',
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-muted)',
+                        cursor: 'pointer',
+                        padding: '0.2rem',
+                        display: 'flex',
+                        alignItems: 'center'
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="submit"
+                  className="btn btn-secondary btn-sm"
+                  disabled={manualSearching || !manualSearchText.trim()}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.4rem 0.75rem', fontSize: '0.8rem' }}
+                >
+                  {manualSearching ? <RefreshCw size={14} className="spin" /> : <Search size={14} />}
+                  <span>{t('search.submit') || 'Search'}</span>
+                </button>
+              </form>
             </div>
 
             {/* Strongest matches first — the same order, and the same cards, as
@@ -2425,6 +2645,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 onClick={() => {
                   setScanMatches([]);
                   setScanStatus('');
+                  autoArmed.current = true;
+                  capturedQuad.current = null;
+                  resolvedDupIdRef.current = null;
                   if (!stream || !cameraActive) startCamera();
                 }} 
                 style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
@@ -2564,8 +2787,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
                 </div>
               </div>
 
-              {/* Submit Buttons. "Other matches" goes back to what the scanner
-                  saw — the escape for when it picked the wrong CARD. */}
+              {/* Submit Buttons.
+                  "Other matches" goes back to what the scanner saw (alternative visual guesses).
+                  "Right name, wrong printing" lists all printings of this card name across sets. */}
               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid var(--border-glass)', paddingTop: '1rem', marginTop: '0.5rem' }}>
                 {lastMatches.length > 1 && (
                   <button
@@ -2577,6 +2801,17 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     <ListFilter size={14} /> {t('scan.backToMatches', { n: lastMatches.length })}
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={findOtherPrintings}
+                  disabled={findingPrintings}
+                  title={t('scan.otherPrintingsHint')}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                >
+                  {findingPrintings ? <RefreshCw size={14} className="spin" /> : <Layers size={14} />}
+                  <span>{findingPrintings ? t('scan.fetchingCandidates') : (t('scan.changePrinting') || t('scan.otherPrintings') || t('scan.rightNameWrongPrinting'))}</span>
+                </button>
                 <span style={{ flex: 1 }} />
                 <button type="button" className="btn btn-secondary" onClick={closeDrawer} style={{ padding: '0.5rem 1.5rem' }}>{t('common.cancel')}</button>
                 <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 2rem' }}>{t('search.addToCollection')}</button>

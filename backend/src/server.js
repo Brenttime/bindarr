@@ -167,20 +167,17 @@ app.use(cors({
     }
   }
 }));
-// Two endpoints legitimately carry megabytes, and only two. An import wraps its
-// payload in a JSON string field, which added escaping overhead pushed a ~90-card
-// collection past the 100kb default already; a scan carries a photo base64'd into
-// JSON, which costs a third again on top of the image.
-//
-// Everything else is ids and short strings, so the global ceiling stays small.
-// Applying 15mb to every route means an UNAUTHENTICATED POST /api/auth/login can
-// hand the process 15 MB, which is a free memory amplifier for anyone who can
-// reach the port. body-parser skips a request whose body is already parsed, so
-// registering these first and the small default after is all the scoping needed.
+// Imports and scanner photos legitimately carry megabytes. All other JSON is ids
+// and short strings, so the public/default ceiling stays small. The large parser
+// is installed only after the authentication gate below: unauthenticated clients
+// must not make the process allocate and parse 15 MB before their token is denied.
 const bigJson = express.json({ limit: '15mb' });
-app.use('/api/import', bigJson);
-app.use('/api/scan-match', bigJson);
-app.use(express.json({ limit: '1mb' }));
+const normalJson = express.json({ limit: '1mb' });
+const largeJsonPaths = ['/api/import', '/api/scan-match', '/api/search'];
+app.use((req, res, next) => {
+  const needsLargeBody = largeJsonPaths.some(p => req.path === p || req.path.startsWith(`${p}/`));
+  return needsLargeBody ? next() : normalJson(req, res, next);
+});
 
 // Rebuild any catalog that has fallen behind, right after the weekly set refresh
 // discovers new releases.
@@ -353,6 +350,12 @@ app.use('/api/card-art', cardArtRoutes);
 // The cost: bare '/api' mounts stack up, so a late handler re-runs the earlier
 // routers' authenticateToken (and its sessions⋈users SELECT) on its way past.
 app.use('/api', authenticateToken);
+
+// Parse large payloads only after authentication. The normal parser intentionally
+// skipped these paths above so valid imports and scan images retain the 15 MB cap.
+app.use('/api/import', bigJson);
+app.use('/api/scan-match', bigJson);
+app.use('/api/search', bigJson);
 
 // --- AUTHENTICATED API ROUTES ---
 app.use('/api', collectionRoutes);

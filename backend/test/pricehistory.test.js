@@ -26,23 +26,29 @@ async function main() {
   }
   assert.strictEqual(await count(), 1, 'restarts must not pile up identical rows');
 
-  // 3. A real movement IS recorded.
+  // 3. A burst of genuine movements is recorded without timestamp collisions.
   assert.strictEqual(await recordPrice(CARD, 2.25), true, 'a price change should be recorded');
-  assert.strictEqual(await count(), 2);
-
-  // 4. Returning to an earlier price is still a movement worth recording.
-  // Wait out the current millisecond: recorded_at is part of the primary key at
-  // millisecond resolution, and two movements in the same ms would collide and
-  // be silently dropped by OR IGNORE (a pre-existing timing flake, not a logic bug).
-  await new Promise(r => setTimeout(r, 5));
   assert.strictEqual(await recordPrice(CARD, 1.5), true, 'a move back down is still a move');
-  assert.strictEqual(await count(), 3);
+  assert.strictEqual(await recordPrice(CARD, 3.0), true, 'a third immediate movement should be recorded');
+  assert.strictEqual(await count(), 4);
+  const burst = await db.all(
+    `SELECT price, recorded_at FROM price_history WHERE card_id = ? ORDER BY recorded_at`,
+    [CARD]
+  );
+  assert.deepStrictEqual(burst.map(row => row.price), [1.5, 2.25, 1.5, 3.0]);
+  assert.strictEqual(new Set(burst.map(row => row.recorded_at)).size, 4, 'rapid movements need unique timestamps');
+
+  // 4. Concurrent observations of one new price produce one movement, not one
+  // row per caller that happened to read the previous price.
+  const concurrent = await Promise.all(Array.from({ length: 8 }, () => recordPrice(CARD, 4.25)));
+  assert.strictEqual(concurrent.filter(Boolean).length, 1, 'only one concurrent caller should insert');
+  assert.strictEqual(await count(), 5, 'concurrent duplicate prices must collapse to one point');
 
   // 5. Junk is ignored rather than written as a zero-price data point.
   assert.strictEqual(await recordPrice(CARD, 0), false, 'zero is not a price');
   assert.strictEqual(await recordPrice(CARD, null), false, 'null is not a price');
   assert.strictEqual(await recordPrice(null, 5), false, 'no card id, no row');
-  assert.strictEqual(await count(), 3, 'junk must not reach the table');
+  assert.strictEqual(await count(), 5, 'junk must not reach the table');
 
   // --- Once-a-day sweep gate ---
   // Scryfall only moves prices once a day, so sweeping more often is pure load.

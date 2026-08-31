@@ -120,8 +120,9 @@ function builtLangs(game = 'mtg') {
 
 function loadModels() {
   if (!models) {
+    const cornPath = path.join(MODEL_DIR, 'cornelius.onnx');
     models = Promise.all([
-      ort.InferenceSession.create(path.join(MODEL_DIR, 'cornelius.onnx'), SESSION_OPTS),
+      ort.InferenceSession.create(cornPath, SESSION_OPTS),
       ort.InferenceSession.create(path.join(MODEL_DIR, 'milo.onnx'), SESSION_OPTS),
     ]).then(([corn, milo]) => ({ corn, milo }))
       .catch((err) => { models = null; throw err; });
@@ -287,14 +288,18 @@ async function detectAndDewarp(session, imageBuffer) {
     return { rgb: data, detected: false, sharpness };
   }
 
-  // The model card documents TL,TR,BR,BL. It emits BL,BR,TL,TR — verified over
-  // the eval sample (point 0 sits at y~0.98, point 2 at y~0.02). Following the
-  // documented order produces a sheared crop and scores 0%.
-  const src = [];
-  for (let k = 0; k < 4; k++) src.push({ x: corners[k * 2] * info.width, y: corners[k * 2 + 1] * info.height });
+  // Normalize the model's four corner predictions to perimeter order before warping.
+  const pts = [];
+  for (let k = 0; k < 4; k++) {
+    pts.push({ x: corners[k * 2] * info.width, y: corners[k * 2 + 1] * info.height });
+  }
+  // cvScan is CommonJS while the browser-safe primitives are ESM; dynamic import
+  // is cached by Node and keeps this one shared geometry implementation.
+  const { orderQuad } = await import('../../shared/imgproc.mjs');
+  const src = orderQuad(pts);
   const dst = [
-    { x: 0, y: EMBED_SIZE - 1 }, { x: EMBED_SIZE - 1, y: EMBED_SIZE - 1 },
     { x: 0, y: 0 }, { x: EMBED_SIZE - 1, y: 0 },
+    { x: EMBED_SIZE - 1, y: EMBED_SIZE - 1 }, { x: 0, y: EMBED_SIZE - 1 },
   ];
   const M = perspectiveTransform(src, dst);
   if (!M) {
@@ -487,6 +492,87 @@ async function match(imageBuffer, game = 'mtg', topK = 8, opts = {}) {
   };
 }
 
+// Rank already-resolved candidate cards against one image embedding. Catalogs
+// contain both `{id}` and `{id}_back` for double-faced cards, so each base id
+// deliberately maps to EVERY matching row and the best face wins.
+function rankCardsByEmbedding(cards, cats, emb) {
+  for (const c of cats) {
+    if (!c.idMap) {
+      const map = new Map();
+      for (let i = 0; i < c.n; i++) {
+        const raw = String(c.ids[i]).replace(/_back$/, '');
+        const indices = map.get(raw);
+        if (indices) indices.push(i);
+        else map.set(raw, [i]);
+      }
+      c.idMap = map;
+    }
+  }
+
+  for (const card of cards) {
+    let maxScore = null;
+    const possibleIds = new Set();
+    if (card.id) {
+      possibleIds.add(String(card.id));
+      possibleIds.add(String(card.id).replace(/^mtg-/, ''));
+    }
+    if (card.scryfall_id) possibleIds.add(String(card.scryfall_id));
+    if (card.tcgplayer_id) possibleIds.add(String(card.tcgplayer_id));
+    if (card.tcgplayer_product_id) possibleIds.add(String(card.tcgplayer_product_id));
+
+    for (const c of cats) {
+      for (const pid of possibleIds) {
+        const indices = c.idMap.get(pid) || [];
+        for (const idx of indices) {
+          const off = idx * c.dim;
+          let dot = 0;
+          for (let d = 0; d < c.dim; d++) {
+            dot += emb[d] * c.cat[off + d];
+          }
+          if (maxScore === null || dot > maxScore) {
+            maxScore = dot;
+          }
+        }
+      }
+    }
+
+    if (maxScore !== null) {
+      card.score = maxScore;
+      card.__match = { score: maxScore };
+    }
+  }
+
+  return [...cards].sort((a, b) => {
+    const aScore = a.score !== undefined && a.score !== null ? a.score : -Infinity;
+    const bScore = b.score !== undefined && b.score !== null ? b.score : -Infinity;
+    if (aScore !== bScore) return bScore - aScore;
+    return (b.image_url ? 1 : 0) - (a.image_url ? 1 : 0);
+  });
+}
+
+// Score a list of cards against an image embedding and sort them by visual similarity.
+async function scoreCards(imageBuffer, game = 'mtg', cards = [], opts = {}) {
+  if (!cards || cards.length <= 1 || !imageBuffer) return cards;
+  if (!isBuilt(game, opts.lang)) return cards;
+
+  try {
+    const cats = await loadAll(game, opts.lang);
+    if (!cats || !cats.length) return cards;
+
+    const det = opts.cropped
+      ? await useClientCrop(imageBuffer)
+      : await detectAndDewarp(cats[0].corn, imageBuffer);
+
+    const out = await cats[0].milo.run({ image: toTensor(det.rgb, EMBED_SIZE) });
+    const emb = out.embedding.data;
+
+    return rankCardsByEmbedding(cards, cats, emb);
+  } catch (err) {
+    console.warn('cvScan.scoreCards failed:', err.message);
+    return cards;
+  }
+}
+
 // Evict a cached catalog so a freshly built one takes effect without a restart.
 // The models are untouched — only the embedding table changes on a rebuild.
 function reload(game, lang) {
@@ -497,4 +583,4 @@ function reload(game, lang) {
   delete catalogs[game];
 }
 
-module.exports = { match, load, loadAll, isBuilt, builtLangs, reload, STRONG_SIM, STRONG_MARGIN, GAP_FLOOR };
+module.exports = { match, load, loadAll, isBuilt, builtLangs, reload, scoreCards, rankCardsByEmbedding, STRONG_SIM, STRONG_MARGIN, GAP_FLOOR };

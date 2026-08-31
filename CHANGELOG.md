@@ -86,6 +86,27 @@ release also carries fuller notes on its
   Obsolete provider rolling-average columns and known persistent Pokémon scan/art
   artifacts are removed during upgrade; value charts use recorded price history.
 
+## [1.8.4-mtg] - 2026-08-30
+
+### Added
+- **Collection multi-select filters.** Set, supertype, type, rarity, condition,
+  printing, mana value, and language filters now accept multiple values while
+  preserving the unified local/Scryfall-syntax search path.
+- **Scanner candidate and printing refinement.** Scanner-assisted searches can
+  rank Scryfall candidates by the captured image, list alternate printings, and
+  fall back to a dedicated manual-search action.
+
+### Improved
+- **Scanner performance and robustness.** Adopted the faster detector model,
+  reusable frame buffers, non-crossing quad ordering, stale-request guards, and
+  mobile detection optimizations.
+- **Collector-number input.** Search accepts `#5` and fraction forms such as
+  `5/64` without losing the fork's cached query behavior.
+
+### Fixed
+- **Price-history collisions.** Consecutive price movements in the same
+  millisecond are retained instead of being silently ignored.
+
 ## [1.8.1] - 2026-08-19
 
 ### Fixed

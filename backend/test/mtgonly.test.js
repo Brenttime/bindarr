@@ -48,10 +48,16 @@ const failures = [
   ...scan(activeBackend, [retiredBrandOrProvider, retiredUiOrDataShape, providerSpecificSetColumn]),
   ...scan(currentDocs, [retiredBrandOrProvider, retiredUiOrDataShape, providerSpecificSetColumn]),
 ];
-// The installation guide keeps one exact pre-v1.5 database filename so owners
-// can recognize the file that upgrades rename. Strip only that compatibility
-// token; all other retired terminology remains forbidden.
-const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
+// The README's "About this fork" section intentionally names retired upstream
+// products to document that they are unsupported. Verify that wording as policy,
+// then exclude only that bounded section from the active-feature residue scan.
+const readmeRaw = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+const forkPolicy = readmeRaw.match(/## About this fork\n([\s\S]*?)\n---\n/);
+assert.ok(forkPolicy, 'README must document how this fork differs from upstream');
+assert.match(forkPolicy[1], /supports \*\*Magic: The Gathering only\*\*/);
+assert.match(forkPolicy[1], /no Pok[eé]mon, Lorcana, game picker/i);
+const readme = readmeRaw
+  .replace(forkPolicy[0], '')
   .replaceAll('pokemon_cards', 'legacy_database');
 for (const pattern of [retiredBrandOrProvider, retiredUiOrDataShape, providerSpecificSetColumn]) {
   if (pattern.test(readme)) failures.push(`README.md matches ${pattern}`);

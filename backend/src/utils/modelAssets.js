@@ -3,13 +3,12 @@
 // Three different things get called "the scan data", they are not
 // interchangeable, and the difference decides what a user should press:
 //
-//   MODELS (cornelius + milo, ~9.6 MB) — the detector and the embedder. Nothing
+//   MODELS (cornelius + milo, ~8 MB) — the detector and the embedder. Nothing
 //   scans without them, and they are the same two files for every install. NOT in
-//   this repository and NOT baked into the container image: both are AGPL-3.0
-//   while Bindarr is MIT, so shipping them inside an MIT artifact is a licensing
-//   decision this project declines to make for its operators. Fetching them into
-//   your own install is your call, which is why this is a button and not a
-//   background task.
+//   this repository and NOT baked into the container image: the detector is MIT,
+//   the embedder is AGPL-3.0-only, and distributing their aggregate requires
+//   satisfying both licenses. Fetching them into your own install is your call,
+//   which is why this is a button and not a background task.
 //
 //   PUBLISHED CATALOG (~56 MB) — precomputed embeddings for the whole MTG card
 //   pool, published by the model's author. Instant, but a dated snapshot: it is
@@ -36,7 +35,7 @@ const HF = 'https://huggingface.co';
 // creation with a protobuf error that says nothing about the download, and a
 // truncated catalog loads as garbage that quietly scores every card wrong.
 const MODELS = [
-  { name: 'cornelius.onnx', repo: 'HanClinto/cornelius', file: 'model.onnx', bytes: 4407545 },
+  { name: 'cornelius.onnx', repo: 'HanClinto/ccgdetector-fastweb-single', file: 'fastweb-single-1.39.onnx', bytes: 3185226 },
   { name: 'milo.onnx', repo: 'HanClinto/milo', file: 'model.onnx', bytes: 5191100 },
 ];
 
@@ -48,15 +47,21 @@ const CATALOGS = [
 ];
 
 const LICENSE = {
-  spdx: 'AGPL-3.0',
-  urls: ['https://huggingface.co/HanClinto/cornelius', 'https://huggingface.co/HanClinto/milo'],
+  // The detector is MIT; the embedding model is AGPL-3.0-only. Shipping the
+  // recogniser requires satisfying both asset licenses.
+  spdx: 'MIT AND AGPL-3.0-only',
+  urls: ['https://huggingface.co/HanClinto/ccgdetector-fastweb-single', 'https://huggingface.co/HanClinto/milo'],
 };
 
 const assetPath = (a) => path.join(MODEL_DIR, a.name);
-// Present means present AND the right size. A half-written file from a killed
-// container reads as installed otherwise, and then fails at inference time.
+// Present means present AND the configured version's exact size. A half-written
+// file fails at inference time, while accepting the previous 4.41 MB detector as
+// present would prevent the Admin flow from ever upgrading it to fastweb-single.
 const isPresent = (a) => {
-  try { return fs.statSync(assetPath(a)).size === a.bytes; } catch { return false; }
+  try {
+    const sz = fs.statSync(assetPath(a)).size;
+    return sz === a.bytes;
+  } catch { return false; }
 };
 
 // One download at a time, mirroring catalog.js: these are tens of megabytes from
@@ -86,6 +91,7 @@ async function fetchAsset(a, onProgress) {
   if (isPresent(a)) return 'present';
   fs.mkdirSync(MODEL_DIR, { recursive: true });
   const res = await fetch(`${HF}/${a.repo}/resolve/main/${a.file}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
     redirect: 'follow', signal: AbortSignal.timeout(900000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${a.name}`);
