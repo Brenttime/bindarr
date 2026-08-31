@@ -527,36 +527,36 @@ function rankCardsByEmbedding(cards, cats, emb) {
   }
 
   for (const card of cards) {
-      let maxScore = null;
-      const possibleIds = new Set();
-      if (card.id) {
-        possibleIds.add(String(card.id));
-        possibleIds.add(String(card.id).replace(/^mtg-/, ''));
-      }
-      if (card.scryfall_id) possibleIds.add(String(card.scryfall_id));
-      if (card.tcgplayer_id) possibleIds.add(String(card.tcgplayer_id));
-      if (card.tcgplayer_product_id) possibleIds.add(String(card.tcgplayer_product_id));
+    let maxScore = null;
+    const possibleIds = new Set();
+    if (card.id) {
+      possibleIds.add(String(card.id));
+      possibleIds.add(String(card.id).replace(/^mtg-/, ''));
+    }
+    if (card.scryfall_id) possibleIds.add(String(card.scryfall_id));
+    if (card.tcgplayer_id) possibleIds.add(String(card.tcgplayer_id));
+    if (card.tcgplayer_product_id) possibleIds.add(String(card.tcgplayer_product_id));
 
-      for (const c of cats) {
-        for (const pid of possibleIds) {
-          const indices = c.idMap.get(pid) || [];
-          for (const idx of indices) {
-            const off = idx * c.dim;
-            let dot = 0;
-            for (let d = 0; d < c.dim; d++) {
-              dot += emb[d] * c.cat[off + d];
-            }
-            if (maxScore === null || dot > maxScore) {
-              maxScore = dot;
-            }
+    for (const c of cats) {
+      for (const pid of possibleIds) {
+        const indices = c.idMap.get(pid) || [];
+        for (const idx of indices) {
+          const off = idx * c.dim;
+          let dot = 0;
+          for (let d = 0; d < c.dim; d++) {
+            dot += emb[d] * c.cat[off + d];
+          }
+          if (maxScore === null || dot > maxScore) {
+            maxScore = dot;
           }
         }
       }
+    }
 
-      if (maxScore !== null) {
-        card.score = maxScore;
-        card.__match = { score: maxScore };
-      }
+    if (maxScore !== null) {
+      card.score = maxScore;
+      card.__match = { score: maxScore };
+    }
   }
 
   return [...cards].sort((a, b) => {
