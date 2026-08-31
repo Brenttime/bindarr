@@ -54,13 +54,12 @@ const LICENSE = {
 };
 
 const assetPath = (a) => path.join(MODEL_DIR, a.name);
-// Present means present AND the right size. A half-written file from a killed
-// container reads as installed otherwise, and then fails at inference time.
-// Supports both new fastweb-single (3.19 MB) and previous cornelius (4.41 MB).
+// Present means present AND the configured version's exact size. A half-written
+// file fails at inference time, while accepting the previous 4.41 MB detector as
+// present would prevent the Admin flow from ever upgrading it to fastweb-single.
 const isPresent = (a) => {
   try {
     const sz = fs.statSync(assetPath(a)).size;
-    if (a.name === 'cornelius.onnx') return sz === a.bytes || sz === 4407545;
     return sz === a.bytes;
   } catch { return false; }
 };

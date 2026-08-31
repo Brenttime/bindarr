@@ -1459,36 +1459,49 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const findOtherPrintings = async () => {
     if (!selectedCard || findingPrintings) return;
     const requestId = ++lookupRequestId.current;
+    const searchLang = scanLang;
+    const cardName = selectedCard.name;
+    const hasImage = !!lastScanImgRef.current;
+    const limit = 250;
     setFindingPrintings(true);
     try {
-      const searchLang = scanLang;
-      const p = new URLSearchParams({
-        lang: searchLang,
-        name: selectedCard.name,
-        prints: '1',
-        limit: '250',
-        scope: 'internet',
-      });
-      const hasImage = lastScanImgRef.current;
-      const res = hasImage
-        ? await fetch('/api/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              lang: searchLang,
-              name: selectedCard.name,
-              prints: '1',
-              limit: 250,
-              scope: 'internet',
-              image: lastScanImgRef.current,
-              cropped: lastScanCroppedRef.current,
-            }),
-          })
-        : await fetch(`/api/search?${p.toString()}`);
-      if (requestId !== lookupRequestId.current) return;
-      const raw = res.ok ? await res.json() : [];
-      if (requestId !== lookupRequestId.current) return;
-      const found = [...raw].sort((a, b) => {
+      const all = [];
+      let page = 1;
+      let total = null;
+      let hasMore = true;
+
+      while (hasMore) {
+        const fields = {
+          lang: searchLang,
+          name: cardName,
+          prints: '1',
+          limit,
+          page,
+          scope: 'internet',
+        };
+        const res = hasImage
+          ? await fetch('/api/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...fields,
+                image: lastScanImgRef.current,
+                cropped: lastScanCroppedRef.current,
+              }),
+            })
+          : await fetch(`/api/search?${new URLSearchParams(fields).toString()}`);
+        if (requestId !== lookupRequestId.current) return;
+        if (!res.ok) throw new Error(`printing search returned ${res.status}`);
+        const batch = await res.json();
+        if (requestId !== lookupRequestId.current) return;
+        all.push(...batch);
+        const reported = Number.parseInt(res.headers.get('X-Total-Count'), 10);
+        if (Number.isFinite(reported)) total = reported;
+        hasMore = batch.length === limit && (total === null || all.length < total);
+        if (hasMore) page += 1;
+      }
+
+      const found = [...new Map(all.map(card => [card.id, card])).values()].sort((a, b) => {
         const aScore = a.score !== undefined && a.score !== null ? a.score : -Infinity;
         const bScore = b.score !== undefined && b.score !== null ? b.score : -Infinity;
         if (aScore !== bScore) return bScore - aScore;
@@ -1562,6 +1575,14 @@ function CameraScanner({ onAddSuccess, showToast }) {
     }
   };
 
+  const changeManualSearchText = (value) => {
+    // Editing the query cancels any response for the previous text and releases
+    // the submit button immediately for the new search.
+    lookupRequestId.current += 1;
+    setManualSearching(false);
+    setManualSearchText(value);
+  };
+
   const closeDrawer = () => {
     setIsDrawerOpen(false);
     setSelectedCard(null);
@@ -1571,8 +1592,8 @@ function CameraScanner({ onAddSuccess, showToast }) {
     setPrinting('Normal');
     setLanguage(langName(scanLang));
     setPurchasePrice(0);
-    autoArmed.current = true;
-    capturedQuad.current = null;
+    // Keep the captured quad disarmed. A close/save must not immediately scan the
+    // same physical card again; scene-change detection or explicit Rescan rearms.
     resolvedDupIdRef.current = null;
     // Restart camera on close only if stream was stopped
     if (!stream || !cameraActive) {
@@ -2294,8 +2315,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       setAutoAddTargetCard(null);
                       setAutoAddCountdown(null);
                       setAutoAddEditing(false);
-                      autoArmed.current = true;
-                      capturedQuad.current = null;
+                      // Leave this card disarmed until it leaves or changes.
                       resolvedDupIdRef.current = null;
                       showToast(t('scan.autoAddCancelled'));
                     }}
@@ -2331,8 +2351,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
                       setAutoAddTargetCard(null);
                       setAutoAddCountdown(null);
                       setAutoAddAlternatives([]);
-                      autoArmed.current = true;
-                      capturedQuad.current = null;
+                      // Leave this card disarmed until it leaves or changes.
                       resolvedDupIdRef.current = null;
                       showToast(t('scan.autoAddCancelled'));
                     }}
@@ -2545,13 +2564,14 @@ function CameraScanner({ onAddSuccess, showToast }) {
                     placeholder={t('scan.manualSearchPlaceholder')}
                     className="input-control"
                     value={manualSearchText}
-                    onChange={(e) => setManualSearchText(e.target.value)}
+                    onChange={(e) => changeManualSearchText(e.target.value)}
                     style={{ width: '100%', padding: '0.4rem 2rem 0.4rem 0.6rem', fontSize: '0.8rem' }}
                   />
                   {manualSearchText && (
                     <button
                       type="button"
-                      onClick={() => setManualSearchText('')}
+                      onClick={() => changeManualSearchText('')}
+                      aria-label={t('scan.clearManualSearch')}
                       style={{
                         position: 'absolute',
                         right: '0.4rem',
