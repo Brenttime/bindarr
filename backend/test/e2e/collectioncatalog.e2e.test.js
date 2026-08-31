@@ -14,6 +14,7 @@ const { spawn } = require('child_process');
 const tmpDb = path.join(os.tmpdir(), `bindarr-colcatalog-e2e-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 const db = require('../../src/db');
+const oracleTags = require('../../src/oracleTags');
 const projectRoot = path.join(__dirname, '../../../');
 
 async function waitForServer(port) {
@@ -122,6 +123,92 @@ async function runTests() {
     res = await fetch(`${base}/api/search?scope=collection&q=${encodeURIComponent('otag:sneak')}`);
     assert.ok(res.status === 401 || res.status === 403, `catalog query must require auth, got ${res.status}`);
     console.log('PASS: F4-TC4');
+
+    // Local Oracle Tags path: route page/limit must be passed through as a
+    // LOCAL collection-row window (up to the collection-specific 2000 cap),
+    // while X-Total-Count remains the complete matching row count.
+    await db.run(`UPDATE card_cache SET oracle_id = 'oracle-lotus', scryfall_search_eligible = 1 WHERE id = 'mtg-lea-232'`);
+    await db.run(`UPDATE collection SET added_at = '2026-01-01 00:00:00' WHERE card_id = 'mtg-lea-232'`);
+    for (let i = 1; i <= 3; i++) {
+      await db.run(
+        `INSERT INTO card_cache
+          (id, oracle_id, scryfall_search_eligible, name, supertype, subtypes, types, rarity, set_id, set_name,
+           number, color_identity, language)
+         VALUES (?, ?, 1, ?, '', '["Instant"]', '[]', 'Common', 'tst', 'Test', ?, '[]', 'English')`,
+        [`mtg-local-${i}`, `oracle-local-${i}`, `Local Tagged ${i}`, String(i)]
+      );
+      await db.run(
+        `INSERT INTO collection (card_id, user_id, quantity, added_at)
+         VALUES (?, ?, 1, '2026-01-01 00:00:00')`,
+        [`mtg-local-${i}`, adminId.id]
+      );
+    }
+    await oracleTags.importTagObjects([{
+      object: 'tag', type: 'oracle', id: 'tag-local-page', slug: 'local-page',
+      label: 'Local Page', taggings: [
+        { oracle_id: 'oracle-lotus' },
+        { oracle_id: 'oracle-local-1' },
+        { oracle_id: 'oracle-local-2' },
+        { oracle_id: 'oracle-local-3' },
+      ],
+    }], '2026-08-31T00:00:00Z');
+    // The live-fallback fixture also warmed an unowned card without oracle_id.
+    // Mark the one-time backfill complete so readiness reflects production after
+    // that background job has exhausted its not_found list.
+    await db.run('UPDATE app_settings SET oracle_id_backfill_completed_at = ? WHERE id = 1', [Date.now()]);
+
+    const pages = [];
+    let snapshot = null;
+    for (const page of [1, 2]) {
+      const snapshotParam = snapshot ? `&snapshot=${encodeURIComponent(snapshot)}` : '';
+      res = await fetch(
+        `${base}/api/search?scope=collection&q=${encodeURIComponent('otag:local-page')}&limit=2&page=${page}${snapshotParam}`,
+        { headers: authHeaders }
+      );
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.headers.get('x-catalog-cache'), 'local');
+      assert.strictEqual(res.headers.get('x-catalog-complete'), '1');
+      assert.strictEqual(res.headers.get('x-total-count'), '4');
+      if (!snapshot) snapshot = res.headers.get('x-catalog-snapshot');
+      assert.ok(snapshot, 'first page returns a catalog snapshot token');
+      assert.strictEqual(res.headers.get('x-catalog-snapshot'), snapshot,
+        'every accepted page belongs to the same collection/tag snapshot');
+      pages.push(await res.json());
+    }
+    assert.deepStrictEqual(pages.map(page => page.length), [2, 2]);
+    const pageIds = pages.flat().map(card => card.entry_id);
+    assert.strictEqual(new Set(pageIds).size, 4, 'route pages have no duplicate collection rows');
+    assert.deepStrictEqual(pageIds, [...pageIds].sort((a, b) => b - a),
+      'route pages use deterministic added_at DESC, id DESC order');
+
+    // Existing callers that omit pagination still receive the complete result,
+    // preserving the pre-pagination API contract.
+    res = await fetch(
+      `${base}/api/search?scope=collection&q=${encodeURIComponent('otag:local-page')}`,
+      { headers: authHeaders }
+    );
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual((await res.json()).length, 4, 'unpaginated collection catalog response is not silently capped');
+
+    // A collection mutation invalidates the token before another page can be
+    // mixed into the old first-page result.
+    await db.run(`UPDATE collection SET favorite = 1 WHERE card_id = 'mtg-local-1'`);
+    res = await fetch(
+      `${base}/api/search?scope=collection&q=${encodeURIComponent('otag:local-page')}&limit=2&page=2&snapshot=${encodeURIComponent(snapshot)}`,
+      { headers: authHeaders }
+    );
+    assert.strictEqual(res.status, 409, 'stale pagination token fails closed after collection mutation');
+    assert.strictEqual((await res.json()).error, 'CATALOG_SNAPSHOT_CHANGED');
+
+    // count=0 consistently omits X-Total-Count, including an empty page.
+    res = await fetch(
+      `${base}/api/search?scope=collection&q=${encodeURIComponent('otag:local-page')}&limit=2&page=99&count=0`,
+      { headers: authHeaders }
+    );
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.headers.get('x-total-count'), null);
+    assert.deepStrictEqual(await res.json(), []);
+    console.log('PASS: local otag pagination + snapshot contract');
   } finally {
     server.kill('SIGKILL');
     for (const suffix of ['', '-wal', '-shm']) {

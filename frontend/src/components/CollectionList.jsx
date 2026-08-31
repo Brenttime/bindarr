@@ -8,9 +8,16 @@ import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '.
 import { sortCardsByOrder } from '../utils/cardSort';
 import { buildCardListText } from '../utils/cardList';
 import { fetchWithRetry } from '../utils/fetchWithRetry';
+import {
+  catalogDebounceMs,
+  catalogRowsForQuery,
+  loadCatalogCollection,
+  mapWithConcurrency,
+  reconcileCollectionHydration,
+} from '../utils/collectionCatalogLoading';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
-import { compileQuery, classifyQuery } from '../../../shared/scryfallQuery.js';
+import { analyze, compileQuery } from '../../../shared/scryfallQuery.js';
 import { looksLikeSyntax } from '../utils/scryfallSyntax';
 import CardInspectorModal from './CardInspectorModal';
 import AddToDeckSelect from './AddToDeckSelect';
@@ -22,6 +29,7 @@ const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-mu
 const INITIAL_RENDER_COUNT = 96;
 const LOAD_MORE_RENDER_COUNT = 240;
 const BACKGROUND_PAGE_SIZE = 2000;
+const BACKGROUND_PAGE_CONCURRENCY = 2;
 
 // Maps each Sort By option to sortCardsByOrder criteria so ordering remains
 // consistent (set = chronological via setsList, type = name order — there is no
@@ -61,6 +69,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const [loadingMore, setLoadingMore] = useState(false);
   const fetchGenerationRef = useRef(0);
   const fetchAbortRef = useRef(null);
+  const collectionHydrationRef = useRef({ key: null, status: 'idle' });
 
   useEffect(() => {
     if (selectedCardFilter) {
@@ -84,7 +93,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // contain an operator token, a quote, a paren, or a leading "-", so the
   // detection cannot misfire on a name; a string that LOOKS like syntax but
   // does not parse is shown inline as an error and does not filter.
-  const [searchFilter, setSearchFilter] = useState('');
+  const [searchFilter, setSearchFilter] = useState(() => selectedCardFilter || '');
   const [rarityFilter, setRarityFilter] = useState([]);
   const [conditionFilter, setConditionFilter] = useState([]);
   const [printingFilter, setPrintingFilter] = useState([]);
@@ -105,14 +114,17 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // resolves it against Scryfall and returns the user's OWN rows for the
   // matches. Debounced, because a half-typed tag is not a query yet — and
   // every half-typed query would otherwise be a real API call.
-  const [liveCatalog, setLiveCatalog] = useState(null);
-  const [liveLoading, setLiveLoading] = useState(false);
-  const [liveError, setLiveError] = useState(null);
-  // Catalog answers can be a PREFIX of the tag's full match list when the
-  // upstream walk hit its page cap (X-Catalog-Complete: 0). Surface that so
-  // the user is never shown a truncated list as if it were the whole.
-  const [liveIncomplete, setLiveIncomplete] = useState(false);
+  const [liveState, setLiveState] = useState({
+    queryKey: null,
+    rows: null,
+    loading: false,
+    error: null,
+    incomplete: false,
+    total: null,
+    cacheStatus: null,
+  });
   const liveFetchRef = useRef(0);
+  const liveAbortRef = useRef(null);
 
   // Stacking state (default to stacked)
   const [stackCards, setStackCards] = useState(true);
@@ -126,25 +138,17 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   } = useMultiSelect({ showToast, onChanged: onUpdate });
 
   useEffect(() => {
-    fetchCollection();
-    return () => {
-      fetchGenerationRef.current += 1;
-      fetchAbortRef.current?.abort();
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statsTrigger, tradeOnly]);
-
-  useEffect(() => {
     fetchSets();
   // The set catalog is static collection-view metadata; card mutations should
   // not download it again.
   }, []);
 
-  const fetchCollection = async () => {
+  const fetchCollection = async (hydrationKey) => {
     const generation = ++fetchGenerationRef.current;
     fetchAbortRef.current?.abort();
     const controller = new AbortController();
     fetchAbortRef.current = controller;
+    collectionHydrationRef.current = { key: hydrationKey, status: 'loading' };
 
     try {
       setLoading(true);
@@ -169,32 +173,41 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       if (generation !== fetchGenerationRef.current) return;
       setCollection(firstPage);
       setLoading(false);
+      collectionHydrationRef.current = {
+        key: hydrationKey,
+        status: firstPage.length < total ? 'partial' : 'complete',
+      };
 
       if (firstPage.length < total) {
         setLoadingMore(true);
-        const pageRequests = [];
+        const pageOffsets = [];
         for (let offset = firstPage.length; offset < total; offset += BACKGROUND_PAGE_SIZE) {
-          const pageParams = new URLSearchParams({
-            limit: String(BACKGROUND_PAGE_SIZE),
-            offset: String(offset),
-            count: '0'
-          });
-          if (tradeOnly) pageParams.set('is_trade', '1');
-          pageRequests.push(
-            fetchWithRetry(`/api/collection?${pageParams}`, { signal: controller.signal })
-              .then(pageResponse => {
-                if (!pageResponse.ok) throw new Error(`HTTP ${pageResponse.status}`);
-                return pageResponse.json();
-              })
-          );
+          pageOffsets.push(offset);
         }
 
-        // Fetch the remaining slices concurrently, then commit once. The page is
-        // already interactive while this runs, and one transition avoids sorting
-        // and regrouping the growing collection after every network chunk.
+        // Fetch at most two slices concurrently. Large collections can require
+        // dozens of pages; eagerly Promise.all-ing every request competes with
+        // images and interactive API work even though we commit only once.
         let pages;
         try {
-          pages = await Promise.all(pageRequests);
+          pages = await mapWithConcurrency(
+            pageOffsets,
+            BACKGROUND_PAGE_CONCURRENCY,
+            async (offset) => {
+              const pageParams = new URLSearchParams({
+                limit: String(BACKGROUND_PAGE_SIZE),
+                offset: String(offset),
+                count: '0'
+              });
+              if (tradeOnly) pageParams.set('is_trade', '1');
+              const pageResponse = await fetchWithRetry(
+                `/api/collection?${pageParams}`,
+                { signal: controller.signal }
+              );
+              if (!pageResponse.ok) throw new Error(`HTTP ${pageResponse.status}`);
+              return pageResponse.json();
+            }
+          );
         } catch (backgroundError) {
           if (backgroundError?.name === 'AbortError' || controller.signal.aborted) throw backgroundError;
 
@@ -206,14 +219,24 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           if (!fallbackResponse.ok) throw backgroundError;
           const fullCollection = await fallbackResponse.json();
           if (generation !== fetchGenerationRef.current) return;
+          collectionHydrationRef.current = { key: hydrationKey, status: 'complete' };
           startTransition(() => setCollection(fullCollection));
           return;
         }
         if (generation !== fetchGenerationRef.current) return;
+        collectionHydrationRef.current = { key: hydrationKey, status: 'complete' };
         startTransition(() => setCollection(firstPage.concat(...pages)));
       }
     } catch (err) {
-      if (err?.name === 'AbortError') return;
+      if (err?.name === 'AbortError') {
+        if (generation === fetchGenerationRef.current) {
+          collectionHydrationRef.current = { key: hydrationKey, status: 'aborted' };
+        }
+        return;
+      }
+      if (generation === fetchGenerationRef.current) {
+        collectionHydrationRef.current = { key: hydrationKey, status: 'error' };
+      }
       console.error(err);
       showToast(t('collection.errLoad'));
     } finally {
@@ -345,14 +368,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const scryfallPredicate = useMemo(() => {
     const text = searchFilter.trim();
     if (!text || !looksLikeSyntax(text)) return { mode: 'off' };
-    let classification;
+    let analysis;
     try {
-      classification = classifyQuery(text);
+      analysis = analyze(text);
     } catch (err) {
       return { mode: 'error', error: err instanceof Error ? err.message : String(err) };
     }
-    if (classification.mode === 'catalog') return { mode: 'catalog' };
-    return { mode: 'local', test: compileQuery(text) };
+    if (analysis.mode === 'catalog') return { mode: 'catalog', operators: analysis.operators };
+    return { mode: 'local', operators: analysis.operators, test: compileQuery(text) };
   }, [searchFilter]);
 
   // No hint copy under the box (it made the panel jumbled on phones), so a
@@ -366,61 +389,144 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     }
   }, [scryfallPredicate, showToast]);
 
-  // The catalog query is the one that actually reaches Scryfall. Debounced,
-  // because a half-typed tag is not a query yet — and every half-typed query
-  // would otherwise be a real API call. Each new query supersedes in-flight
-  // answers so a slow response can never paint over a newer one.
-  //
-  // The PREVIOUS result stays visible while a new catalog answer is in flight
-  // (see baseCollection + the "updating" pill below): a cold walk can take
-  // seconds, and blanking the whole collection to a spinner for that long is
-  // what made a cached tag feel "slow". The previous list is the honest
-  // fallback — it is the same tag's answer from minutes/hours ago.
+  // Catalog results replace the ordinary collection, so downloading both is
+  // pure waste. Reconcile by data-generation key: catalog mode aborts a
+  // partial ordinary hydration, and returning to any browser-filtered mode
+  // restarts only when that hydration was aborted/partial or the key changed.
+  const collectionHydrationKey = `${String(statsTrigger)}|${tradeOnly ? 'trade' : 'all'}`;
+  useEffect(() => {
+    const decision = reconcileCollectionHydration(
+      scryfallPredicate.mode,
+      collectionHydrationKey,
+      collectionHydrationRef.current,
+    );
+    collectionHydrationRef.current = decision.state;
+    if (scryfallPredicate.mode === 'catalog') {
+      if (decision.action === 'abort') {
+        fetchGenerationRef.current += 1;
+        fetchAbortRef.current?.abort();
+      }
+      setLoading(false);
+      setLoadingMore(false);
+    } else if (decision.action === 'start') {
+      fetchCollection(collectionHydrationKey);
+    }
+  // fetchCollection intentionally keys its lifecycle through refs above.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collectionHydrationKey, scryfallPredicate.mode]);
+
+  // Each catalog generation owns an AbortController as well as a generation
+  // guard. The first 96 rows paint immediately; capped 2000-row pages hydrate
+  // in the background and commit together. Cached rows remain visible only
+  // when their query key exactly matches the query being refreshed.
+  const catalogQueryKey = searchFilter.trim();
   useEffect(() => {
     if (scryfallPredicate.mode !== 'catalog') {
       liveFetchRef.current += 1;
-      setLiveCatalog(null);
-      setLiveLoading(false);
-      setLiveError(null);
+      liveAbortRef.current?.abort();
+      setLiveState({
+        queryKey: null, rows: null, loading: false, error: null,
+        incomplete: false, total: null, cacheStatus: null,
+      });
       return;
     }
+
     const generation = ++liveFetchRef.current;
+    liveAbortRef.current?.abort();
+    const controller = new AbortController();
+    liveAbortRef.current = controller;
+    const isCurrent = () => generation === liveFetchRef.current && !controller.signal.aborted;
+
+    setLiveState(previous => ({
+      queryKey: catalogQueryKey,
+      rows: previous.queryKey === catalogQueryKey ? previous.rows : null,
+      loading: true,
+      error: null,
+      incomplete: previous.queryKey === catalogQueryKey ? previous.incomplete : false,
+      total: previous.queryKey === catalogQueryKey ? previous.total : null,
+      cacheStatus: previous.queryKey === catalogQueryKey ? previous.cacheStatus : null,
+    }));
+
     const timer = setTimeout(async () => {
-      setLiveLoading(true);
-      setLiveError(null);
-      // liveIncomplete is kept (not reset here) so the previous answer's
-      // "may be incomplete" note stays honest while a re-fetch is in flight;
-      // each outcome below replaces it.
       try {
-        const params = new URLSearchParams();
-        params.set('scope', 'collection');
-        params.set('q', searchFilter.trim());
-        const response = await fetchWithRetry(`/api/search?${params.toString()}`);
-        if (generation !== liveFetchRef.current) return;
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          setLiveCatalog([]);
-          setLiveIncomplete(false);
-          if (response.status === 400) setLiveError(t('collection.scryfallInvalidQuery'));
-          else if (response.status === 429) setLiveError(t('collection.scryfallRateLimited'));
-          else setLiveError(errData.error || t('collection.scryfallLiveFailed'));
-          return;
-        }
-        setLiveCatalog(await response.json());
-        // The server flags a walk that stopped at its page cap: the list is a
-        // real but INCOMPLETE prefix of the tag's matches.
-        setLiveIncomplete(response.headers.get('X-Catalog-Complete') === '0');
+        const result = await loadCatalogCollection({
+          query: catalogQueryKey,
+          signal: controller.signal,
+          isCurrent,
+          onFirstPage: first => {
+            if (!isCurrent()) return;
+            setLiveState({
+              queryKey: catalogQueryKey,
+              rows: first.rows,
+              loading: first.incomplete,
+              error: null,
+              incomplete: first.incomplete,
+              total: first.total,
+              cacheStatus: first.cacheStatus,
+            });
+          },
+          onIncomplete: partial => {
+            if (!isCurrent()) return;
+            setLiveState({
+              queryKey: catalogQueryKey,
+              rows: partial.rows,
+              loading: false,
+              error: t('collection.scryfallLiveFailed'),
+              incomplete: true,
+              total: partial.total,
+              cacheStatus: partial.cacheStatus,
+            });
+            // Promise.all rejects on the failed page; stop any sibling page
+            // requests that are still consuming this generation's capacity.
+            controller.abort();
+          },
+        });
+        if (!isCurrent()) return;
+        startTransition(() => setLiveState({
+          queryKey: catalogQueryKey,
+          rows: result.rows,
+          loading: false,
+          error: null,
+          incomplete: result.incomplete,
+          total: result.total,
+          cacheStatus: result.cacheStatus,
+        }));
       } catch (err) {
-        if (err?.name === 'AbortError' || generation !== liveFetchRef.current) return;
-        setLiveError(t('collection.scryfallLiveFailed'));
-        setLiveCatalog([]);
-        setLiveIncomplete(false);
-      } finally {
-        if (generation === liveFetchRef.current) setLiveLoading(false);
+        if (err?.name === 'AbortError' || !isCurrent()) return;
+        let message = t('collection.scryfallLiveFailed');
+        if (err.status === 400) message = t('collection.scryfallInvalidQuery');
+        else if (err.status === 429) message = t('collection.scryfallRateLimited');
+        else if (err.payload?.error) message = err.payload.error;
+        setLiveState(previous => ({
+          ...previous,
+          queryKey: catalogQueryKey,
+          rows: err.stage === 'background' ? (previous.rows || []) : [],
+          loading: false,
+          error: message,
+          incomplete: err.stage === 'background',
+        }));
       }
-    }, 450);
-    return () => clearTimeout(timer);
-  }, [scryfallPredicate, searchFilter, t]);
+    }, catalogDebounceMs(scryfallPredicate.operators));
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [catalogQueryKey, scryfallPredicate, statsTrigger, t]);
+
+  useEffect(() => () => {
+    fetchGenerationRef.current += 1;
+    fetchAbortRef.current?.abort();
+    liveFetchRef.current += 1;
+    liveAbortRef.current?.abort();
+  }, []);
+
+  const liveCatalog = scryfallPredicate.mode === 'catalog'
+    ? catalogRowsForQuery(liveState, catalogQueryKey)
+    : null;
+  const liveLoading = scryfallPredicate.mode === 'catalog'
+    && (liveState.queryKey !== catalogQueryKey || liveState.loading);
+  const liveError = liveState.queryKey === catalogQueryKey ? liveState.error : null;
+  const liveIncomplete = liveState.queryKey === catalogQueryKey ? liveState.incomplete : false;
 
   // In catalog mode the answer only exists on the server: the live result
   // REPLACES the local rows — the binder behind it would read as "the query
@@ -536,6 +642,8 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     () => displayCards.reduce((sum, item) => sum + (item.price_trend || 0) * (item.quantity || 1), 0),
     [displayCards]
   );
+  const catalogResultsIncomplete = scryfallPredicate.mode === 'catalog'
+    && (liveLoading || liveIncomplete);
 
   return (
     <div>
@@ -789,7 +897,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             {scryfallPredicate.mode === 'catalog' && liveIncomplete ? ` · ${t('collection.scryfallLiveIncomplete')}` : ''}
             {liveError ? ` · ${liveError}` : ''}
           </span>
-          <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
+          {!catalogResultsIncomplete && (
+            <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
+          )}
         </div>
       )}
 
@@ -806,7 +916,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       {selectMode && (
         <div className="glass-panel" style={{ marginBottom: '1rem', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', position: 'sticky', top: '0.5rem', zIndex: 30 }}>
           <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.85rem' }}>{t('bulk.selected', { count: selectedIds.size })}</span>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={() => setSelectedIds(new Set(filteredCollection.map(i => i.entry_id)))}>{t('bulk.selectAll', { count: filteredCollection.length })}</button>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }}
+            disabled={catalogResultsIncomplete}
+            onClick={() => setSelectedIds(new Set(filteredCollection.map(i => i.entry_id)))}
+          >
+            {t('bulk.selectAll', { count: filteredCollection.length })}
+          </button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={clearSelection}>{t('bulk.clear')}</button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => handleExportSelectionList('plain')} title={t('settings.cardlistHint')}>{t('collection.exportListPlain')}</button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => handleExportSelectionList('detailed')} title={t('settings.cardlistHint')}>{t('collection.exportListDetailed')}</button>

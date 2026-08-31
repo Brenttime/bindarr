@@ -54,10 +54,14 @@ async function searchCards(req, res) {
   // When present it replaces the name/number/set fields entirely; the backend
   // passes it through to Scryfall verbatim.
   const q = typeof query.q === 'string' ? query.q : '';
-  // 1-based page over `limit`-sized pages. 250 is a sane cap on how much one
-  // Scryfall search will page through per request.
+  // 1-based page over `limit`-sized pages. Collection-catalog pages are local
+  // rows and may be large (bulk-selection uses them); ordinary internet search
+  // remains capped at 250 so one request cannot walk an excessive Scryfall
+  // window.
   const page = Math.max(1, parseInt(query.page, 10) || 1);
-  const limit = Math.min(250, Math.max(1, parseInt(query.limit, 10) || 60));
+  const maxLimit = scope === 'collection' && q.trim() ? 2000 : 250;
+  const limit = Math.min(maxLimit, Math.max(1, parseInt(query.limit, 10) || 60));
+  const hasCatalogWindow = query.page != null || query.limit != null;
   try {
     // A raw query against the collection scope that uses an operator the
     // stored rows cannot answer (otag:, availability:, artist:, ...) is
@@ -79,10 +83,18 @@ async function searchCards(req, res) {
         throw e;
       }
       if (mode === 'catalog') {
-        const { cards, total, complete, upstreamTotal, cacheStatus } = await scryfallApi.resolveCollectionQuery({
+        const includeTotal = query.count !== '0';
+        const { cards, total, complete, upstreamTotal, cacheStatus, snapshot } = await scryfallApi.resolveCollectionQuery({
           q, userId: req.user.id, lang,
+          // Preserve the historical API contract: callers that omit page and
+          // limit receive the complete owned result. Only explicit pagination
+          // opts into a bounded row window.
+          rowLimit: hasCatalogWindow ? limit : null,
+          rowOffset: hasCatalogWindow ? (page - 1) * limit : 0,
+          includeTotal,
+          expectedSnapshot: typeof query.snapshot === 'string' ? query.snapshot : null,
         });
-        res.set('X-Total-Count', String(total));
+        if (total != null) res.set('X-Total-Count', String(total));
         // Completeness: a walk that hit its page cap answered from a real
         // PREFIX of the tag's match list. Tell the UI so it can say "may be
         // incomplete" instead of presenting a truncated result as the whole.
@@ -92,7 +104,8 @@ async function searchCards(req, res) {
         // 'stale' = cache served + background refresh in flight; 'resolved' =
         // this request paid for the walk.
         res.set('X-Catalog-Cache', cacheStatus || 'unknown');
-        res.set('Access-Control-Expose-Headers', 'X-Total-Count, X-Catalog-Complete, X-Catalog-Upstream-Total, X-Catalog-Cache');
+        if (snapshot) res.set('X-Catalog-Snapshot', snapshot);
+        res.set('Access-Control-Expose-Headers', 'X-Total-Count, X-Catalog-Complete, X-Catalog-Upstream-Total, X-Catalog-Cache, X-Catalog-Snapshot');
         return res.json(cards);
       }
     }
@@ -139,6 +152,9 @@ async function searchCards(req, res) {
     }
     if (error.message === 'INVALID_QUERY') {
       return res.status(400).json({ error: 'INVALID_QUERY' });
+    }
+    if (error.message === 'CATALOG_SNAPSHOT_CHANGED') {
+      return res.status(409).json({ error: 'CATALOG_SNAPSHOT_CHANGED' });
     }
     if (error.message === 'UPSTREAM_UNAVAILABLE') {
       return res.status(503).json({ error: 'Card API is having trouble. Try again in a moment.' });

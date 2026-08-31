@@ -6,8 +6,8 @@
 // is the /api/collection row shape, and the walk is by GAME CARD (the
 // upstream query carries unique:cards) with the resolved names persisted to
 // collection_query_cache under a CANONICAL language code so a restart does
-// not re-walk. The cache is stale-while-revalidate (fresh 6h, serve-stale 7d,
-// one background revalidation per stale entry), and a walk cut at its page
+// not re-walk. The cache is stale-while-revalidate (fresh 6h; complete entries
+// serve stale indefinitely with one background revalidation), and a walk cut at its page
 // cap is persisted and surfaced as INCOMPLETE rather than silently truncated.
 // No framework — plain node + assert, same adapter-stub pattern as
 // scryfallrawquery.
@@ -137,7 +137,7 @@ async function main() {
     'non-English scopes the full query; unique:cards rides outside the scope');
 
   // A catalog query that matches nothing upstream is an empty answer, not an
-  // error — and it is NOT cached (a one-request 404 is cheap to re-ask).
+  // error — and the complete empty membership is cached durably.
   requested = [];
   scryfallApi.client.defaults.adapter = async (config) => { throw httpError(404); };
   const none = await scryfallApi.resolveCollectionQuery({ q: 'otag:nosuchtag123', userId: userId7 });
@@ -145,7 +145,11 @@ async function main() {
   assert.strictEqual(none.total, 0);
   assert.strictEqual(none.complete, true, 'an empty answer is a valid, complete answer');
   assert.strictEqual(none.upstreamTotal, 0, 'empty answers carry an explicit zero upstream total');
-  assert.strictEqual(none.cacheStatus, 'resolved', 'the 404 walk is not cached — each retry re-asks upstream');
+  assert.strictEqual(none.cacheStatus, 'resolved', 'the first 404 resolves a complete empty membership');
+  requested = [];
+  const noneAgain = await scryfallApi.resolveCollectionQuery({ q: 'otag:nosuchtag123', userId: userId7 });
+  assert.strictEqual(noneAgain.cacheStatus, 'fresh', 'a valid empty answer is cached');
+  assert.strictEqual(requested.length, 0, 'cached empty answer makes no second upstream request');
 
   // A bad query (400 upstream) is a fixable-query error, not a silent [].
   requested = [];
@@ -223,18 +227,48 @@ async function main() {
   const revalidated = await scryfallApi.resolveCollectionQuery({ q: QUERY, userId: userId7 });
   assert.strictEqual(revalidated.cacheStatus, 'fresh', 'after the revalidation lands, the entry is fresh again');
 
-  // 5. Expired entries (past the 7d stale bound) are NOT served stale: the
-  //    request pays for a synchronous re-walk itself (which may still be
-  //    served from the short-lived raw-page cache — correct, so the
-  //    observables are the status and the refreshed-in-place entry).
-  const expiredAt = Date.now() - 8 * 24 * 60 * 60 * 1000;
-  scryfallApi.collectionQueryCache.set(staleKey,
-    { ...scryfallApi.collectionQueryCache.get(staleKey), resolvedAt: expiredAt });
+  // 5. A COMPLETE durable result serves stale indefinitely. Seed a 30-day-old
+  //    disk entry for a query whose raw page has never been fetched, then hold
+  //    its provider response open. Two callers must both return immediately and
+  //    start exactly one background revalidation.
+  const veryOldAt = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const staleWalkKey = `${STALE_QUERY}\u0000${languages.toCode(null)}`;
+  scryfallApi.collectionQueryCache.delete(staleWalkKey);
+  await db.run(
+    `INSERT INTO collection_query_cache
+      (query, lang, names, upstream_total, fetched_count, complete, resolved_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+     ON CONFLICT(query, lang) DO UPDATE SET names=excluded.names, complete=1,
+       resolved_at=excluded.resolved_at, expires_at=excluded.expires_at`,
+    [STALE_QUERY, languages.toCode(null), JSON.stringify(['lightning bolt']), 1, 1,
+     veryOldAt, veryOldAt + 7 * 24 * 60 * 60 * 1000]
+  );
+  let releaseWalk;
+  const heldWalk = new Promise(resolve => { releaseWalk = resolve; });
   requested = [];
-  const expired = await scryfallApi.resolveCollectionQuery({ q: QUERY, userId: userId7 });
-  assert.strictEqual(expired.cacheStatus, 'resolved', 'an expired entry forces a synchronous re-walk');
-  assert.ok(scryfallApi.collectionQueryCache.get(staleKey).resolvedAt > expiredAt,
-    'the entry is refreshed in place, not evicted');
+  scryfallApi.client.defaults.adapter = async (config) => {
+    const url = new URL(config.url, 'https://api.scryfall.com');
+    const q = url.searchParams.get('q');
+    requested.push({ q });
+    if (q === `${STALE_QUERY} unique:cards`) {
+      await heldWalk;
+      return STALE_RESPONSE();
+    }
+    throw httpError(404);
+  };
+  const old1 = await scryfallApi.resolveCollectionQuery({ q: STALE_QUERY, userId: userId7 });
+  const old2 = await scryfallApi.resolveCollectionQuery({ q: STALE_QUERY, userId: userId7 });
+  assert.strictEqual(old1.cacheStatus, 'stale', '30-day complete entry serves without blocking');
+  assert.strictEqual(old2.cacheStatus, 'stale', 'concurrent caller also serves stale without joining the walk');
+  for (let i = 0; i < 100 && requested.length === 0; i++) await new Promise(r => setTimeout(r, 5));
+  assert.strictEqual(requested.filter(r => r.q === `${STALE_QUERY} unique:cards`).length, 1,
+    'exactly one background revalidation runs');
+  releaseWalk();
+  for (let i = 0; i < 200 && scryfallApi.collectionQueryCache.get(staleWalkKey).resolvedAt === veryOldAt; i++) {
+    await new Promise(r => setTimeout(r, 10));
+  }
+  assert.ok(scryfallApi.collectionQueryCache.get(staleWalkKey).resolvedAt > veryOldAt,
+    'background revalidation refreshes the complete entry');
 
   // 6. A walk cut at its page cap is a PARTIAL answer: persisted and surfaced
   //    as incomplete=true with the upstream total, never as a silent prefix.
@@ -249,7 +283,7 @@ async function main() {
     }
     throw httpError(404);
   };
-  const partial = await scryfallApi.resolveCollectionQuery({ q: 'otag:enormous', userId: userId7, limit: 5 });
+  const partial = await scryfallApi.resolveCollectionQuery({ q: 'otag:enormous', userId: userId7, walkLimit: 5 });
   assert.strictEqual(partial.complete, false, 'a cap-cut walk is flagged incomplete');
   assert.strictEqual(partial.upstreamTotal, 50000, 'the upstream total says how much was left behind');
   const partialRow = await db.all(

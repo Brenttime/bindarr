@@ -124,10 +124,19 @@ function localCacheQuery({ language, name, number, setList = [], limit, offset }
 // the returned rows drop into the collection screen's tiles unchanged (entry_id
 // drives bulk actions; quantity/condition/printing/language are per-entry).
 // One row per owned printing, same as the collection list.
-function ownedByNames(userId, names) {
+function ownedByNames(userId, names, { limit = 60, offset = 0 } = {}) {
   const clean = [...new Set(names.map(n => String(n || '').trim().toLowerCase()).filter(Boolean))];
-  if (!clean.length) return { sql: null, params: [] };
-  const placeholders = clean.map(() => '?').join(', ');
+  if (!clean.length) return { sql: null, params: [], countSql: null, countParams: [] };
+  // One JSON parameter instead of thousands of IN-list placeholders. This keeps
+  // broad live-fallback memberships below SQLite's variable ceiling while the
+  // local row window remains independently paginated.
+  const membership = JSON.stringify(clean);
+  const base = `
+    FROM collection c
+    JOIN card_cache cc ON c.card_id = cc.id
+    WHERE c.user_id = ? AND c.quantity > 0
+      AND ${sqlCardKey('cc')} IN (SELECT value FROM json_each(?))`;
+  const windowSql = limit == null ? '' : ' LIMIT ? OFFSET ?';
   const sql = `
     SELECT
       c.id AS entry_id,
@@ -141,6 +150,7 @@ function ownedByNames(userId, names) {
       c.is_trade,
       c.favorite,
       c.notes,
+      cc.oracle_id,
       cc.name,
       cc.printed_name,
       cc.supertype,
@@ -156,18 +166,21 @@ function ownedByNames(userId, names) {
       cc.price_trend,
       cc.price_normal,
       cc.price_holofoil,
+      cc.price_etched,
       cc.price_currency,
       cc.price_source,
       cc.tcgplayer_url,
       cc.cardmarket_url,
       cc.tcgplayer_product_id
-    FROM collection c
-    JOIN card_cache cc ON c.card_id = cc.id
-    WHERE c.user_id = ? AND c.quantity > 0
-      AND ${sqlCardKey('cc')} IN (${placeholders})
-    ORDER BY c.added_at DESC, c.id DESC
+    ${base}
+    ORDER BY c.added_at DESC, c.id DESC${windowSql}
   `;
-  return { sql, params: [userId, ...clean] };
+  return {
+    sql,
+    params: limit == null ? [userId, membership] : [userId, membership, limit, offset],
+    countSql: `SELECT COUNT(*) AS n ${base}`,
+    countParams: [userId, membership],
+  };
 }
 
 module.exports = { collectionQuery, localCacheQuery, ownedByNames, nameClause, numberClause };

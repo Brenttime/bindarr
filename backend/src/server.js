@@ -225,6 +225,12 @@ db.initDb()
   .then(async () => {
     console.log('Database tables verified/created successfully.');
 
+    // Daily Oracle Tags + one-time oracle_id backfill start in the background.
+    // Scheduling (not awaiting) here keeps health/application startup independent
+    // of both multi-megabyte Scryfall downloads.
+    const oracleTags = require('./oracleTags');
+    oracleTags.startOracleTagsService();
+
     // Un-stack legacy multi-quantity entries so every copy is its own row.
     // No-op once migrated.
     const { splitStackedEntries } = require('./utils/collectionHelpers');
@@ -268,17 +274,31 @@ db.initDb()
 
     // Daily: prices. Scryfall refreshes prices once a day, so this is both the
     // most often worth doing and the most often allowed. `force` because the
-    // interval itself is already the right cadence.
+    // interval itself is already the right cadence. A second checkpoint after
+    // the sweep retries any truncate that an active startup reader deferred.
+    const updatePricesAndCheckpoint = async (force = false) => {
+      try {
+        await scryfallApi.updateCollectionPrices(force);
+      } catch (error) {
+        console.error('MTG price update failed:', error.message);
+      } finally {
+        await oracleTags.checkpointWal();
+      }
+    };
     setInterval(() => {
-      scryfallApi.updateCollectionPrices(true);
+      updatePricesAndCheckpoint(true);
     }, 1000 * 60 * 60 * 24);
 
     // Shortly after startup, catch up if the last sweep was over a day ago.
     // NOT forced: without that gate this re-ran on every restart, which under
     // nodemon meant a full sweep on every code edit — for data that cannot have
     // changed since the last one.
-    setTimeout(() => {
-      scryfallApi.updateCollectionPrices();
+    setTimeout(async () => {
+      // Both jobs use Scryfall. Let the small one-time identity residual finish
+      // before a stale install queues thousands of price batches ahead of it;
+      // runMaintenance de-duplicates with the Oracle service's own startup run.
+      await oracleTags.runMaintenance();
+      await updatePricesAndCheckpoint();
     }, 30000);
 
     // Periodically purge expired sessions so the table doesn't grow unbounded
