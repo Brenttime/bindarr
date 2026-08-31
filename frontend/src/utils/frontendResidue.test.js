@@ -81,6 +81,7 @@ const sourcePolicies = [
   [join('components', 'CollectionList.jsx'), /\{item\.printing\}\s*•/],
   [join('components', 'SharedCollection.jsx'), />\{activeCard\.printing\}</],
   [join('components', 'CameraScanner.jsx'), /Market \(\{printing\}\)/],
+  [join('components', 'CameraScanner.jsx'), /\bscanGame\b|\bgame\s*:/],
 ];
 for (const [relative, forbidden] of sourcePolicies) {
   assert.doesNotMatch(readFileSync(join(srcDir, relative), 'utf8'), forbidden, `${relative} retains removed residue`);

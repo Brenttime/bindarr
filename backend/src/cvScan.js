@@ -121,14 +121,11 @@ function builtLangs(game = 'mtg') {
 function loadModels() {
   if (!models) {
     const cornPath = path.join(MODEL_DIR, 'cornelius.onnx');
-    const isFastWeb = fs.existsSync(cornPath) && fs.statSync(cornPath).size < 4000000;
     models = Promise.all([
       ort.InferenceSession.create(cornPath, SESSION_OPTS),
       ort.InferenceSession.create(path.join(MODEL_DIR, 'milo.onnx'), SESSION_OPTS),
-    ]).then(([corn, milo]) => {
-      corn.isFastWeb = isFastWeb;
-      return { corn, milo };
-    }).catch((err) => { models = null; throw err; });
+    ]).then(([corn, milo]) => ({ corn, milo }))
+      .catch((err) => { models = null; throw err; });
   }
   return models;
 }
@@ -311,7 +308,7 @@ async function detectAndDewarp(session, imageBuffer) {
     return { rgb: data, detected: false, sharpness };
   }
 
-  // Order points into [TL, TR, BR, BL] around centroid to guarantee non-crossing quad.
+  // Normalize the model's four corner predictions to perimeter order before warping.
   const pts = [];
   for (let k = 0; k < 4; k++) {
     pts.push({ x: corners[k * 2] * info.width, y: corners[k * 2 + 1] * info.height });
@@ -512,48 +509,38 @@ async function match(imageBuffer, game = 'mtg', topK = 8, opts = {}) {
   };
 }
 
-// Score a list of cards against an image embedding and sort them by visual similarity.
-async function scoreCards(imageBuffer, game = 'mtg', cards = [], opts = {}) {
-  if (!cards || cards.length <= 1 || !imageBuffer) return cards;
-  if (!isBuilt(game, opts.lang)) return cards;
-
-  try {
-    const cats = await loadAll(game, opts.lang);
-    if (!cats || !cats.length) return cards;
-
-    const det = opts.cropped
-      ? await useClientCrop(imageBuffer)
-      : await detectAndDewarp(cats[0].corn, imageBuffer);
-
-    const out = await cats[0].milo.run({ image: toTensor(det.rgb, EMBED_SIZE) });
-    const emb = out.embedding.data;
-
-    for (const c of cats) {
-      if (!c.idMap) {
-        const map = new Map();
-        for (let i = 0; i < c.n; i++) {
-          const raw = String(c.ids[i]).replace(/_back$/, '');
-          if (!map.has(raw)) map.set(raw, i);
-        }
-        c.idMap = map;
+// Rank already-resolved candidate cards against one image embedding. Catalogs
+// contain both `{id}` and `{id}_back` for double-faced cards, so each base id
+// deliberately maps to EVERY matching row and the best face wins.
+function rankCardsByEmbedding(cards, cats, emb) {
+  for (const c of cats) {
+    if (!c.idMap) {
+      const map = new Map();
+      for (let i = 0; i < c.n; i++) {
+        const raw = String(c.ids[i]).replace(/_back$/, '');
+        const indices = map.get(raw);
+        if (indices) indices.push(i);
+        else map.set(raw, [i]);
       }
+      c.idMap = map;
     }
+  }
 
-    for (const card of cards) {
+  for (const card of cards) {
       let maxScore = null;
-      const possibleIds = [];
+      const possibleIds = new Set();
       if (card.id) {
-        possibleIds.push(String(card.id));
-        possibleIds.push(String(card.id).replace(/^mtg-/, ''));
+        possibleIds.add(String(card.id));
+        possibleIds.add(String(card.id).replace(/^mtg-/, ''));
       }
-      if (card.scryfall_id) possibleIds.push(String(card.scryfall_id));
-      if (card.tcgplayer_id) possibleIds.push(String(card.tcgplayer_id));
-      if (card.tcgplayer_product_id) possibleIds.push(String(card.tcgplayer_product_id));
+      if (card.scryfall_id) possibleIds.add(String(card.scryfall_id));
+      if (card.tcgplayer_id) possibleIds.add(String(card.tcgplayer_id));
+      if (card.tcgplayer_product_id) possibleIds.add(String(card.tcgplayer_product_id));
 
       for (const c of cats) {
         for (const pid of possibleIds) {
-          const idx = c.idMap.get(pid);
-          if (idx !== undefined) {
+          const indices = c.idMap.get(pid) || [];
+          for (const idx of indices) {
             const off = idx * c.dim;
             let dot = 0;
             for (let d = 0; d < c.dim; d++) {
@@ -570,14 +557,33 @@ async function scoreCards(imageBuffer, game = 'mtg', cards = [], opts = {}) {
         card.score = maxScore;
         card.__match = { score: maxScore };
       }
-    }
+  }
 
-    return [...cards].sort((a, b) => {
-      const aScore = a.score !== undefined && a.score !== null ? a.score : -Infinity;
-      const bScore = b.score !== undefined && b.score !== null ? b.score : -Infinity;
-      if (aScore !== bScore) return bScore - aScore;
-      return (b.image_url ? 1 : 0) - (a.image_url ? 1 : 0);
-    });
+  return [...cards].sort((a, b) => {
+    const aScore = a.score !== undefined && a.score !== null ? a.score : -Infinity;
+    const bScore = b.score !== undefined && b.score !== null ? b.score : -Infinity;
+    if (aScore !== bScore) return bScore - aScore;
+    return (b.image_url ? 1 : 0) - (a.image_url ? 1 : 0);
+  });
+}
+
+// Score a list of cards against an image embedding and sort them by visual similarity.
+async function scoreCards(imageBuffer, game = 'mtg', cards = [], opts = {}) {
+  if (!cards || cards.length <= 1 || !imageBuffer) return cards;
+  if (!isBuilt(game, opts.lang)) return cards;
+
+  try {
+    const cats = await loadAll(game, opts.lang);
+    if (!cats || !cats.length) return cards;
+
+    const det = opts.cropped
+      ? await useClientCrop(imageBuffer)
+      : await detectAndDewarp(cats[0].corn, imageBuffer);
+
+    const out = await cats[0].milo.run({ image: toTensor(det.rgb, EMBED_SIZE) });
+    const emb = out.embedding.data;
+
+    return rankCardsByEmbedding(cards, cats, emb);
   } catch (err) {
     console.warn('cvScan.scoreCards failed:', err.message);
     return cards;
@@ -594,4 +600,4 @@ function reload(game, lang) {
   delete catalogs[game];
 }
 
-module.exports = { match, load, loadAll, isBuilt, builtLangs, reload, scoreCards, STRONG_SIM, STRONG_MARGIN, GAP_FLOOR };
+module.exports = { match, load, loadAll, isBuilt, builtLangs, reload, scoreCards, rankCardsByEmbedding, STRONG_SIM, STRONG_MARGIN, GAP_FLOOR };

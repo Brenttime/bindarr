@@ -15,6 +15,7 @@ import { LANGUAGES, langName, langCode, displayName } from '../utils/languages';
 import { requestDetect, stopDetect, smoothQuad, meanCornerDrift, DETECT_W } from '../utils/cardDetector';
 import { getPerspectiveTransform, warpPerspective } from '../../../shared/imgproc.mjs';
 import { shouldCapture, shouldRearm, autoStatusKey } from '../utils/autoCapture';
+import { manualSearchFields } from '../utils/cardSearchInput';
 import { isNative } from '../apiBase';
 import { useT } from '../utils/i18n';
 import SetTree from './SetTree';
@@ -219,12 +220,11 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // exposureCompensation, else null (slider hidden). value = current setting.
   const [exposureCaps, setExposureCaps] = useState(null);
   const [exposure, setExposure] = useState(0);
-  // This scanner is MTG-only: no game picker, no game params in the API calls.
+  // This scanner is MTG-only: no game picker or game-selection abstraction.
   // Which language of card is being fed in. Card art is language-specific, so
   // this selects which set index the scan is matched against — and it becomes the
   // language each added copy is recorded as. Remembered across sessions because
   // people scan a language at a time.
-  const scanGame = 'mtg';
   const [scanLang, setScanLangState] = useState(() => localStorage.getItem('scanner_lang') || 'en');
   const setScanLang = (code) => { setScanLangState(code); localStorage.setItem('scanner_lang', code); };
   // Set-scoped scanning across one OR MORE sets. Persisted as a comma-joined
@@ -284,19 +284,18 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // catalog is answering and no local one exists. Dismissal sticks, because this is
   // information, not a nag, and it is the same sentence every time.
   const showLocalHint = !!scanSets && !scanSets.local && !!scanSets.published && !localHintOff;
-  const currentGameSets = setList.filter(s => !s.game || s.game === scanGame);
-  const strayCatalogSets = (scanSets?.game === scanGame ? Object.entries(scanSets?.sets || {}) : [])
+  const strayCatalogSets = Object.entries(scanSets?.sets || {})
     .filter(([sid, v]) => v.embedded > 0
-      && !currentGameSets.some(s => String(setScanCode(s)).toLowerCase() === sid
+      && !setList.some(s => String(setScanCode(s)).toLowerCase() === sid
         || (s.children || []).some(c => String(c.code).toLowerCase() === sid)))
     .map(([sid]) => ({ id: sid, name: sid.toUpperCase(), set_code: sid, children: [] }));
   // Newest first: a scanning run is nearly always a recent release, and the set
   // list arrives in release order. Searching and coverage filtering happen inside
   // SetTree, which the build picker and the wizard share.
-  const treeSets = [...currentGameSets, ...strayCatalogSets].reverse();
+  const treeSets = [...setList, ...strayCatalogSets].reverse();
   // Families the filter names, for the summary line — 3 sets reads better than the
   // 41 codes they expand to.
-  const selectedSetCount = currentGameSets.filter(s => hasCode(setScanCode(s))).length;
+  const selectedSetCount = setList.filter(s => hasCode(setScanCode(s))).length;
 
   const [debugHashImg, setDebugHashImg] = useState('');
   const [debugCandidates, setDebugCandidates] = useState([]);
@@ -305,6 +304,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const currentScanId = useRef(0);
+  // Manual and alternate-printing searches are cancellable UI work separate
+  // from the scan request itself. Incrementing this invalidates stale responses.
+  const lookupRequestId = useRef(0);
   const lastScanImgRef = useRef(null);
   const lastScanCroppedRef = useRef(false);
 
@@ -480,6 +482,16 @@ function CameraScanner({ onAddSuccess, showToast }) {
   });
   useBackGuard(!!inspectorEntry, () => setInspectorEntry(null));
   useBackGuard(recentSelect.selectMode, recentSelect.exitSelectMode);
+
+  // Closing both the add drawer and candidate picker cancels whichever lookup
+  // produced them. A late response must not reopen UI the user dismissed.
+  useEffect(() => {
+    if (!isDrawerOpen && scanMatches.length === 0) {
+      lookupRequestId.current += 1;
+      setFindingPrintings(false);
+      setManualSearching(false);
+    }
+  }, [isDrawerOpen, scanMatches.length]);
   
   // Form states
   const [quantity, setQuantity] = useState(1);
@@ -1446,15 +1458,15 @@ function CameraScanner({ onAddSuccess, showToast }) {
   // This asks for every printing of this card's name across sets, sorted by visual match to the scan.
   const findOtherPrintings = async () => {
     if (!selectedCard || findingPrintings) return;
+    const requestId = ++lookupRequestId.current;
     setFindingPrintings(true);
     try {
-      const searchGame = selectedCard.game || scanGame;
       const searchLang = scanLang;
       const p = new URLSearchParams({
-        game: searchGame,
         lang: searchLang,
         name: selectedCard.name,
         prints: '1',
+        limit: '250',
         scope: 'internet',
       });
       const hasImage = lastScanImgRef.current;
@@ -1463,17 +1475,19 @@ function CameraScanner({ onAddSuccess, showToast }) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              game: searchGame,
               lang: searchLang,
               name: selectedCard.name,
               prints: '1',
+              limit: 250,
               scope: 'internet',
               image: lastScanImgRef.current,
               cropped: lastScanCroppedRef.current,
             }),
           })
         : await fetch(`/api/search?${p.toString()}`);
+      if (requestId !== lookupRequestId.current) return;
       const raw = res.ok ? await res.json() : [];
+      if (requestId !== lookupRequestId.current) return;
       const found = [...raw].sort((a, b) => {
         const aScore = a.score !== undefined && a.score !== null ? a.score : -Infinity;
         const bScore = b.score !== undefined && b.score !== null ? b.score : -Infinity;
@@ -1489,9 +1503,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
       setScanMatches(found);
       setShowAllMatches(true);
     } catch {
-      showToast(t('scan.noOtherPrintings'));
+      if (requestId === lookupRequestId.current) showToast(t('scan.noOtherPrintings'));
     } finally {
-      setFindingPrintings(false);
+      if (requestId === lookupRequestId.current) setFindingPrintings(false);
     }
   };
 
@@ -1499,13 +1513,14 @@ function CameraScanner({ onAddSuccess, showToast }) {
     if (e && e.preventDefault) e.preventDefault();
     const q = manualSearchText.trim();
     if (!q || manualSearching) return;
+    const requestId = ++lookupRequestId.current;
     setManualSearching(true);
     try {
+      const fields = manualSearchFields(q);
       const p = new URLSearchParams({
-        game: scanGame,
         lang: scanLang,
         scope: 'internet',
-        q,
+        ...fields,
       });
       const hasImage = lastScanImgRef.current;
       const searchResponse = hasImage
@@ -1513,17 +1528,18 @@ function CameraScanner({ onAddSuccess, showToast }) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              game: scanGame,
               lang: scanLang,
               scope: 'internet',
-              q,
+              ...fields,
               image: lastScanImgRef.current,
               cropped: lastScanCroppedRef.current,
             }),
           })
         : await fetch(`/api/search?${p.toString()}`);
+      if (requestId !== lookupRequestId.current) return;
       if (searchResponse.ok) {
         const m = await searchResponse.json();
+        if (requestId !== lookupRequestId.current) return;
         if (m.length) {
           const sorted = [...m].sort((a, b) => {
             const aScore = a.score !== undefined && a.score !== null ? a.score : -Infinity;
@@ -1540,9 +1556,9 @@ function CameraScanner({ onAddSuccess, showToast }) {
         showToast(t('scan.errManualSearch'));
       }
     } catch {
-      showToast(t('scan.errManualSearch'));
+      if (requestId === lookupRequestId.current) showToast(t('scan.errManualSearch'));
     } finally {
-      setManualSearching(false);
+      if (requestId === lookupRequestId.current) setManualSearching(false);
     }
   };
 

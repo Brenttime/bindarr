@@ -3,13 +3,12 @@
 // Three different things get called "the scan data", they are not
 // interchangeable, and the difference decides what a user should press:
 //
-//   MODELS (cornelius + milo, ~9.6 MB) — the detector and the embedder. Nothing
+//   MODELS (cornelius + milo, ~8 MB) — the detector and the embedder. Nothing
 //   scans without them, and they are the same two files for every install. NOT in
-//   this repository and NOT baked into the container image: both are AGPL-3.0
-//   while Bindarr is MIT, so shipping them inside an MIT artifact is a licensing
-//   decision this project declines to make for its operators. Fetching them into
-//   your own install is your call, which is why this is a button and not a
-//   background task.
+//   this repository and NOT baked into the container image: the detector is MIT,
+//   the embedder is AGPL-3.0-only, and distributing their aggregate requires
+//   satisfying both licenses. Fetching them into your own install is your call,
+//   which is why this is a button and not a background task.
 //
 //   PUBLISHED CATALOG (~56 MB) — precomputed embeddings for the whole MTG card
 //   pool, published by the model's author. Instant, but a dated snapshot: it is
@@ -48,7 +47,9 @@ const CATALOGS = [
 ];
 
 const LICENSE = {
-  spdx: 'MIT / AGPL-3.0',
+  // The detector is MIT; the embedding model is AGPL-3.0-only. Shipping the
+  // recogniser requires satisfying both asset licenses.
+  spdx: 'MIT AND AGPL-3.0-only',
   urls: ['https://huggingface.co/HanClinto/ccgdetector-fastweb-single', 'https://huggingface.co/HanClinto/milo'],
 };
 

@@ -29,29 +29,7 @@
 import * as ort from 'onnxruntime-web/wasm';
 import { sharpness } from './sharpness.js';
 import { createDetector } from '../../../shared/cardDetectPure.mjs';
-
-// Order 4 points into [TL, TR, BR, BL] in perimeter clockwise order.
-// Sorts by polar angle around the centroid so the resulting polygon is convex
-// and mathematically guaranteed to never cross itself (eliminates hourglass/bowtie).
-function orderQuad(pts) {
-  if (!pts || pts.length !== 4) return pts;
-  const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
-  const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
-  const sorted = [...pts].sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
-  let tlIdx = 0, minScore = Infinity;
-  for (let i = 0; i < 4; i++) {
-    const score = sorted[i].x + sorted[i].y;
-    if (score < minScore) { minScore = score; tlIdx = i; }
-  }
-  const pTL = sorted[tlIdx];
-  const pNext = sorted[(tlIdx + 1) % 4];
-  const pPrev = sorted[(tlIdx + 3) % 4];
-  if (pNext.x - pTL.x > pPrev.x - pTL.x || pPrev.y - pTL.y > pNext.y - pTL.y) {
-    return [sorted[tlIdx], sorted[(tlIdx + 1) % 4], sorted[(tlIdx + 2) % 4], sorted[(tlIdx + 3) % 4]];
-  } else {
-    return [sorted[tlIdx], sorted[(tlIdx + 3) % 4], sorted[(tlIdx + 2) % 4], sorted[(tlIdx + 1) % 4]];
-  }
-}
+import { orderQuad } from '../../../shared/imgproc.mjs';
 
 // Served by the backend from data/models. Single-threaded: multi-threaded wasm
 // needs cross-origin isolation (COOP/COEP), which a self-hosted app behind an
@@ -214,8 +192,7 @@ self.onmessage = async (e) => {
     const sharp = out.sharpness ? out.sharpness.data[0] : 1;
 
     if (sharp > SHARPNESS_GATE) {
-      // Order points topologically around the centroid so the quad is guaranteed
-      // to be in perimeter clockwise [TL, TR, BR, BL] order with no self-intersections (hourglasses).
+      // Normalize the four corner predictions to perimeter [TL, TR, BR, BL] order.
       const pts = [];
       for (let i = 0; i < 4; i++) pts.push({ x: c[i * 2], y: c[i * 2 + 1] });
       const quad = orderQuad(pts);

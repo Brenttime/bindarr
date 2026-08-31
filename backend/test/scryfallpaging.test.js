@@ -64,6 +64,14 @@ async function main() {
   assert.deepStrictEqual(ids(r), []);
   assert.strictEqual(r.hasMore, false);
 
+  // 6. Alternate-printing lookup requests a bounded 250-card window. That must
+  // cross Scryfall's 175-card page boundary rather than truncating at page one.
+  requested = [];
+  r = await scryfallApi.fetchWindow('!"Test Card" unique:prints', null, 0, 250);
+  assert.strictEqual(r.cards.length, 250);
+  assert.strictEqual(ids(r)[249], 'card-250');
+  assert.deepStrictEqual(requested, [1, 2]);
+
   console.log('scryfallpaging.test.js: all assertions passed');
 }
 

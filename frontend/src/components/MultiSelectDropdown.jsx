@@ -40,7 +40,6 @@ export default function MultiSelectDropdown({ label, options, value, onChange, a
         className="select-control"
         onClick={() => setOpen(o => !o)}
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left' }}
-        aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={label}
       >

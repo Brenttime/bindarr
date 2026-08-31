@@ -40,6 +40,16 @@ async function runTests() {
     const noAuth = await fetch(`${base}/api/collection`);
     assert.ok(noAuth.status === 401 || noAuth.status === 403, `collection must require auth, got ${noAuth.status}`);
     console.log('PASS: F1-TC2');
+
+    // F1-TC3: large request bodies are not parsed before authentication. This is
+    // deliberately malformed JSON; body-parser would return 400 if it ran first.
+    const largeNoAuth = await fetch(`${base}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: `{"image":"${'x'.repeat(2 * 1024 * 1024)}`,
+    });
+    assert.strictEqual(largeNoAuth.status, 401, `large unauthenticated search must be rejected before parsing, got ${largeNoAuth.status}`);
+    console.log('PASS: F1-TC3');
   } finally {
     // SIGKILL immediately to avoid sqlite3 teardown crashes on Windows
     server.kill('SIGKILL');

@@ -59,23 +59,23 @@ async function recordPrice(cardId, price) {
   );
   if (last && last.price === price) return false;
   // Millisecond resolution, not CURRENT_TIMESTAMP. recorded_at is part of the
-  // primary key, and the default is second-resolution — so two genuine price
-  // movements in the same second collided and the second one was silently
-  // dropped by OR IGNORE. %f keeps the guard while making that effectively
-  // impossible. parseSqliteUtc already reads the fractional form correctly.
+  // primary key, and the default is second-resolution. Choose the later of
+  // wall-clock now and one millisecond after this card's latest point in the same
+  // INSERT, so an arbitrary burst of genuine movements cannot collide or lie
+  // about being recorded.
   const res = await db.run(
-    `INSERT OR IGNORE INTO price_history (card_id, price, recorded_at)
-     VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))`,
-    [cardId, price]
+    `WITH candidate(ts) AS (SELECT strftime('%Y-%m-%d %H:%M:%f', 'now'))
+     INSERT INTO price_history (card_id, price, recorded_at)
+     SELECT ?, ?, CASE
+       WHEN MAX(ph.recorded_at) IS NULL OR MAX(ph.recorded_at) < candidate.ts THEN candidate.ts
+       ELSE strftime('%Y-%m-%d %H:%M:%f', MAX(ph.recorded_at), '+0.001 seconds')
+     END
+     FROM candidate
+     LEFT JOIN price_history ph ON ph.card_id = ?
+     GROUP BY candidate.ts`,
+    [cardId, price, cardId]
   );
-  if (res && res.changes === 0) {
-    await db.run(
-      `INSERT OR IGNORE INTO price_history (card_id, price, recorded_at)
-       VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now', '+1 millisecond'))`,
-      [cardId, price]
-    );
-  }
-  return true;
+  return !!(res && res.changes === 1);
 }
 
 // Scryfall: "We only update prices for cards once per day. Fetching card data

@@ -47,7 +47,7 @@ async function attachOwnedQty(cards, userId) {
 
 // 1. Search cards (Scryfall + database cache).
 
-router.all('/search', searchLimiter, async (req, res) => {
+async function searchCards(req, res) {
   const query = req.method === 'POST' ? { ...req.query, ...req.body } : req.query;
   const { name, number, set, scope = 'database', lang, prints, image, cropped } = query;
   // `q` is a raw Scryfall-syntax query (e.g. "is:land color:g rarity:rare").
@@ -136,7 +136,12 @@ router.all('/search', searchLimiter, async (req, res) => {
     }
     res.status(500).json({ error: 'Search failed' });
   }
-});
+}
+
+// Search is intentionally read-only. POST exists solely to carry an optional
+// base64 scan image that is too large and sensitive for a query string.
+router.get('/search', searchLimiter, searchCards);
+router.post('/search', searchLimiter, searchCards);
 
 // 1b. Identify a scanned card image by visual-feature match.
 // Which sets the scanner can actually answer for, and how completely.

@@ -2,11 +2,12 @@
 // catalogs) into CV_MODEL_DIR.
 //
 // The models are not in this repository and not baked into the container image,
-// which is a licensing decision rather than an oversight: both are AGPL-3.0 while
-// Bindarr is MIT, so the operator fetches them deliberately instead of receiving
-// them inside an MIT-licensed artifact. Nothing runs this automatically.
+// which is a licensing decision rather than an oversight: the detector is MIT,
+// while the embedding model is AGPL-3.0-only and Bindarr is MIT. The operator
+// fetches them deliberately instead of receiving the AGPL model inside an
+// MIT-licensed artifact. Nothing runs this automatically.
 //
-//   node scripts/fetch-models.mjs                 # the two models (~9.6 MB)
+//   node scripts/fetch-models.mjs                 # the two models (~8 MB)
 //   node scripts/fetch-models.mjs --catalogs      # ...plus the MTG fallback (~56 MB)
 //   node scripts/fetch-models.mjs --catalogs-only
 //
@@ -61,7 +62,7 @@ const wanted = [
 ];
 
 console.log(`Target: ${MODEL_DIR}`);
-console.log(`cornelius and milo are ${LICENSE.spdx} (${LICENSE.urls.join(', ')}).`);
+console.log(`Together, cornelius and milo require ${LICENSE.spdx} compliance (${LICENSE.urls.join(', ')}).`);
 console.log('Bindarr is MIT. Running them in your own install is your call to make;');
 console.log('shipping them onward is a licensing decision.');
 

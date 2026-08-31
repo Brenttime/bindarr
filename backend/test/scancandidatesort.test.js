@@ -18,6 +18,22 @@ async function main() {
   const singleRes = await cvScan.scoreCards(await noise(), 'mtg', single);
   assert.strictEqual(singleRes.length, 1);
 
+  // Double-faced cards have one embedding per face. Candidate scoring must use
+  // the best face rather than silently retaining only the front-face row.
+  const faceCards = [
+    { id: 'mtg-double-faced', name: 'Double-faced card' },
+    { id: 'mtg-other', name: 'Other card' },
+  ];
+  const faceCatalog = [{
+    ids: ['double-faced', 'double-faced_back', 'other'],
+    n: 3,
+    dim: 2,
+    cat: new Float32Array([1, 0, 0, 1, 0.5, 0.5]),
+  }];
+  const faceRanked = cvScan.rankCardsByEmbedding(faceCards, faceCatalog, new Float32Array([0, 1]));
+  assert.strictEqual(faceRanked[0].id, 'mtg-double-faced');
+  assert.strictEqual(faceRanked[0].score, 1, 'back-face embedding should be considered');
+
   // Test 2: If catalog is built, scoreCards sorts and sets scores
   if (cvScan.isBuilt('mtg')) {
     const s = await cvScan.load('mtg');

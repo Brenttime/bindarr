@@ -541,8 +541,8 @@ export function warpPerspective(rgba, w, h, coeffs, dstW, dstH) {
 }
 
 // Order 4 points into [TL, TR, BR, BL] in perimeter clockwise order.
-// Sorts by polar angle around the centroid so the resulting polygon is convex
-// and mathematically guaranteed to never cross itself (eliminates hourglass/bowtie).
+// Polar-angle sorting gives a stable perimeter order for the convex card-corner
+// predictions this helper receives and avoids hourglass/bowtie ordering.
 export function orderQuad(pts) {
   if (!pts || pts.length !== 4) return pts;
   const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;

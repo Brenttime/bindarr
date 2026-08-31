@@ -14,9 +14,40 @@ Identify cards with your phone camera, track prices, and pull decks back out of 
 [![Stars](https://img.shields.io/github/stars/Brenttime/bindarr?style=flat&logo=github)](https://github.com/Brenttime/bindarr/stargazers)
 [![Issues](https://img.shields.io/github/issues/Brenttime/bindarr)](https://github.com/Brenttime/bindarr/issues)
 
-[Install](#install) · [Features](#features) · [How it works](PROJECT.md) · [Report a bug](https://github.com/Brenttime/bindarr/issues/new)
+[Fork differences](#about-this-fork) · [Install](#install) · [Features](#features) · [How it works](PROJECT.md) · [Report a bug](https://github.com/Brenttime/bindarr/issues/new)
 
 </div>
+
+---
+
+## About this fork
+
+This repository is an opinionated, MTG-only fork of
+[`thenotoriousJeremy/bindarr`](https://github.com/thenotoriousJeremy/bindarr).
+It follows upstream selectively: fixes and improvements that fit the focused
+Magic workflow are brought across, while upstream features that broaden Bindarr
+into a general trading-card manager are deliberately left out.
+
+Compared with upstream, this fork:
+
+- supports **Magic: The Gathering only** — no Pokémon, Lorcana, game picker, or
+  multi-game provider layer;
+- removes physical storage management (locations, compartments, and binder/box
+  placement), grading/slab lookup, the standalone Notes page, and the collection
+  wishlist mode;
+- keeps per-card notes and separate ManaBox-style **Card Lists** for wishlists,
+  buylists, and missing-card lists;
+- replaces the standalone card-search page with one collection search box that
+  understands names, set/collector numbers, and Scryfall syntax, answering from
+  the local cache whenever possible;
+- keeps Admin and Moxfield controls inside **Settings** rather than as top-level
+  navigation; and
+- adds MTG-focused deck checkout, precon import, collection registration,
+  inventory-integrity safeguards, and large-catalog search optimizations.
+
+Those boundaries are product decisions, not missing upstream work. Upstream
+syncs should preserve them while continuing to adopt compatible scanner,
+performance, correctness, and interface improvements.
 
 ---
 
@@ -146,9 +177,10 @@ The first visit in a browser asks you to create the owner account. The SQLite fi
 Scanning is image-only — no OCR, no typing. Two things have to be in place, and
 neither ships inside the app:
 
-**1. The models.** Two small neural networks (~9.6 MB together) find the card in
-the frame and turn its artwork into a fingerprint. They are AGPL-3.0 while Bindarr
-is MIT, so they are fetched deliberately rather than bundled:
+**1. The models.** Two small neural networks (~8 MB together) find the card in
+the frame and turn its artwork into a fingerprint. The detector is MIT and the
+embedding model is AGPL-3.0-only; Bindarr itself is MIT, so the models are fetched
+deliberately rather than bundled:
 
 ```bash
 docker exec bindarr node scripts/fetch-models.mjs
