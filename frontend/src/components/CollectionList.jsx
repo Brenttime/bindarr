@@ -108,6 +108,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const [liveCatalog, setLiveCatalog] = useState(null);
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState(null);
+  // Catalog answers can be a PREFIX of the tag's full match list when the
+  // upstream walk hit its page cap (X-Catalog-Complete: 0). Surface that so
+  // the user is never shown a truncated list as if it were the whole.
+  const [liveIncomplete, setLiveIncomplete] = useState(false);
   const liveFetchRef = useRef(0);
 
   // Stacking state (default to stacked)
@@ -384,6 +388,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     const timer = setTimeout(async () => {
       setLiveLoading(true);
       setLiveError(null);
+      // liveIncomplete is kept (not reset here) so the previous answer's
+      // "may be incomplete" note stays honest while a re-fetch is in flight;
+      // each outcome below replaces it.
       try {
         const params = new URLSearchParams();
         params.set('scope', 'collection');
@@ -393,16 +400,21 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
           setLiveCatalog([]);
+          setLiveIncomplete(false);
           if (response.status === 400) setLiveError(t('collection.scryfallInvalidQuery'));
           else if (response.status === 429) setLiveError(t('collection.scryfallRateLimited'));
           else setLiveError(errData.error || t('collection.scryfallLiveFailed'));
           return;
         }
         setLiveCatalog(await response.json());
+        // The server flags a walk that stopped at its page cap: the list is a
+        // real but INCOMPLETE prefix of the tag's matches.
+        setLiveIncomplete(response.headers.get('X-Catalog-Complete') === '0');
       } catch (err) {
         if (err?.name === 'AbortError' || generation !== liveFetchRef.current) return;
         setLiveError(t('collection.scryfallLiveFailed'));
         setLiveCatalog([]);
+        setLiveIncomplete(false);
       } finally {
         if (generation === liveFetchRef.current) setLiveLoading(false);
       }
@@ -774,6 +786,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <span>
             <strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {t('collection.cardUnit', { count: displayCards.length })}{loadingMore ? ` · ${t('common.loading')}` : ''}
             {scryfallPredicate.mode === 'catalog' && !liveError ? ` · ${t('collection.scryfallLiveNote')}` : ''}
+            {scryfallPredicate.mode === 'catalog' && liveIncomplete ? ` · ${t('collection.scryfallLiveIncomplete')}` : ''}
             {liveError ? ` · ${liveError}` : ''}
           </span>
           <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
@@ -785,7 +798,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           full-screen spinner. */}
       {scryfallPredicate.mode === 'catalog' && liveLoading && displayCards.length > 0 && !liveError && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-          <span>{displayCards.length} {t('collection.cardUnit', { count: displayCards.length })} · {t('collection.scryfallLiveNote')} · {t('collection.scryfallLiveUpdating')}</span>
+          <span>{displayCards.length} {t('collection.cardUnit', { count: displayCards.length })} · {t('collection.scryfallLiveNote')}{liveIncomplete ? ` · ${t('collection.scryfallLiveIncomplete')}` : ''} · {t('collection.scryfallLiveUpdating')}</span>
         </div>
       )}
 
@@ -835,7 +848,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       ) : displayCards.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '3rem 1.5rem' }}>
           {scryfallPredicate.mode === 'catalog' ? (
-            <p>{liveError || t('collection.scryfallLiveEmpty')}</p>
+            <p>
+              {liveError || t('collection.scryfallLiveEmpty')}
+              {liveIncomplete && <small style={{ display: 'block', marginTop: '0.5rem', opacity: 0.7 }}>{t('collection.scryfallLiveIncomplete')}</small>}
+            </p>
           ) : (
             <p>{t('collection.noMatches')} {t(activeFilterCount > 0 ? 'collection.noMatchesFiltered' : 'collection.noMatchesEmpty')}</p>
           )}

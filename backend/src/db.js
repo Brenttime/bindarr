@@ -343,15 +343,45 @@ async function initDb() {
   // restarts. The intersect against the LIVE collection still runs on every
   // request, so only the (rarely-changing) upstream tag assignments can go
   // stale, up to the TTL.
+  //
+  // Completeness metadata (upstream_total, fetched_count, complete,
+  // resolved_at): a walk that hit its page cap is a PARTIAL answer. Marking
+  // it as such stops a truncated result from being served (and re-served for
+  // a week) as if it were the whole tag — the UI shows "may be incomplete"
+  // and the background revalidation keeps retrying.
   await run(`
     CREATE TABLE IF NOT EXISTS collection_query_cache (
       query TEXT NOT NULL,
       lang TEXT NOT NULL DEFAULT '',
       names TEXT NOT NULL,
+      upstream_total INTEGER,
+      fetched_count INTEGER NOT NULL DEFAULT 0,
+      complete INTEGER NOT NULL DEFAULT 1,
+      resolved_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
       PRIMARY KEY (query, lang)
     )
   `);
+  // v1 of this table (added for the otag: dedup work) had no completeness
+  // columns and a 24h hard TTL. It holds only short-lived cache data — drop
+  // and recreate rather than ALTER; existing rows re-resolve on demand.
+  const cqcCols = await all('PRAGMA table_info(collection_query_cache)');
+  if (cqcCols.length && !cqcCols.some(c => c.name === 'upstream_total')) {
+    await run('DROP TABLE collection_query_cache');
+    await run(`
+      CREATE TABLE IF NOT EXISTS collection_query_cache (
+        query TEXT NOT NULL,
+        lang TEXT NOT NULL DEFAULT '',
+        names TEXT NOT NULL,
+        upstream_total INTEGER,
+        fetched_count INTEGER NOT NULL DEFAULT 0,
+        complete INTEGER NOT NULL DEFAULT 1,
+        resolved_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (query, lang)
+      )
+    `);
+  }
 
   // --- MIGRATIONS ---
   // When the price sweep last ran. Scryfall updates prices once a day, so a

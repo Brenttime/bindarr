@@ -78,6 +78,9 @@ async function runTests() {
     let res = await fetch(`${base}/api/search?scope=collection&q=${encodeURIComponent('otag:sneak')}`, { headers: authHeaders });
     assert.strictEqual(res.status, 200, `catalog collection query returned ${res.status}`);
     assert.strictEqual(res.headers.get('x-total-count'), '1', 'X-Total-Count reflects the owned rows, not the upstream match count');
+    assert.strictEqual(res.headers.get('x-catalog-complete'), '1', 'a walk that finished cleanly is flagged complete');
+    assert.strictEqual(res.headers.get('x-catalog-upstream-total'), '2', 'the upstream total is surfaced');
+    assert.strictEqual(res.headers.get('x-catalog-cache'), 'resolved', 'the first answer pays for the walk');
     const data = await res.json();
     assert.strictEqual(data.length, 1, 'intersect yields exactly the owned match');
     assert.strictEqual(data[0].name, 'Black Lotus');
@@ -86,6 +89,17 @@ async function runTests() {
     assert.ok(typeof data[0].entry_id === 'number', 'entry_id present for bulk actions');
     assert.ok(!data.some(c => c.name === 'Time Warp'), 'non-owned upstream match is NOT in the result');
     console.log('PASS: F4-TC1');
+
+    // F4-TC5: re-running the SAME tag is served from the durable cache —
+    // no fresh walk (X-Catalog-Cache: fresh) — yet still intersects the LIVE
+    // collection, so the answer is the user's own rows either way.
+    res = await fetch(`${base}/api/search?scope=collection&q=${encodeURIComponent('otag:sneak')}`, { headers: authHeaders });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.headers.get('x-catalog-cache'), 'fresh', 'a repeat of a young tag is served from cache');
+    assert.strictEqual(res.headers.get('x-total-count'), '1', 'the cached answer still intersects the live collection');
+    const cached = await res.json();
+    assert.strictEqual(cached.length, 1, 'cache hit returns the same owned row');
+    console.log('PASS: F4-TC5');
 
     // F4-TC2: a data-backed-only query does NOT take the live path — the
     // pinned searchCards contract (collection scope, no API) still holds, and

@@ -79,11 +79,20 @@ async function searchCards(req, res) {
         throw e;
       }
       if (mode === 'catalog') {
-        const { cards, total } = await scryfallApi.resolveCollectionQuery({
+        const { cards, total, complete, upstreamTotal, cacheStatus } = await scryfallApi.resolveCollectionQuery({
           q, userId: req.user.id, lang,
         });
         res.set('X-Total-Count', String(total));
-        res.set('Access-Control-Expose-Headers', 'X-Total-Count');
+        // Completeness: a walk that hit its page cap answered from a real
+        // PREFIX of the tag's match list. Tell the UI so it can say "may be
+        // incomplete" instead of presenting a truncated result as the whole.
+        res.set('X-Catalog-Complete', complete ? '1' : '0');
+        if (upstreamTotal != null) res.set('X-Catalog-Upstream-Total', String(upstreamTotal));
+        // 'fresh' = served from the durable cache (no upstream this request);
+        // 'stale' = cache served + background refresh in flight; 'resolved' =
+        // this request paid for the walk.
+        res.set('X-Catalog-Cache', cacheStatus || 'unknown');
+        res.set('Access-Control-Expose-Headers', 'X-Total-Count, X-Catalog-Complete, X-Catalog-Upstream-Total, X-Catalog-Cache');
         return res.json(cards);
       }
     }

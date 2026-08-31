@@ -570,6 +570,7 @@
   "collection.scryfallLiveNote": "live Scryfall query",
   "collection.scryfallLiveUpdating": "updating live results…",
   "collection.scryfallLiveEmpty": "No cards in your collection match this query.",
+  "collection.scryfallLiveIncomplete": "may be incomplete — this tag has more cards than the search limit",
   "collection.scryfallInvalidQuery": "Invalid query — check the syntax.",
   "collection.scryfallRateLimited": "Search API rate limit hit — try again in a moment.",
   "collection.scryfallLiveFailed": "Couldn't reach the search API.",
