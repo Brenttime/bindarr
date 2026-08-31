@@ -53,27 +53,27 @@ const isVintageSet = (setId) => {
 async function recordPrice(cardId, price) {
   if (!cardId || !(price > 0)) return false;
   const db = require('../db');
-  const last = await db.get(
-    `SELECT price FROM price_history WHERE card_id = ? ORDER BY recorded_at DESC LIMIT 1`,
-    [cardId]
-  );
-  if (last && last.price === price) return false;
   // Millisecond resolution, not CURRENT_TIMESTAMP. recorded_at is part of the
-  // primary key, and the default is second-resolution. Choose the later of
-  // wall-clock now and one millisecond after this card's latest point in the same
-  // INSERT, so an arbitrary burst of genuine movements cannot collide or lie
-  // about being recorded.
+  // primary key, and the default is second-resolution. Read both the latest
+  // value and timestamp inside this INSERT so concurrent callers cannot both
+  // decide that the same price is a new movement.
   const res = await db.run(
-    `WITH candidate(ts) AS (SELECT strftime('%Y-%m-%d %H:%M:%f', 'now'))
+    `WITH latest(price, recorded_at) AS (
+       SELECT price, recorded_at
+       FROM price_history
+       WHERE card_id = ?
+       ORDER BY recorded_at DESC, rowid DESC
+       LIMIT 1
+     ), candidate(ts) AS (SELECT strftime('%Y-%m-%d %H:%M:%f', 'now'))
      INSERT INTO price_history (card_id, price, recorded_at)
      SELECT ?, ?, CASE
-       WHEN MAX(ph.recorded_at) IS NULL OR MAX(ph.recorded_at) < candidate.ts THEN candidate.ts
-       ELSE strftime('%Y-%m-%d %H:%M:%f', MAX(ph.recorded_at), '+0.001 seconds')
+       WHEN (SELECT recorded_at FROM latest) IS NULL
+         OR (SELECT recorded_at FROM latest) < candidate.ts THEN candidate.ts
+       ELSE strftime('%Y-%m-%d %H:%M:%f', (SELECT recorded_at FROM latest), '+0.001 seconds')
      END
      FROM candidate
-     LEFT JOIN price_history ph ON ph.card_id = ?
-     GROUP BY candidate.ts`,
-    [cardId, price, cardId]
+     WHERE NOT EXISTS (SELECT 1 FROM latest WHERE price = ?)`,
+    [cardId, cardId, price, price]
   );
   return !!(res && res.changes === 1);
 }

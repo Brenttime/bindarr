@@ -1461,6 +1461,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
     const requestId = ++lookupRequestId.current;
     const searchLang = scanLang;
     const cardName = selectedCard.name;
+    const selectedCardId = selectedCard.id;
     const hasImage = !!lastScanImgRef.current;
     const limit = 250;
     setFindingPrintings(true);
@@ -1507,7 +1508,7 @@ function CameraScanner({ onAddSuccess, showToast }) {
         if (aScore !== bScore) return bScore - aScore;
         return (b.image_url ? 1 : 0) - (a.image_url ? 1 : 0);
       });
-      if (found.length <= 1) {
+      if (!found.some(card => card.id !== selectedCardId)) {
         showToast(t('scan.noOtherPrintings'));
         return;
       }

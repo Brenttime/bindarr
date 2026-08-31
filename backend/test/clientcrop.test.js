@@ -37,11 +37,10 @@ async function corners(session, buf) {
   }
   const out = await session.run({ image: new ort.Tensor('float32', f, [1, 3, CORN, CORN]) });
   const c = out.corners.data;
-  const isCorn = c[1] > c[5];
-  const order = isCorn ? [2, 3, 1, 0] : [0, 2, 1, 3];
+  const { orderQuad } = await import('../../shared/imgproc.mjs');
   return {
     sharpness: out.sharpness ? out.sharpness.data[0] : 1,
-    quad: order.map(i => ({ x: c[i * 2], y: c[i * 2 + 1] })),
+    quad: orderQuad(Array.from({ length: 4 }, (_, i) => ({ x: c[i * 2], y: c[i * 2 + 1] }))),
   };
 }
 

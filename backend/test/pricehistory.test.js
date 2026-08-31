@@ -38,11 +38,17 @@ async function main() {
   assert.deepStrictEqual(burst.map(row => row.price), [1.5, 2.25, 1.5, 3.0]);
   assert.strictEqual(new Set(burst.map(row => row.recorded_at)).size, 4, 'rapid movements need unique timestamps');
 
-  // 4. Junk is ignored rather than written as a zero-price data point.
+  // 4. Concurrent observations of one new price produce one movement, not one
+  // row per caller that happened to read the previous price.
+  const concurrent = await Promise.all(Array.from({ length: 8 }, () => recordPrice(CARD, 4.25)));
+  assert.strictEqual(concurrent.filter(Boolean).length, 1, 'only one concurrent caller should insert');
+  assert.strictEqual(await count(), 5, 'concurrent duplicate prices must collapse to one point');
+
+  // 5. Junk is ignored rather than written as a zero-price data point.
   assert.strictEqual(await recordPrice(CARD, 0), false, 'zero is not a price');
   assert.strictEqual(await recordPrice(CARD, null), false, 'null is not a price');
   assert.strictEqual(await recordPrice(null, 5), false, 'no card id, no row');
-  assert.strictEqual(await count(), 4, 'junk must not reach the table');
+  assert.strictEqual(await count(), 5, 'junk must not reach the table');
 
   // --- Once-a-day sweep gate ---
   // Scryfall only moves prices once a day, so sweeping more often is pure load.
