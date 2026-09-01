@@ -85,11 +85,64 @@ function computeVirtualGeometry(itemCount, width, viewportWidth, gallery) {
 // the same card partially visible and makes a gallery -> list -> gallery round
 // trip reversible. Positive offsets describe space above an unclipped row and
 // remain exact pixel offsets.
-function translateAnchorViewportOffset(viewportOffset, sourceRowStride, targetRowStride) {
-  if (viewportOffset >= 0 || sourceRowStride <= 0 || targetRowStride <= 0) {
-    return viewportOffset;
-  }
-  return (viewportOffset / sourceRowStride) * targetRowStride;
+function translateAnchorViewportOffset(
+  viewportOffset,
+  sourceEntryHeight,
+  targetEntryHeight,
+  viewportHeight = Number.POSITIVE_INFINITY,
+  devicePixelRatio = 1,
+) {
+  const translated = viewportOffset < 0 && sourceEntryHeight > 0 && targetEntryHeight > 0
+    ? (viewportOffset / sourceEntryHeight) * targetEntryHeight
+    : viewportOffset;
+  const visiblePixel = 1 / Math.max(1, devicePixelRatio || 1);
+  const minimumOffset = targetEntryHeight > 0
+    ? -Math.max(0, targetEntryHeight - visiblePixel)
+    : translated;
+  const maximumOffset = Number.isFinite(viewportHeight)
+    ? Math.max(0, viewportHeight - visiblePixel)
+    : translated;
+  return Math.min(maximumOffset, Math.max(minimumOffset, translated));
+}
+
+function findVisibleCollectionAnchor(root, viewportHeight) {
+  let anchor = null;
+  root.querySelectorAll('[data-collection-entry-id]').forEach((element) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.bottom <= 0 || rect.top >= viewportHeight) return;
+    if (!anchor || rect.top < anchor.viewportOffset - 0.5) {
+      anchor = {
+        entryId: element.dataset.collectionEntryId,
+        viewportOffset: rect.top,
+        entryHeight: rect.height,
+      };
+    }
+  });
+  return anchor;
+}
+
+function measuredAnchorScrollTarget(
+  currentScrollTop,
+  anchorViewportTop,
+  desiredViewportOffset,
+  maximumScrollTop,
+) {
+  return Math.min(
+    Math.max(0, maximumScrollTop),
+    Math.max(0, currentScrollTop + anchorViewportTop - desiredViewportOffset),
+  );
+}
+
+function virtualWindowsMatch(current, expected) {
+  return current.startIndex === expected.startIndex
+    && current.endIndex === expected.endIndex
+    && current.startRow === expected.startRow
+    && current.endRow === expected.endRow
+    && current.rowCount === expected.rowCount
+    && current.columns === expected.columns
+    && Math.abs(current.rowStride - expected.rowStride) < 0.5
+    && Math.abs(current.gap - expected.gap) < 0.5
+    && Math.abs(current.totalSize - expected.totalSize) < 0.5;
 }
 
 function buildVirtualWindow(itemCount, geometry, scrollTop, viewportHeight) {
@@ -873,12 +926,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
   // offset, then put that same card back after the new layout mounts. For a row
   // clipped above the viewport, switchViewMode translates the offset by row
   // progress so a tall gallery row cannot disappear above a short list row.
-  // useLayoutEffect performs the correction before paint.
+  // Restoration deliberately takes two layout commits: the first remeasures
+  // and commits the destination spacer/range, and only the second scrolls.
+  // Calling setVirtualWindow and scrollTo in one layout effect can still clamp
+  // the scroll against the shorter spacer that is currently in the DOM.
   useLayoutEffect(() => {
     const anchor = pendingViewAnchorRef.current;
     const root = virtualRootRef.current;
     if (!anchor || anchor.viewMode !== viewMode || !root) return;
-    pendingViewAnchorRef.current = null;
 
     const matchedIndex = displayCards.findIndex(item => item.entry_id === anchor.entryId);
     const anchorIndex = matchedIndex >= 0
@@ -891,24 +946,65 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       viewMode === 'gallery',
     );
     const anchorRow = Math.floor(anchorIndex / geometry.columns);
-    const rootTop = root.getBoundingClientRect().top + window.scrollY;
-    const targetScrollTop = Math.max(
-      0,
-      rootTop + anchorRow * geometry.rowStride - anchor.viewportOffset,
+    const seedViewportOffset = translateAnchorViewportOffset(
+      anchor.sourceViewportOffset,
+      anchor.sourceEntryHeight,
+      Math.max(0, geometry.rowStride - geometry.gap),
+      window.innerHeight,
+      window.devicePixelRatio,
     );
-
-    // Keep the mounted range in step with the destination immediately. This is
-    // especially important when switching to the taller layout near the end of
-    // a large collection, where the browser would otherwise clamp scrollTop to
-    // the stale spacer height.
-    setVirtualWindow(buildVirtualWindow(
+    const rootTop = root.getBoundingClientRect().top + window.scrollY;
+    const seedScrollTop = Math.max(
+      0,
+      rootTop + anchorRow * geometry.rowStride - seedViewportOffset,
+    );
+    const destinationWindow = buildVirtualWindow(
       displayCards.length,
       geometry,
-      Math.max(0, targetScrollTop - rootTop),
+      Math.max(0, seedScrollTop - rootTop),
       window.innerHeight,
-    ));
+    );
+
+    // State equality here is also a DOM-commit barrier: a layout effect sees
+    // virtualWindow only after React has rendered its full spacer height. Do
+    // not attempt the near-end scroll while the corrected geometry is queued.
+    if (!virtualWindowsMatch(virtualWindow, destinationWindow)) {
+      setVirtualWindow(destinationWindow);
+      return;
+    }
+
+    const destinationElement = Array.from(
+      root.querySelectorAll('[data-collection-entry-id]'),
+    ).find(element => element.dataset.collectionEntryId === String(anchor.entryId));
+    if (!destinationElement) return;
+
+    const destinationRect = destinationElement.getBoundingClientRect();
+    const desiredViewportOffset = translateAnchorViewportOffset(
+      anchor.sourceViewportOffset,
+      anchor.sourceEntryHeight,
+      destinationRect.height,
+      window.innerHeight,
+      window.devicePixelRatio,
+    );
+    const maximumScrollTop = Math.max(
+      0,
+      document.documentElement.scrollHeight - window.innerHeight,
+    );
+    const targetScrollTop = measuredAnchorScrollTarget(
+      window.scrollY,
+      destinationRect.top,
+      desiredViewportOffset,
+      maximumScrollTop,
+    );
     window.scrollTo(window.scrollX, targetScrollTop);
-  }, [displayCards, viewMode]);
+    const settledRect = destinationElement.getBoundingClientRect();
+    const tolerance = 1 / Math.max(1, window.devicePixelRatio || 1);
+    const hasPositiveIntersection = settledRect.bottom > 0
+      && settledRect.top < window.innerHeight;
+    if (hasPositiveIntersection && Math.abs(window.scrollY - targetScrollTop) <= tolerance) {
+      pendingViewAnchorRef.current = null;
+    }
+  }, [displayCards, viewMode, virtualWindow]);
 
   const switchViewMode = (nextViewMode) => {
     if (nextViewMode === viewMode) return;
@@ -923,37 +1019,48 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       && scrollTop + window.innerHeight > rootTop;
 
     if (collectionIsVisible) {
+      const measuredAnchor = findVisibleCollectionAnchor(root, window.innerHeight);
       const localScrollTop = Math.max(0, scrollTop - rootTop);
-      const visibleRow = Math.min(
+      const fallbackRow = Math.min(
         Math.max(0, virtualWindow.rowCount - 1),
         Math.floor(localScrollTop / virtualWindow.rowStride),
       );
-      const anchorIndex = Math.min(
+      const fallbackIndex = Math.min(
         displayCards.length - 1,
-        visibleRow * virtualWindow.columns,
+        fallbackRow * virtualWindow.columns,
       );
+      const measuredIndex = measuredAnchor
+        ? displayCards.findIndex(item => String(item.entry_id) === measuredAnchor.entryId)
+        : -1;
+      const anchorIndex = measuredIndex >= 0 ? measuredIndex : fallbackIndex;
       const nextGeometry = computeVirtualGeometry(
         displayCards.length,
         root.clientWidth,
         window.innerWidth,
         nextViewMode === 'gallery',
       );
-      const sourceViewportOffset = rootTop + visibleRow * virtualWindow.rowStride - scrollTop;
-      const viewportOffset = translateAnchorViewportOffset(
+      const sourceViewportOffset = measuredAnchor?.viewportOffset
+        ?? rootTop + fallbackRow * virtualWindow.rowStride - scrollTop;
+      const sourceEntryHeight = measuredAnchor?.entryHeight
+        ?? Math.max(0, virtualWindow.rowStride - virtualWindow.gap);
+      const seedViewportOffset = translateAnchorViewportOffset(
         sourceViewportOffset,
-        virtualWindow.rowStride,
-        nextGeometry.rowStride,
+        sourceEntryHeight,
+        Math.max(0, nextGeometry.rowStride - nextGeometry.gap),
+        window.innerHeight,
+        window.devicePixelRatio,
       );
       const nextLocalScrollTop = Math.max(
         0,
-        Math.floor(anchorIndex / nextGeometry.columns) * nextGeometry.rowStride - viewportOffset,
+        Math.floor(anchorIndex / nextGeometry.columns) * nextGeometry.rowStride - seedViewportOffset,
       );
 
       pendingViewAnchorRef.current = {
         viewMode: nextViewMode,
         entryId: displayCards[anchorIndex].entry_id,
         index: anchorIndex,
-        viewportOffset,
+        sourceViewportOffset,
+        sourceEntryHeight,
       };
       // Render the destination range and full spacer height in the same commit
       // as the new view so the layout-effect scroll cannot be clamped.
@@ -1358,6 +1465,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
               <div
                 key={item.entry_id}
                 className="tcg-card tilt-card-wrapper"
+                data-collection-entry-id={item.entry_id}
                 style={{ cursor: 'pointer', touchAction: 'pan-y' }}
                 onClick={(e) => activateCard(item, e)}
                 {...pressHandlers(item.entry_id)}
@@ -1464,7 +1572,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
                 {virtualCards.map((item) => {
                   const selected = selectedIds.has(item.entry_id);
                   return (
-                  <tr className="collection-virtual-list-row" key={item.entry_id} style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}>
+                  <tr className="collection-virtual-list-row" data-collection-entry-id={item.entry_id} key={item.entry_id} style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}>
                     <td>
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         {selectMode && (
