@@ -313,9 +313,11 @@ router.get('/stats/history', async (req, res) => {
     // Collection additions and price movements are events. Read each once, then
     // sweep the (at most 30) targets in order. SQLite packs each card's physical
     // entries and recorded prices into JSON so the driver returns one row per card,
-    // not tens of thousands of tiny row objects. The join keeps the parameter count
-    // constant; sorting each decoded history by the stored timestamp preserves the
-    // old route's complete recorded_at stream and carry-back rules.
+    // not tens of thousands of tiny row objects. The CROSS JOIN deliberately keeps
+    // those owned cards on the outer side, making SQLite search price_history's
+    // primary key per card instead of scanning global history. Its parameter count
+    // stays constant; sorting each decoded history by the stored timestamp preserves
+    // the old route's complete recorded_at stream and carry-back rules.
     const cards = await db.all(`
       WITH cards AS MATERIALIZED (
         SELECT c.card_id,
@@ -331,8 +333,9 @@ router.get('/stats/history', async (req, res) => {
       histories AS MATERIALIZED (
         SELECT ph.card_id,
                json_group_array(json_array(ph.price, ph.recorded_at)) AS history
-        FROM price_history ph
-        JOIN cards c ON c.card_id = ph.card_id
+        FROM cards c
+        CROSS JOIN price_history ph
+        WHERE ph.card_id = c.card_id
         GROUP BY ph.card_id
       )
       SELECT c.card_id, c.additions, COALESCE(h.history, '[]') AS history

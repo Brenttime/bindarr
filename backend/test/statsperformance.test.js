@@ -126,6 +126,19 @@ async function main() {
     await db.run(`UPDATE collection SET added_at = '2026-08-21 12:00:00'
                   WHERE user_id = ? AND card_id = 'fallback'`, [smallUser]);
 
+    // A user's timeline must probe history by their owned card IDs. Populate a
+    // much larger unrelated global history so the exact route plan can prove it
+    // does not choose price_history as the outer side of the join.
+    const UNOWNED_HISTORY_ROWS = 50000;
+    await db.run(`
+      WITH RECURSIVE ids(n) AS (
+        VALUES(1) UNION ALL SELECT n + 1 FROM ids WHERE n < ?
+      )
+      INSERT INTO price_history (card_id, price, recorded_at)
+      SELECT printf('unowned-history-%05d', n), 1, '2026-08-01T12:00:00.000Z'
+      FROM ids
+    `, [UNOWNED_HISTORY_ROWS]);
+
     // Independent-review regressions: equal-value sets keep first-seen order,
     // a set keeps the name from its first encountered card, and legacy empty
     // JSON text is treated exactly like a missing [] field.
@@ -195,12 +208,34 @@ async function main() {
     ]);
     assert.strictEqual(edgeStats.body.setProgress.find(set => set.setId === 'same').setName, 'Aardvark');
 
-    const sevenDays = await request('/stats/history', smallUser, { period: '7d' });
+    let historyQuery;
+    const originalAllForPlan = db.all;
+    db.all = async (sql, params = []) => {
+      if (sql.includes('WITH cards AS MATERIALIZED') && sql.includes('price_history ph')) {
+        historyQuery = { sql, params };
+      }
+      return originalAllForPlan(sql, params);
+    };
+    let sevenDays;
+    try {
+      sevenDays = await request('/stats/history', smallUser, { period: '7d' });
+    } finally {
+      db.all = originalAllForPlan;
+    }
     assert.strictEqual(sevenDays.status, 200);
     assert.deepStrictEqual(sevenDays.body, expectedLabels(7, 1, { weekday: 'short' }).map((date, index) => ({
       date,
       value: [134, 134, 134, 162, 162, 190, 192][index]
     })), '7d timeline must preserve labels, carryback, finish fallback, additions, and inclusive cutoffs');
+
+    assert.ok(historyQuery, 'timeline SQL must be captured for plan verification');
+    const historyPlan = await db.all(`EXPLAIN QUERY PLAN ${historyQuery.sql}`, historyQuery.params);
+    const historyPlanText = historyPlan.map(row => row.detail).join('\n');
+    assert.match(historyPlanText,
+      /SEARCH ph USING INDEX sqlite_autoindex_price_history_1 \(card_id=\?\)/i,
+      `timeline must probe indexed history for each owned card:\n${historyPlanText}`);
+    assert.doesNotMatch(historyPlanText, /SCAN ph(?:\s|$)/i,
+      `timeline must not scan global price history:\n${historyPlanText}`);
 
     const thirtyDays = await request('/stats/history', smallUser, { period: '30d' });
     const thirtyDayValues = [
