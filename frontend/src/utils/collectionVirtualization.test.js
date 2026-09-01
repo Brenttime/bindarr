@@ -1,59 +1,94 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import {
+  ANCHOR_CONVERGENCE_MAX_FRAMES,
+  ANCHOR_CONVERGENCE_STABLE_FRAMES,
+  advanceAnchorConvergence,
+  buildVirtualWindow,
+  computeVirtualGeometry,
+  findVisibleCollectionAnchor,
+  measuredAnchorScrollTarget,
+  translateAnchorViewportOffset,
+  virtualTableRowCount,
+  virtualTableRowIndex,
+  virtualWindowsMatch,
+} from './collectionVirtualization.js';
 
 const collectionSource = readFileSync(
   new URL('../components/CollectionList.jsx', import.meta.url),
   'utf8',
 );
+const collectionCss = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 
-function loadStandaloneHelper(name) {
-  const start = collectionSource.indexOf(`function ${name}(`);
-  assert.notEqual(start, -1, `${name} must remain a named standalone helper`);
-  const end = collectionSource.indexOf('\nfunction ', start + 1);
-  assert.notEqual(end, -1, `${name} must be followed by another named helper`);
-  return Function(`"use strict"; ${collectionSource.slice(start, end)}; return ${name};`)();
+const mountedCount = virtualWindow => virtualWindow.endIndex - virtualWindow.startIndex;
+
+function assertWindowBounds(itemCount, width, viewportWidth, viewportHeight, gallery) {
+  const geometry = computeVirtualGeometry(itemCount, width, viewportWidth, gallery);
+  const offsets = [0, geometry.totalSize / 2, geometry.totalSize];
+  return offsets.map(scrollTop => {
+    const window = buildVirtualWindow(itemCount, geometry, scrollTop, viewportHeight);
+    const visibleRows = Math.ceil(viewportHeight / geometry.rowStride);
+    const maximumRows = visibleRows + 9;
+    assert.ok(mountedCount(window) <= maximumRows * geometry.columns,
+      'the mounted range must stay bounded by viewport rows plus overscan');
+    assert.ok(window.startIndex >= 0 && window.endIndex <= itemCount);
+    return window;
+  });
 }
 
-test('collection rendering uses a viewport-bounded range instead of append-only slicing', () => {
-  assert.match(collectionSource, /function computeVirtualRange\s*\(/,
-    'the collection must calculate a start and end row from the viewport');
-  assert.match(collectionSource, /data-collection-virtual-spacer/,
-    'the collection must retain full scroll height while only mounting a window');
-  assert.match(collectionSource, /ResizeObserver/,
-    'responsive grid geometry must be recalculated when its container resizes');
-  assert.doesNotMatch(collectionSource, /visibleCount|LOAD_MORE_RENDER_COUNT|sentinelRef/,
-    'append-only visible-count batching is not true virtualization');
+test('collection virtualization stays viewport-bounded at top, middle, and end', () => {
+  const desktopGallery = assertWindowBounds(10_000, 1272, 1440, 900, true);
+  const desktopList = assertWindowBounds(10_000, 1272, 1440, 900, false);
+  const mobileGallery = assertWindowBounds(10_000, 343, 375, 667, true);
+  const mobileList = assertWindowBounds(10_000, 343, 375, 667, false);
+
+  for (const windows of [desktopGallery, desktopList, mobileGallery, mobileList]) {
+    assert.equal(windows[0].startIndex, 0, 'the first logical item must be reachable');
+    assert.equal(windows.at(-1).endIndex, 10_000, 'the final logical item must be reachable');
+    assert.ok(windows[1].startIndex > 0 && windows[1].endIndex < 10_000,
+      'a middle viewport must not retain either collection end');
+  }
+
+  // These are intentionally only wiring guards; geometry behavior is exercised above.
+  assert.match(collectionSource, /data-collection-virtual-spacer/);
+  assert.match(collectionSource, /ResizeObserver/);
+  assert.doesNotMatch(collectionSource, /visibleCount|LOAD_MORE_RENDER_COUNT|sentinelRef/);
 });
 
-test('view anchors preserve clipped-row progress when row heights change', () => {
-  const translateAnchorViewportOffset = loadStandaloneHelper('translateAnchorViewportOffset');
+test('view anchors preserve clipped progress through repeated round trips', () => {
+  assert.equal(translateAnchorViewportOffset(24, 360, 82), 24);
+  assert.equal(translateAnchorViewportOffset(0, 360, 82), 0);
 
-  assert.equal(translateAnchorViewportOffset(24, 360, 82), 24,
-    'an anchor below the viewport top should keep its exact pixel offset');
-  assert.equal(translateAnchorViewportOffset(0, 360, 82), 0,
-    'a row aligned to the viewport top should remain aligned');
-
-  const galleryOffset = -315;
-  const listOffset = translateAnchorViewportOffset(galleryOffset, 360, 82);
-  assert.ok(listOffset > -82 && listOffset < 0,
-    'a clipped gallery row must remain partially visible in the shorter list layout');
-  assert.ok(Math.abs((listOffset / 82) - (galleryOffset / 360)) < 1e-12,
-    'the destination layout should preserve the fraction of the row that was clipped');
-  assert.ok(Math.abs(translateAnchorViewportOffset(listOffset, 82, 360) - galleryOffset) < 1e-12,
-    'switching back should restore the original clipped-row offset');
-
-  const barelyVisible = translateAnchorViewportOffset(-81.9, 82, 343.34375, 900, 1);
-  assert.ok(barelyVisible + 343.34375 >= 1,
-    'clipped progress must retain at least one device pixel of destination intersection');
-
-  assert.match(collectionSource,
-    /translateAnchorViewportOffset\(\s*anchor\.sourceViewportOffset,\s*anchor\.sourceEntryHeight,\s*destinationRect\.height,/,
-    'final restoration must translate clipping with measured source and destination heights');
+  const galleryHeight = 306.21875;
+  const listHeight = 82;
+  const originalGalleryOffset = -139.4375;
+  let galleryOffset = originalGalleryOffset;
+  for (let roundTrip = 0; roundTrip < 20; roundTrip += 1) {
+    const listOffset = translateAnchorViewportOffset(
+      galleryOffset,
+      galleryHeight,
+      listHeight,
+      900,
+      1,
+    );
+    assert.ok(listOffset > -listHeight && listOffset < 0,
+      'the clipped entry must remain positively visible in list mode');
+    galleryOffset = translateAnchorViewportOffset(
+      listOffset,
+      listHeight,
+      galleryHeight,
+      900,
+      1,
+    );
+    assert.ok(galleryOffset + galleryHeight >= 1,
+      'the clipped entry must retain a device pixel in gallery mode');
+  }
+  assert.ok(Math.abs(galleryOffset - originalGalleryOffset) < 1e-9,
+    'stable measured geometry must not accumulate round-trip drift');
 });
 
 test('view switches select an actually intersecting source entry', () => {
-  const findVisibleCollectionAnchor = loadStandaloneHelper('findVisibleCollectionAnchor');
   const element = (entryId, top, height) => ({
     dataset: { collectionEntryId: entryId },
     getBoundingClientRect: () => ({ top, bottom: top + height, height }),
@@ -70,17 +105,42 @@ test('view switches select an actually intersecting source entry', () => {
     entryId: 'measured-visible',
     viewportOffset: -0.75,
     entryHeight: 343,
-  }, 'row-stride mismatch must advance past a theoretically visible entry that is actually clipped out');
-
-  assert.match(collectionSource, /data-collection-entry-id=\{item\.entry_id\}/,
-    'both destination layouts need a stable entry marker for measured restoration');
-  assert.match(collectionSource, /const measuredAnchor = findVisibleCollectionAnchor\(root, window\.innerHeight\)/,
-    'the switch path must capture source identity from rendered geometry');
+  });
+  assert.match(collectionSource, /data-collection-entry-id=\{item\.entry_id\}/);
 });
 
-test('measured correction removes calculated row-stride miss after spacer commit', () => {
-  const translateAnchorViewportOffset = loadStandaloneHelper('translateAnchorViewportOffset');
-  const measuredAnchorScrollTarget = loadStandaloneHelper('measuredAnchorScrollTarget');
+test('bounded Collection cards cannot defer geometry realization after anchor restoration', () => {
+  const sourceTop = -139.4375;
+  const sourceHeight = 306.21875;
+  const placeholderHeight = 320;
+  const placeholderTop = -196.03125;
+  const realizedTop = -223.625;
+  const desiredPlaceholderTop = translateAnchorViewportOffset(
+    sourceTop,
+    sourceHeight,
+    placeholderHeight,
+    900,
+    1,
+  );
+  const scrollTop = 303_356;
+  const target = measuredAnchorScrollTarget(
+    scrollTop,
+    placeholderTop,
+    desiredPlaceholderTop,
+    605_185,
+  );
+  const immediateTop = placeholderTop - (target - scrollTop);
+  const nextFrameTop = immediateTop + (realizedTop - placeholderTop);
+
+  assert.ok(Math.abs(immediateTop - desiredPlaceholderTop) < 1e-9,
+    'the synchronous placeholder measurement appears exactly restored');
+  assert.ok(Math.abs(nextFrameTop - immediateTop) > 20,
+    'realizing different CSS geometry reproduces post-paint drift at unchanged scrollY');
+  assert.doesNotMatch(collectionCss, /\bcontent-visibility\s*:|\bcontain-intrinsic-size\s*:/,
+    'the already-bounded Collection window must not introduce deferred card geometry');
+});
+
+test('measured correction removes calculated row-stride miss', () => {
   const sourceTop = -67.140625;
   const sourceHeight = 82;
   const destinationHeight = 343.34375;
@@ -92,61 +152,50 @@ test('measured correction removes calculated row-stride miss after spacer commit
     900,
     1,
   );
-  const currentScrollTop = 303356;
+  const currentScrollTop = 303_356;
   const targetScrollTop = measuredAnchorScrollTarget(
     currentScrollTop,
     calculatedDestinationTop,
     desiredTop,
-    605185,
+    605_185,
   );
   const correctedTop = calculatedDestinationTop - (targetScrollTop - currentScrollTop);
 
-  assert.ok(calculatedDestinationTop + destinationHeight < 0,
-    'fixture must reproduce the sub-pixel calculated-geometry miss');
-  assert.ok(Math.abs(correctedTop - desiredTop) < 1e-9,
-    'measured rect delta must place the destination at the translated source progress');
-  assert.ok(correctedTop + destinationHeight >= 1,
-    'measured correction must leave positive device-pixel intersection');
-  assert.match(collectionSource,
-    /measuredAnchorScrollTarget\(\s*window\.scrollY,\s*destinationRect\.top,\s*desiredViewportOffset,/,
-    'production restoration must correct from the destination DOM rect');
+  assert.ok(calculatedDestinationTop + destinationHeight < 0);
+  assert.ok(Math.abs(correctedTop - desiredTop) < 1e-9);
+  assert.ok(correctedTop + destinationHeight >= 1);
 });
 
-test('near-end restoration waits for corrected destination spacer geometry to commit', () => {
-  const virtualWindowsMatch = loadStandaloneHelper('virtualWindowsMatch');
+test('near-end restoration waits for destination spacer geometry to commit', () => {
+  const itemCount = 10_000;
   const viewportHeight = 667;
   const rootTop = 240;
-  const provisionalWindow = {
-    startIndex: 9948,
-    endIndex: 9980,
-    startRow: 4974,
-    endRow: 4990,
-    rowCount: 5000,
-    columns: 2,
-    rowStride: 291.618,
-    gap: 12,
-    totalSize: 1458078,
-  };
-  const destinationWindow = {
-    ...provisionalWindow,
-    startIndex: 9968,
-    endIndex: 10000,
-    startRow: 4984,
-    endRow: 5000,
-    rowStride: 297.095,
-    totalSize: 1485463,
-  };
-  const targetScrollTop = rootTop + 4994 * destinationWindow.rowStride + 120;
+  const provisionalGeometry = computeVirtualGeometry(itemCount, 331, 375, true);
+  const destinationGeometry = computeVirtualGeometry(itemCount, 343, 375, true);
+  const anchorIndex = 9_989;
+  const targetLocalTop = Math.floor(anchorIndex / destinationGeometry.columns)
+    * destinationGeometry.rowStride + 120;
+  const provisionalWindow = buildVirtualWindow(
+    itemCount,
+    provisionalGeometry,
+    targetLocalTop,
+    viewportHeight,
+  );
+  const destinationWindow = buildVirtualWindow(
+    itemCount,
+    destinationGeometry,
+    targetLocalTop,
+    viewportHeight,
+  );
+  const targetScrollTop = rootTop + targetLocalTop;
   const clampToCommittedSpacer = (requested, committed) => Math.min(
     requested,
     rootTop + committed.totalSize - viewportHeight,
   );
-
-  // This is the failed one-effect sequence: React has only queued the taller
-  // spacer, so the browser clamps the requested scroll against old geometry.
   const prematurelySettled = clampToCommittedSpacer(targetScrollTop, provisionalWindow);
+
   assert.ok(prematurelySettled < targetScrollTop - 20_000,
-    'the mobile width mismatch must reproduce a material near-end clamp');
+    'the stale mobile spacer must reproduce a material near-end clamp');
 
   let committedWindow = provisionalWindow;
   let settledScrollTop = prematurelySettled;
@@ -159,19 +208,82 @@ test('near-end restoration waits for corrected destination spacer geometry to co
     return Math.abs(settledScrollTop - targetScrollTop) < 1;
   };
 
-  assert.equal(restoreAfterCommit(), false,
-    'phase one must commit corrected spacer geometry without scrolling');
-  assert.equal(settledScrollTop, prematurelySettled,
-    'phase one must not issue another scroll against stale DOM geometry');
-  assert.equal(restoreAfterCommit(), true,
-    'phase two may restore only after the destination spacer is committed');
-  assert.equal(settledScrollTop, targetScrollTop,
-    'the committed destination extent must make the requested anchor reachable');
+  assert.equal(restoreAfterCommit(), false);
+  assert.equal(settledScrollTop, prematurelySettled);
+  assert.equal(restoreAfterCommit(), true);
+  assert.equal(settledScrollTop, targetScrollTop);
+});
 
+test('anchor convergence survives delayed scroll-range contraction after synchronous success', () => {
+  const measurement = (overrides = {}) => ({
+    scrollHeight: 410_506,
+    maximumScrollTop: 409_606,
+    rootDocumentTop: 478.875,
+    anchorViewportTop: 75.703125,
+    scrollTop: 409_808,
+    corrected: false,
+    hasPositiveIntersection: true,
+    ...overrides,
+  });
+  let convergence = advanceAnchorConvergence(null, measurement());
+  assert.equal(convergence.settled, false,
+    'one successful post-paint sample cannot clear a synchronously corrected anchor');
+  assert.equal(convergence.stableFrames, 1);
+
+  convergence = advanceAnchorConvergence(convergence, measurement({
+    scrollHeight: 410_504,
+    maximumScrollTop: 409_604,
+    rootDocumentTop: 477.875,
+    scrollTop: 409_806,
+    corrected: true,
+  }));
+  assert.equal(convergence.settled, false,
+    'a delayed virtual/layout commit resets convergence and keeps the anchor pending');
+  assert.equal(convergence.stableFrames, 0);
+
+  const stableSample = measurement({
+    scrollHeight: 410_504,
+    maximumScrollTop: 409_604,
+    rootDocumentTop: 477.875,
+    scrollTop: 409_806,
+  });
+  convergence = advanceAnchorConvergence(convergence, stableSample);
+  assert.equal(convergence.settled, false);
+  convergence = advanceAnchorConvergence(convergence, stableSample);
+  assert.equal(convergence.settled, true,
+    'pending clears only after the corrected scroll range is stable across paints');
+  assert.equal(convergence.stableFrames, ANCHOR_CONVERGENCE_STABLE_FRAMES);
+  assert.ok(convergence.frameCount < ANCHOR_CONVERGENCE_MAX_FRAMES);
+
+  assert.match(collectionSource, /advanceAnchorConvergence\(anchor\.convergence/);
+  assert.match(collectionSource, /pendingViewAnchorRef\.current !== anchor/,
+    'stale frame callbacks must be fenced to the exact pending anchor object');
+  assert.match(collectionSource, /cancelAnimationFrame\(anchorVerificationFrameRef\.current\)/,
+    'pending verification frames must be cancelled on replacement and unmount');
+  assert.match(collectionCss, /\.collection-virtual-list-panel[\s\S]*?transition-property:/,
+    'the gallery spacer must not animate layout-affecting border width when reused as a panel');
+});
+
+test('virtual table metadata describes filtered logical rows, not mounted spacers', () => {
+  for (const itemCount of [10_000, 5_000]) {
+    assert.equal(virtualTableRowCount(itemCount), itemCount + 1,
+      'aria-rowcount includes the header row');
+    for (const startIndex of [0, Math.floor(itemCount / 2), itemCount - 20]) {
+      const indices = Array.from({ length: 20 }, (_, mountedOffset) => (
+        virtualTableRowIndex(startIndex, mountedOffset)
+      ));
+      assert.equal(indices[0], startIndex + 2,
+        'the first data row follows the header at logical row 1');
+      assert.equal(indices.at(-1), startIndex + 21);
+      assert.ok(indices.every((value, index) => index === 0 || value === indices[index - 1] + 1),
+        'mounted data-row indices must be monotonic and contiguous');
+    }
+  }
+
+  // Native table markup is preserved; these guards prove metadata is wired to live counts/ranges.
+  assert.match(collectionSource, /<table[\s\S]*?aria-rowcount=\{virtualTableRowCount\(displayCards\.length\)\}/);
+  assert.match(collectionSource, /<tr aria-rowindex=\{1\}>/);
   assert.match(collectionSource,
-    /if \(!virtualWindowsMatch\(virtualWindow, destinationWindow\)\) \{\s*setVirtualWindow\(destinationWindow\);\s*return;/,
-    'the production effect must return after queueing destination geometry');
-  assert.match(collectionSource,
-    /window\.scrollTo\([\s\S]*?hasPositiveIntersection[\s\S]*?Math\.abs\(window\.scrollY - targetScrollTop\) <= tolerance[\s\S]*?pendingViewAnchorRef\.current = null;/,
-    'the pending anchor must survive until measured correction positively intersects and settles');
+    /aria-rowindex=\{virtualTableRowIndex\(virtualWindow\.startIndex, virtualIndex\)\}/);
+  assert.match(collectionSource, /collection-virtual-list-spacer" aria-hidden="true"/);
 });

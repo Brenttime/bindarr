@@ -23,6 +23,20 @@ import {
 } from '../utils/collectionSessionCache';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
+import {
+  ANCHOR_CONVERGENCE_MAX_FRAMES,
+  INITIAL_RENDER_COUNT,
+  LIST_ROW_HEIGHT,
+  advanceAnchorConvergence,
+  buildVirtualWindow,
+  computeVirtualGeometry,
+  findVisibleCollectionAnchor,
+  measuredAnchorScrollTarget,
+  translateAnchorViewportOffset,
+  virtualTableRowCount,
+  virtualTableRowIndex,
+  virtualWindowsMatch,
+} from '../utils/collectionVirtualization';
 import { analyze, compileQuery } from '../../../shared/scryfallQuery.js';
 import { looksLikeSyntax } from '../utils/scryfallSyntax';
 import CardInspectorModal from './CardInspectorModal';
@@ -32,130 +46,8 @@ import CardImage from './CardImage';
 import MultiSelectDropdown from './MultiSelectDropdown';
 
 const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' };
-const INITIAL_RENDER_COUNT = 96;
 const BACKGROUND_PAGE_SIZE = 2000;
 const BACKGROUND_PAGE_CONCURRENCY = 2;
-const VIRTUAL_OVERSCAN_ROWS = 4;
-const GALLERY_CARD_INFO_HEIGHT = 49;
-const LIST_ROW_HEIGHT = 82;
-
-function computeVirtualRange(itemCount, columns, rowStride, scrollTop, viewportHeight) {
-  const safeColumns = Math.max(1, columns);
-  const rowCount = Math.ceil(itemCount / safeColumns);
-  if (rowCount === 0) {
-    return { startIndex: 0, endIndex: 0, startRow: 0, endRow: 0, rowCount: 0 };
-  }
-
-  const firstVisibleRow = Math.floor(Math.max(0, scrollTop) / rowStride);
-  const lastVisibleRow = Math.ceil((Math.max(0, scrollTop) + viewportHeight) / rowStride);
-  const startRow = Math.max(0, Math.min(rowCount - 1, firstVisibleRow - VIRTUAL_OVERSCAN_ROWS));
-  const endRow = Math.min(rowCount, Math.max(startRow + 1, lastVisibleRow + VIRTUAL_OVERSCAN_ROWS));
-
-  return {
-    startIndex: startRow * safeColumns,
-    endIndex: Math.min(itemCount, endRow * safeColumns),
-    startRow,
-    endRow,
-    rowCount,
-  };
-}
-
-function computeVirtualGeometry(itemCount, width, viewportWidth, gallery) {
-  const gap = gallery ? (viewportWidth >= 769 ? 20 : 12) : 0;
-  const minCardWidth = viewportWidth >= 769 ? 180 : 130;
-  const columns = gallery
-    ? Math.max(1, Math.floor((width + gap) / (minCardWidth + gap)))
-    : 1;
-  const cardWidth = gallery ? (width - gap * (columns - 1)) / columns : width;
-  const rowHeight = gallery ? (cardWidth / 0.718) + GALLERY_CARD_INFO_HEIGHT : LIST_ROW_HEIGHT;
-  const rowStride = rowHeight + gap;
-  const rowCount = Math.ceil(itemCount / columns);
-
-  return {
-    columns,
-    rowStride,
-    gap,
-    rowCount,
-    totalSize: Math.max(0, rowCount * rowStride - gap),
-  };
-}
-
-// A negative viewport offset means the anchor row is clipped above the
-// viewport. Reusing that pixel offset in a shorter layout can hide the anchor
-// row completely. Preserve the progress through the row instead; this keeps
-// the same card partially visible and makes a gallery -> list -> gallery round
-// trip reversible. Positive offsets describe space above an unclipped row and
-// remain exact pixel offsets.
-function translateAnchorViewportOffset(
-  viewportOffset,
-  sourceEntryHeight,
-  targetEntryHeight,
-  viewportHeight = Number.POSITIVE_INFINITY,
-  devicePixelRatio = 1,
-) {
-  const translated = viewportOffset < 0 && sourceEntryHeight > 0 && targetEntryHeight > 0
-    ? (viewportOffset / sourceEntryHeight) * targetEntryHeight
-    : viewportOffset;
-  const visiblePixel = 1 / Math.max(1, devicePixelRatio || 1);
-  const minimumOffset = targetEntryHeight > 0
-    ? -Math.max(0, targetEntryHeight - visiblePixel)
-    : translated;
-  const maximumOffset = Number.isFinite(viewportHeight)
-    ? Math.max(0, viewportHeight - visiblePixel)
-    : translated;
-  return Math.min(maximumOffset, Math.max(minimumOffset, translated));
-}
-
-function findVisibleCollectionAnchor(root, viewportHeight) {
-  let anchor = null;
-  root.querySelectorAll('[data-collection-entry-id]').forEach((element) => {
-    const rect = element.getBoundingClientRect();
-    if (rect.bottom <= 0 || rect.top >= viewportHeight) return;
-    if (!anchor || rect.top < anchor.viewportOffset - 0.5) {
-      anchor = {
-        entryId: element.dataset.collectionEntryId,
-        viewportOffset: rect.top,
-        entryHeight: rect.height,
-      };
-    }
-  });
-  return anchor;
-}
-
-function measuredAnchorScrollTarget(
-  currentScrollTop,
-  anchorViewportTop,
-  desiredViewportOffset,
-  maximumScrollTop,
-) {
-  return Math.min(
-    Math.max(0, maximumScrollTop),
-    Math.max(0, currentScrollTop + anchorViewportTop - desiredViewportOffset),
-  );
-}
-
-function virtualWindowsMatch(current, expected) {
-  return current.startIndex === expected.startIndex
-    && current.endIndex === expected.endIndex
-    && current.startRow === expected.startRow
-    && current.endRow === expected.endRow
-    && current.rowCount === expected.rowCount
-    && current.columns === expected.columns
-    && Math.abs(current.rowStride - expected.rowStride) < 0.5
-    && Math.abs(current.gap - expected.gap) < 0.5
-    && Math.abs(current.totalSize - expected.totalSize) < 0.5;
-}
-
-function buildVirtualWindow(itemCount, geometry, scrollTop, viewportHeight) {
-  const range = computeVirtualRange(
-    itemCount,
-    geometry.columns,
-    geometry.rowStride,
-    scrollTop,
-    viewportHeight,
-  );
-  return { ...range, ...geometry };
-}
 
 // Maps each Sort By option to sortCardsByOrder criteria so ordering remains
 // consistent (set = chronological via setsList, type = name order — there is no
@@ -890,6 +782,8 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
   // the responsive auto-fill column calculation in step with container width.
   const virtualRootRef = useRef(null);
   const virtualFrameRef = useRef(null);
+  const anchorVerificationFrameRef = useRef(null);
+  const anchorIdentityRef = useRef(0);
   const pendingViewAnchorRef = useRef(null);
   const [virtualWindow, setVirtualWindow] = useState({
     startIndex: 0,
@@ -957,6 +851,13 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     };
   }, [displayCards.length, viewMode, showFilters, selectMode, loadingMore, hydrationError, liveLoading]);
 
+  useEffect(() => () => {
+    if (anchorVerificationFrameRef.current != null) {
+      window.cancelAnimationFrame(anchorVerificationFrameRef.current);
+      anchorVerificationFrameRef.current = null;
+    }
+  }, []);
+
   // A gallery row and a list row represent very different amounts of the
   // collection. Keeping window.scrollY unchanged when switching views therefore
   // jumps to a different card. Capture the first visible card and its viewport
@@ -1006,6 +907,11 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     // virtualWindow only after React has rendered its full spacer height. Do
     // not attempt the near-end scroll while the corrected geometry is queued.
     if (!virtualWindowsMatch(virtualWindow, destinationWindow)) {
+      if (anchorVerificationFrameRef.current != null) {
+        window.cancelAnimationFrame(anchorVerificationFrameRef.current);
+        anchorVerificationFrameRef.current = null;
+      }
+      anchor.convergence = null;
       setVirtualWindow(destinationWindow);
       return;
     }
@@ -1034,17 +940,81 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       maximumScrollTop,
     );
     window.scrollTo(window.scrollX, targetScrollTop);
-    const settledRect = destinationElement.getBoundingClientRect();
-    const tolerance = 1 / Math.max(1, window.devicePixelRatio || 1);
-    const hasPositiveIntersection = settledRect.bottom > 0
-      && settledRect.top < window.innerHeight;
-    if (hasPositiveIntersection && Math.abs(window.scrollY - targetScrollTop) <= tolerance) {
-      pendingViewAnchorRef.current = null;
+
+    // Keep this exact anchor alive beyond the synchronous correction. The
+    // scroll event can commit a recentered virtual window after this layout
+    // effect, and document scroll range changes only become observable after
+    // paint. A bounded, identity-fenced rAF verifier corrects those commits and
+    // clears only after two matching painted measurements.
+    if (anchorVerificationFrameRef.current == null) {
+      const verifyAfterPaint = () => {
+        anchorVerificationFrameRef.current = null;
+        if (pendingViewAnchorRef.current !== anchor
+            || pendingViewAnchorRef.current.identity !== anchor.identity
+            || anchor.viewMode !== viewMode) return;
+
+        const currentRoot = virtualRootRef.current;
+        const currentElement = currentRoot && Array.from(
+          currentRoot.querySelectorAll('[data-collection-entry-id]'),
+        ).find(element => element.dataset.collectionEntryId === String(anchor.entryId));
+        if (!currentRoot || !currentElement) return;
+
+        const currentRect = currentElement.getBoundingClientRect();
+        const currentDesiredOffset = translateAnchorViewportOffset(
+          anchor.sourceViewportOffset,
+          anchor.sourceEntryHeight,
+          currentRect.height,
+          window.innerHeight,
+          window.devicePixelRatio,
+        );
+        const currentMaximumScrollTop = Math.max(
+          0,
+          document.documentElement.scrollHeight - window.innerHeight,
+        );
+        const correctedScrollTop = measuredAnchorScrollTarget(
+          window.scrollY,
+          currentRect.top,
+          currentDesiredOffset,
+          currentMaximumScrollTop,
+        );
+        const tolerance = 1 / Math.max(1, window.devicePixelRatio || 1);
+        const corrected = Math.abs(window.scrollY - correctedScrollTop) > tolerance;
+        if (corrected) window.scrollTo(window.scrollX, correctedScrollTop);
+
+        const paintedRect = currentElement.getBoundingClientRect();
+        const rootRect = currentRoot.getBoundingClientRect();
+        const scrollHeight = document.documentElement.scrollHeight;
+        anchor.convergence = advanceAnchorConvergence(anchor.convergence, {
+          scrollHeight,
+          maximumScrollTop: Math.max(0, scrollHeight - window.innerHeight),
+          rootDocumentTop: rootRect.top + window.scrollY,
+          anchorViewportTop: paintedRect.top,
+          scrollTop: window.scrollY,
+          corrected,
+          hasPositiveIntersection: paintedRect.bottom > 0
+            && paintedRect.top < window.innerHeight,
+        }, tolerance);
+
+        if (anchor.convergence.settled) {
+          pendingViewAnchorRef.current = null;
+          return;
+        }
+        if (!anchor.convergence.exhausted
+            && anchor.convergence.frameCount < ANCHOR_CONVERGENCE_MAX_FRAMES) {
+          anchorVerificationFrameRef.current = window.requestAnimationFrame(verifyAfterPaint);
+        }
+      };
+      anchorVerificationFrameRef.current = window.requestAnimationFrame(verifyAfterPaint);
     }
   }, [displayCards, viewMode, virtualWindow]);
 
   const switchViewMode = (nextViewMode) => {
     if (nextViewMode === viewMode) return;
+
+    if (anchorVerificationFrameRef.current != null) {
+      window.cancelAnimationFrame(anchorVerificationFrameRef.current);
+      anchorVerificationFrameRef.current = null;
+    }
 
     const root = virtualRootRef.current;
     const scrollTop = window.scrollY;
@@ -1093,6 +1063,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       );
 
       pendingViewAnchorRef.current = {
+        identity: ++anchorIdentityRef.current,
         viewMode: nextViewMode,
         entryId: displayCards[anchorIndex].entry_id,
         index: anchorIndex,
@@ -1591,11 +1562,15 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
         </div>
       ) : (
         /* Traditional List Table View */
-        <div className="glass-panel" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="glass-panel collection-virtual-list-panel" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ overflowY: 'auto' }}>
-            <table className="collection-table" style={{ minWidth: 0 }}>
+            <table
+              className="collection-table"
+              style={{ minWidth: 0 }}
+              aria-rowcount={virtualTableRowCount(displayCards.length)}
+            >
               <thead>
-                <tr>
+                <tr aria-rowindex={1}>
                   <th>{t('collection.colCard')}</th>
                   <th style={{ width: '70px', textAlign: 'right' }}>{t('collection.colQtyValue')}</th>
                 </tr>
@@ -1606,10 +1581,16 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
                     <td colSpan={2} style={{ height: `${virtualTopSize}px` }} />
                   </tr>
                 )}
-                {virtualCards.map((item) => {
+                {virtualCards.map((item, virtualIndex) => {
                   const selected = selectedIds.has(item.entry_id);
                   return (
-                  <tr className="collection-virtual-list-row" data-collection-entry-id={item.entry_id} key={item.entry_id} style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}>
+                  <tr
+                    className="collection-virtual-list-row"
+                    data-collection-entry-id={item.entry_id}
+                    aria-rowindex={virtualTableRowIndex(virtualWindow.startIndex, virtualIndex)}
+                    key={item.entry_id}
+                    style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}
+                  >
                     <td>
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         {selectMode && (

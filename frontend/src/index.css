@@ -955,8 +955,9 @@ button, input, select, textarea {
 
 /* Collection gallery windowing: this spacer owns the full document height;
    its translated grid contains only viewport rows plus overscan. Fixed card
-   info geometry keeps row offsets deterministic while content-visibility is
-   merely an extra paint guard for the small mounted overscan. */
+   info geometry keeps row offsets deterministic. The bounded cards must remain
+   fully laid out: deferred content-visibility geometry breaks measured anchor
+   restoration after the destination scrolls onscreen. */
 .collection-virtual-spacer {
   position: relative;
   width: 100%;
@@ -964,9 +965,12 @@ button, input, select, textarea {
   contain: layout style;
 }
 
-.collection-virtual-grid .tcg-card {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 320px;
+/* React reuses the gallery spacer div as this panel during a view switch.
+   Avoid the global glass-panel `transition: all` interpolating its old
+   border-width (the UA medium 3px) down to 1px: that contracts both the root
+   offset and document scroll range for several painted frames. */
+.collection-virtual-list-panel {
+  transition-property: border-color, background-color, box-shadow;
 }
 
 .collection-virtual-grid .tcg-card-info {
