@@ -24,6 +24,11 @@ async function unresolvedDeckCardCount(deckId) {
 // one card; requirements are summed by canonical English name, collection copies
 // are summed across every printing, and checked-out decks reserve that same
 // logical pool.
+//
+// Ownership and lock totals are computed once per user (two bounded scans) and
+// joined on in the final SELECT. The previous shape correlated a full
+// collection scan and a full deck_cards scan INTO every card row, so a 90-card
+// deck cost ~90 x 20k-row scans per request.
 async function getDeckCoverageRows(deckId, userId) {
   return db.all(`
     WITH requested AS (
@@ -35,33 +40,36 @@ async function getDeckCoverageRows(deckId, userId) {
       JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
       WHERE dc.deck_id = ? AND dc.quantity > 0
       GROUP BY ${sqlCardKey('deck_cc')}
+    ),
+    owned AS (
+      SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(owned.quantity) AS owned_qty
+      FROM collection owned
+      JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
+      WHERE owned.user_id = ? AND owned.quantity > 0
+      GROUP BY ${sqlCardKey('owned_cc')}
+    ),
+    locked AS (
+      SELECT ${sqlCardKey('locked_cc')} AS card_key, SUM(locked_dc.quantity) AS locked_qty
+      FROM deck_cards locked_dc
+      JOIN card_cache locked_cc ON locked_cc.id = locked_dc.card_id
+      JOIN decks locked_deck ON locked_deck.id = locked_dc.deck_id
+      WHERE locked_deck.checked_out = 1
+        AND locked_dc.quantity > 0
+        AND locked_deck.user_id = ?
+        AND locked_deck.id != ?
+      GROUP BY ${sqlCardKey('locked_cc')}
     )
     SELECT
       requested.representative_id AS card_id,
       cc.name, cc.printed_name, cc.supertype, cc.subtypes,
       cc.set_name, cc.number, cc.image_url,
       requested.required_qty,
-      (
-        SELECT COALESCE(SUM(owned.quantity), 0)
-        FROM collection owned
-        JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
-        WHERE owned.user_id = ?
-          AND owned.quantity > 0
-          AND ${sqlCardKey('owned_cc')} = requested.card_key
-      ) AS owned_qty,
-      (
-        SELECT COALESCE(SUM(locked_dc.quantity), 0)
-        FROM deck_cards locked_dc
-        JOIN card_cache locked_cc ON locked_cc.id = locked_dc.card_id
-        JOIN decks locked_deck ON locked_deck.id = locked_dc.deck_id
-        WHERE locked_deck.checked_out = 1
-          AND locked_dc.quantity > 0
-          AND locked_deck.user_id = ?
-          AND locked_deck.id != ?
-          AND ${sqlCardKey('locked_cc')} = requested.card_key
-      ) AS locked_qty
+      COALESCE(owned.owned_qty, 0) AS owned_qty,
+      COALESCE(locked.locked_qty, 0) AS locked_qty
     FROM requested
     JOIN card_cache cc ON cc.id = requested.representative_id
+    LEFT JOIN owned ON owned.card_key = requested.card_key
+    LEFT JOIN locked ON locked.card_key = requested.card_key
   `, [deckId, userId, userId, deckId]);
 }
 
@@ -175,6 +183,9 @@ router.get('/:id', async (req, res) => {
       });
     }
 
+    // Owned copies are aggregated once per user and joined on per row. The
+    // previous per-row correlated subquery rescanned the whole collection for
+    // every card in the deck (~80 ms x deck size on a 20k-row collection).
     const cardsQuery = `
       WITH requested AS (
         SELECT
@@ -185,6 +196,13 @@ router.get('/:id', async (req, res) => {
         JOIN card_cache deck_cc ON deck_cc.id = dc.card_id
         WHERE dc.deck_id = ? AND dc.quantity > 0
         GROUP BY ${sqlCardKey('deck_cc')}
+      ),
+      owned AS (
+        SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(owned.quantity) AS owned_qty
+        FROM collection owned
+        JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
+        WHERE owned.user_id = ? AND owned.quantity > 0
+        GROUP BY ${sqlCardKey('owned_cc')}
       )
       SELECT
         requested.quantity,
@@ -199,16 +217,10 @@ router.get('/:id', async (req, res) => {
         cc.number,
         cc.image_url,
         cc.price_trend,
-        (
-          SELECT COALESCE(SUM(owned.quantity), 0)
-          FROM collection owned
-          JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
-          WHERE owned.user_id = ?
-            AND owned.quantity > 0
-            AND ${sqlCardKey('owned_cc')} = requested.card_key
-        ) AS owned_qty
+        COALESCE(owned.owned_qty, 0) AS owned_qty
       FROM requested
       JOIN card_cache cc ON cc.id = requested.representative_id
+      LEFT JOIN owned ON owned.card_key = requested.card_key
       ORDER BY cc.name
     `;
     const cards = await db.all(cardsQuery, [id, req.user.id]);
@@ -603,7 +615,31 @@ router.put('/:id/checkout', async (req, res) => {
     // checkouts serialize here: once one deck becomes checked out, the next
     // statement sees its same-name reservations. This prevents two clients from
     // both spending the same physical copies after separate preflight reads.
+    //
+    // The supply math (owned minus locked, per logical card) is computed once
+    // per user in CTEs and joined against this deck's requirements, instead of
+    // rescanning the collection and every checked-out deck for each card group
+    // inside the HAVING clause. Same predicate, one pass each.
     const checkedOut = await withAllocationLock(() => db.all(`
+      WITH owned AS (
+        SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(owned.quantity) AS owned_qty
+        FROM collection owned
+        JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
+        WHERE owned.user_id = ?
+          AND owned.quantity > 0
+        GROUP BY ${sqlCardKey('owned_cc')}
+      ),
+      locked AS (
+        SELECT ${sqlCardKey('locked_cc')} AS card_key, SUM(locked_dc.quantity) AS locked_qty
+        FROM deck_cards locked_dc
+        JOIN card_cache locked_cc ON locked_cc.id = locked_dc.card_id
+        JOIN decks locked_deck ON locked_deck.id = locked_dc.deck_id
+        WHERE locked_deck.user_id = ?
+          AND locked_deck.checked_out = 1
+          AND locked_dc.quantity > 0
+          AND locked_deck.id != ?
+        GROUP BY ${sqlCardKey('locked_cc')}
+      )
       UPDATE decks AS target
       SET checked_out = 1, checked_out_at = CURRENT_TIMESTAMP
       WHERE target.id = ?
@@ -633,35 +669,22 @@ router.put('/:id/checkout', async (req, res) => {
         )
         AND NOT EXISTS (
           SELECT 1
-          FROM deck_cards needed_dc
-          JOIN card_cache needed_cc ON needed_cc.id = needed_dc.card_id
-          WHERE needed_dc.deck_id = target.id
-            AND needed_dc.quantity > 0
-            AND NOT ${sqlIsBasicLand('needed_cc')}
-          GROUP BY ${sqlCardKey('needed_cc')}
-          HAVING SUM(needed_dc.quantity) >
-            COALESCE((
-              SELECT SUM(owned.quantity)
-              FROM collection owned
-              JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
-              WHERE owned.user_id = target.user_id
-                AND owned.quantity > 0
-                AND ${sqlCardKey('owned_cc')} = ${sqlCardKey('needed_cc')}
-            ), 0)
-            - COALESCE((
-              SELECT SUM(locked_dc.quantity)
-              FROM deck_cards locked_dc
-              JOIN card_cache locked_cc ON locked_cc.id = locked_dc.card_id
-              JOIN decks locked_deck ON locked_deck.id = locked_dc.deck_id
-              WHERE locked_deck.user_id = target.user_id
-                AND locked_deck.checked_out = 1
-                AND locked_dc.quantity > 0
-                AND locked_deck.id != target.id
-                AND ${sqlCardKey('locked_cc')} = ${sqlCardKey('needed_cc')}
-            ), 0)
+          FROM (
+            SELECT ${sqlCardKey('needed_cc')} AS card_key, SUM(needed_dc.quantity) AS needed_qty
+            FROM deck_cards needed_dc
+            JOIN card_cache needed_cc ON needed_cc.id = needed_dc.card_id
+            WHERE needed_dc.deck_id = ?
+              AND needed_dc.quantity > 0
+              AND NOT ${sqlIsBasicLand('needed_cc')}
+            GROUP BY ${sqlCardKey('needed_cc')}
+          ) needed
+          LEFT JOIN owned ON owned.card_key = needed.card_key
+          LEFT JOIN locked ON locked.card_key = needed.card_key
+          WHERE needed.needed_qty >
+            COALESCE(owned.owned_qty, 0) - COALESCE(locked.locked_qty, 0)
         )
       RETURNING id
-    `, [id, req.user.id]));
+    `, [req.user.id, req.user.id, id, id, req.user.id, id]));
 
     if (checkedOut.length) {
       return res.json({ message: 'Deck checked out successfully' });
