@@ -60,6 +60,17 @@ export function reconcileCollectionHydration(mode, key, current) {
   return { action: 'start', state: { key, status: 'loading' } };
 }
 
+export function abortMatchingCollectionHydration(current, { key, generation, controller }) {
+  if (!controller
+    || current?.key !== key
+    || current?.generation !== generation
+    || current?.controller !== controller
+    || !['loading', 'partial'].includes(current.status)) {
+    return current;
+  }
+  return { ...current, status: 'aborted' };
+}
+
 export class CatalogLoadError extends Error {
   constructor(message, { stage, status = null, payload = null, cause = null } = {}) {
     super(message, cause ? { cause } : undefined);

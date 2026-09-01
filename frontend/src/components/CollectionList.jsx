@@ -9,6 +9,7 @@ import { sortCardsByOrder } from '../utils/cardSort';
 import { buildCardListText } from '../utils/cardList';
 import { fetchWithRetry } from '../utils/fetchWithRetry';
 import {
+  abortMatchingCollectionHydration,
   catalogDebounceMs,
   catalogRowsForQuery,
   loadCatalogCollection,
@@ -299,7 +300,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     let partialRows = cached?.rows || [];
     let expectedTotal = cached?.total || partialRows.length;
     fetchAbortRef.current = controller;
-    collectionHydrationRef.current = { key: sessionQuery.queryKey, status: 'loading' };
+    collectionHydrationRef.current = {
+      key: sessionQuery.queryKey,
+      status: 'loading',
+      generation,
+      controller,
+    };
     setHydrationStatus('loading');
     setHydrationError(null);
 
@@ -338,7 +344,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       setCollection(firstPage);
       setLoading(false);
       setHydrationStatus(firstStatus);
-      collectionHydrationRef.current = { key: sessionQuery.queryKey, status: firstStatus };
+      collectionHydrationRef.current = {
+        key: sessionQuery.queryKey,
+        status: firstStatus,
+        generation,
+        controller,
+      };
 
       if (firstPage.length < total) {
         setLoadingMore(true);
@@ -395,7 +406,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
           if (!collectionSessionCache.read(sessionQuery)?.complete) {
             throw new Error('Incomplete collection hydration: duplicate or missing entry IDs');
           }
-          collectionHydrationRef.current = { key: sessionQuery.queryKey, status: 'complete' };
+          collectionHydrationRef.current = {
+            key: sessionQuery.queryKey,
+            status: 'complete',
+            generation,
+            controller,
+          };
           startTransition(() => {
             setCollection(current => generation === fetchGenerationRef.current && !controller.signal.aborted
               ? fullCollection : current);
@@ -420,7 +436,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
         if (!collectionSessionCache.read(sessionQuery)?.complete) {
           throw new Error('Incomplete collection hydration: duplicate or missing entry IDs');
         }
-        collectionHydrationRef.current = { key: sessionQuery.queryKey, status: 'complete' };
+        collectionHydrationRef.current = {
+          key: sessionQuery.queryKey,
+          status: 'complete',
+          generation,
+          controller,
+        };
         startTransition(() => {
           setCollection(current => generation === fetchGenerationRef.current && !controller.signal.aborted
             ? fullCollection : current);
@@ -441,7 +462,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
       });
-      collectionHydrationRef.current = { key: sessionQuery.queryKey, status: 'error' };
+      collectionHydrationRef.current = {
+        key: sessionQuery.queryKey,
+        status: 'error',
+        generation,
+        controller,
+      };
       setHydrationStatus('error');
       setHydrationError(err instanceof Error ? err.message : String(err));
       console.error(err);
@@ -751,8 +777,19 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
   }, [catalogQueryKey, scryfallPredicate, statsTrigger, t]);
 
   useEffect(() => () => {
-    fetchGenerationRef.current += 1;
-    fetchAbortRef.current?.abort();
+    const generation = fetchGenerationRef.current;
+    const controller = fetchAbortRef.current;
+    const hydration = collectionHydrationRef.current;
+    const abortedHydration = abortMatchingCollectionHydration(hydration, {
+      key: hydration.key,
+      generation,
+      controller,
+    });
+    if (abortedHydration !== hydration) {
+      collectionHydrationRef.current = abortedHydration;
+      fetchGenerationRef.current += 1;
+      controller.abort();
+    }
     liveFetchRef.current += 1;
     liveAbortRef.current?.abort();
   }, []);

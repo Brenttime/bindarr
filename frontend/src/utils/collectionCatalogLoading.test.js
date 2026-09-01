@@ -5,6 +5,7 @@ import {
   CATALOG_INITIAL_PAGE_SIZE,
   FAST_CATALOG_DEBOUNCE_MS,
   LIVE_CATALOG_DEBOUNCE_MS,
+  abortMatchingCollectionHydration,
   catalogDebounceMs,
   catalogRowsForQuery,
   loadCatalogCollection,
@@ -271,6 +272,71 @@ test('ordinary collection hydration aborts for catalog mode and restarts once wh
   assert.equal(decision.action, 'none', 'a complete same-key collection is not downloaded twice');
   decision = reconcileCollectionHydration('off', 'trigger-2|all', state);
   assert.equal(decision.action, 'start', 'a data refresh key still starts a fresh hydration');
+});
+
+test('StrictMode cleanup makes its matching ordinary hydration restartable exactly once', () => {
+  const key = 'ordinary|trigger-1|all';
+  const controller = new AbortController();
+  const setup = reconcileCollectionHydration('off', key, { key: null, status: 'idle' });
+  assert.deepEqual(setup, {
+    action: 'start',
+    state: { key, status: 'loading' },
+  });
+
+  const active = { ...setup.state, generation: 1, controller };
+  const cleanedUp = abortMatchingCollectionHydration(active, {
+    key,
+    generation: 1,
+    controller,
+  });
+  assert.deepEqual(cleanedUp, { ...active, status: 'aborted' });
+
+  const replay = reconcileCollectionHydration('off', key, cleanedUp);
+  assert.equal(replay.action, 'start');
+  assert.deepEqual(replay.state, { key, status: 'loading' });
+  assert.equal(
+    reconcileCollectionHydration('off', key, replay.state).action,
+    'none',
+    'the replayed setup starts one request, not a render loop',
+  );
+});
+
+test('stale ordinary hydration cleanup cannot overwrite a replacement controller generation', () => {
+  const key = 'ordinary|trigger-1|all';
+  const oldController = new AbortController();
+  const replacementController = new AbortController();
+  const replacement = {
+    key,
+    status: 'loading',
+    generation: 2,
+    controller: replacementController,
+  };
+
+  const afterStaleCleanup = abortMatchingCollectionHydration(replacement, {
+    key,
+    generation: 1,
+    controller: oldController,
+  });
+  assert.strictEqual(afterStaleCleanup, replacement);
+  assert.equal(afterStaleCleanup.status, 'loading');
+  assert.equal(afterStaleCleanup.controller, replacementController);
+});
+
+test('ordinary hydration cleanup is a no-op after matching hydration completes', () => {
+  const key = 'ordinary|trigger-1|all';
+  const controller = new AbortController();
+  const complete = { key, status: 'complete', generation: 1, controller };
+  assert.strictEqual(
+    abortMatchingCollectionHydration(complete, { key, generation: 1, controller }),
+    complete,
+  );
+});
+
+test('warm complete ordinary hydration reconciles without a request', () => {
+  const complete = { key: 'ordinary|trigger-1|all', status: 'complete' };
+  const decision = reconcileCollectionHydration('off', complete.key, complete);
+  assert.equal(decision.action, 'none');
+  assert.strictEqual(decision.state, complete);
 });
 
 test('otag plus safe local operators uses the short debounce; extras-implying operators stay conservative', () => {
