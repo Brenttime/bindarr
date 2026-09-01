@@ -26,23 +26,29 @@ const PRINTING_VALUES = ['Normal', 'Holofoil'];
 // A collection-scope search already reports owned_qty from its own join.
 async function attachOwnedQty(cards, userId) {
   if (!Array.isArray(cards) || cards.length === 0 || !userId) return;
-  const ids = [...new Set(cards.map(card => card.id).filter(Boolean))];
-  if (ids.length === 0) return;
   const rows = await db.all(
-    `SELECT target.id AS card_id, COALESCE(SUM(c.quantity), 0) AS qty
-     FROM card_cache target
-     LEFT JOIN card_cache owned_cc
-       ON ${sqlCardKey('owned_cc')} = ${sqlCardKey('target')}
-     LEFT JOIN collection c
-       ON c.card_id = owned_cc.id AND c.user_id = ? AND c.quantity > 0
-     WHERE target.id IN (${ids.map(() => '?').join(',')})
-     GROUP BY target.id`,
-    [userId, ...ids]
+    `WITH target_cards AS (
+       SELECT CAST(key AS INTEGER) AS target_index, value AS card_id
+       FROM json_each(?)
+     ),
+     owned AS MATERIALIZED (
+       SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(c.quantity) AS qty
+       FROM collection c
+       JOIN card_cache owned_cc ON owned_cc.id = c.card_id
+       WHERE c.user_id = ? AND c.quantity > 0
+       GROUP BY ${sqlCardKey('owned_cc')}
+     )
+     SELECT target_cards.target_index, COALESCE(owned.qty, 0) AS qty
+     FROM target_cards
+     JOIN card_cache target ON target.id = target_cards.card_id
+     LEFT JOIN owned ON owned.card_key = ${sqlCardKey('target')}
+     ORDER BY target_cards.target_index`,
+    [JSON.stringify(cards.map(card => card && card.id ? card.id : null)), userId]
   );
-  const owned = new Map(rows.map(row => [row.card_id, row.qty]));
+  const owned = new Map(rows.map(row => [row.target_index, row.qty]));
   // Every search result keeps its own art/set/collector number, but the owned
   // badge answers "how many of this game card do I own?" across all printings.
-  for (const card of cards) card.owned_qty = owned.get(card.id) || 0;
+  for (let i = 0; i < cards.length; i++) cards[i].owned_qty = owned.get(i) || 0;
 }
 
 // 1. Search cards (Scryfall + database cache).
@@ -128,7 +134,7 @@ async function searchCards(req, res) {
         }
       }
     }
-    await attachOwnedQty(cards, req.user.id);
+    if (scope !== 'collection') await attachOwnedQty(cards, req.user.id);
     // Header, not the body: every existing caller expects a bare array here.
     if (total != null) {
       res.set('X-Total-Count', String(total));

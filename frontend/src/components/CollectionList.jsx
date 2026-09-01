@@ -15,6 +15,11 @@ import {
   mapWithConcurrency,
   reconcileCollectionHydration,
 } from '../utils/collectionCatalogLoading';
+import {
+  collectionSessionCache,
+  makeCollectionSessionQuery,
+  waitForCollectionIdle,
+} from '../utils/collectionSessionCache';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
 import { analyze, compileQuery } from '../../../shared/scryfallQuery.js';
@@ -27,9 +32,32 @@ import MultiSelectDropdown from './MultiSelectDropdown';
 
 const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' };
 const INITIAL_RENDER_COUNT = 96;
-const LOAD_MORE_RENDER_COUNT = 240;
 const BACKGROUND_PAGE_SIZE = 2000;
 const BACKGROUND_PAGE_CONCURRENCY = 2;
+const VIRTUAL_OVERSCAN_ROWS = 4;
+const GALLERY_CARD_INFO_HEIGHT = 49;
+const LIST_ROW_HEIGHT = 82;
+
+function computeVirtualRange(itemCount, columns, rowStride, scrollTop, viewportHeight) {
+  const safeColumns = Math.max(1, columns);
+  const rowCount = Math.ceil(itemCount / safeColumns);
+  if (rowCount === 0) {
+    return { startIndex: 0, endIndex: 0, startRow: 0, endRow: 0, rowCount: 0 };
+  }
+
+  const firstVisibleRow = Math.floor(Math.max(0, scrollTop) / rowStride);
+  const lastVisibleRow = Math.ceil((Math.max(0, scrollTop) + viewportHeight) / rowStride);
+  const startRow = Math.max(0, Math.min(rowCount - 1, firstVisibleRow - VIRTUAL_OVERSCAN_ROWS));
+  const endRow = Math.min(rowCount, Math.max(startRow + 1, lastVisibleRow + VIRTUAL_OVERSCAN_ROWS));
+
+  return {
+    startIndex: startRow * safeColumns,
+    endIndex: Math.min(itemCount, endRow * safeColumns),
+    startRow,
+    endRow,
+    rowCount,
+  };
+}
 
 // Maps each Sort By option to sortCardsByOrder criteria so ordering remains
 // consistent (set = chronological via setsList, type = name order — there is no
@@ -61,15 +89,29 @@ function Field({ label, children, style }) {
   );
 }
 
-function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter, setSelectedCardFilter }) {
+function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCardFilter, setSelectedCardFilter }) {
   const { t } = useT();
-  const [collection, setCollection] = useState([]);
-  const [setsList, setSetsList] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [tradeOnly, setTradeOnly] = useState(false);
+  const initialQueryRef = useRef(makeCollectionSessionQuery({
+    authKey: token,
+    revision: statsTrigger,
+    tradeOnly: false,
+  }));
+  const initialCacheRef = useRef(collectionSessionCache.read(initialQueryRef.current));
+  const initialSetsRef = useRef(collectionSessionCache.readSets(initialQueryRef.current));
+  const initialCache = initialCacheRef.current;
+  const [collection, setCollection] = useState(() => initialCache?.rows || []);
+  const [setsList, setSetsList] = useState(() => initialSetsRef.current?.sets || []);
+  const [loading, setLoading] = useState(() => !initialCache);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hydrationStatus, setHydrationStatus] = useState(() => initialCache?.status || 'idle');
+  const [hydrationError, setHydrationError] = useState(() => initialCache?.error || null);
   const fetchGenerationRef = useRef(0);
   const fetchAbortRef = useRef(null);
-  const collectionHydrationRef = useRef({ key: null, status: 'idle' });
+  const collectionHydrationRef = useRef({
+    key: initialCache?.queryKey || null,
+    status: initialCache?.status || 'idle',
+  });
 
   useEffect(() => {
     if (selectedCardFilter) {
@@ -105,7 +147,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const [minPriceFilter, setMinPriceFilter] = useState('');
   const [maxPriceFilter, setMaxPriceFilter] = useState('');
   const [sortBy, setSortBy] = useState('added-newest');
-  const [tradeOnly, setTradeOnly] = useState(false);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
 
   // Live-catalog mode: the query contains an operator only Scryfall's
@@ -137,29 +178,44 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     pressHandlers, longPressFired, runBulk,
   } = useMultiSelect({ showToast, onChanged: onUpdate });
 
+  const collectionSessionQuery = useMemo(() => makeCollectionSessionQuery({
+    authKey: token,
+    revision: statsTrigger,
+    tradeOnly,
+  }), [token, statsTrigger, tradeOnly]);
+
   useEffect(() => {
-    fetchSets();
+    if (initialSetsRef.current?.setsReady) return undefined;
+    let active = true;
+    fetchSets(initialQueryRef.current, () => active);
+    return () => { active = false; };
   // The set catalog is static collection-view metadata; card mutations should
   // not download it again.
   }, []);
 
-  const fetchCollection = async (hydrationKey) => {
+  const fetchCollection = async (sessionQuery) => {
     const generation = ++fetchGenerationRef.current;
     fetchAbortRef.current?.abort();
     const controller = new AbortController();
+    const cacheLease = collectionSessionCache.begin(sessionQuery);
+    const cached = collectionSessionCache.read(sessionQuery);
+    let partialRows = cached?.rows || [];
+    let expectedTotal = cached?.total || partialRows.length;
     fetchAbortRef.current = controller;
-    collectionHydrationRef.current = { key: hydrationKey, status: 'loading' };
+    collectionHydrationRef.current = { key: sessionQuery.queryKey, status: 'loading' };
+    setHydrationStatus('loading');
+    setHydrationError(null);
 
     try {
-      setLoading(true);
-      setLoadingMore(false);
-      setVisibleCount(INITIAL_RENDER_COUNT);
+      setLoading(partialRows.length === 0);
+      setLoadingMore(partialRows.length > 0);
+      if (partialRows.length) setCollection(partialRows);
 
       const params = new URLSearchParams({
         limit: String(INITIAL_RENDER_COUNT),
         offset: '0'
       });
-      if (tradeOnly) params.set('is_trade', '1');
+      if (sessionQuery.tradeOnly) params.set('is_trade', '1');
 
       // Cold path: request only what can be painted immediately. This stays fast
       // even when the physical collection grows to hundreds of thousands of rows.
@@ -170,16 +226,31 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const firstPage = await response.json();
       const total = Math.max(firstPage.length, parseInt(response.headers.get('X-Total-Count'), 10) || 0);
-      if (generation !== fetchGenerationRef.current) return;
+      if (generation !== fetchGenerationRef.current || controller.signal.aborted) return;
+      partialRows = firstPage;
+      expectedTotal = total;
+      const firstStatus = firstPage.length < total ? 'partial' : 'complete';
+      if (!collectionSessionCache.write(cacheLease, {
+        rows: firstPage,
+        total,
+        status: firstStatus,
+      })) return;
+      if (firstStatus === 'complete' && !collectionSessionCache.read(sessionQuery)?.complete) {
+        throw new Error('Incomplete collection hydration: duplicate or missing entry IDs');
+      }
       setCollection(firstPage);
       setLoading(false);
-      collectionHydrationRef.current = {
-        key: hydrationKey,
-        status: firstPage.length < total ? 'partial' : 'complete',
-      };
+      setHydrationStatus(firstStatus);
+      collectionHydrationRef.current = { key: sessionQuery.queryKey, status: firstStatus };
 
       if (firstPage.length < total) {
         setLoadingMore(true);
+
+        // Yield until after the bounded 96-row paint. requestIdleCallback's
+        // timeout prevents starvation; browsers without it use a short timer.
+        if (!await waitForCollectionIdle({ signal: controller.signal })) return;
+        if (generation !== fetchGenerationRef.current || controller.signal.aborted) return;
+
         const pageOffsets = [];
         for (let offset = firstPage.length; offset < total; offset += BACKGROUND_PAGE_SIZE) {
           pageOffsets.push(offset);
@@ -199,7 +270,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                 offset: String(offset),
                 count: '0'
               });
-              if (tradeOnly) pageParams.set('is_trade', '1');
+              if (sessionQuery.tradeOnly) pageParams.set('is_trade', '1');
               const pageResponse = await fetchWithRetry(
                 `/api/collection?${pageParams}`,
                 { signal: controller.signal }
@@ -214,45 +285,88 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           // Never leave filters, totals, or bulk operations working on a silent
           // 96-row subset. If a page still fails after retries, fall back to the
           // compatible full endpoint; this slower path is only for recovery.
-          const fallbackUrl = tradeOnly ? '/api/collection?is_trade=1' : '/api/collection';
+          const fallbackUrl = sessionQuery.tradeOnly ? '/api/collection?is_trade=1' : '/api/collection';
           const fallbackResponse = await fetchWithRetry(fallbackUrl, { signal: controller.signal });
           if (!fallbackResponse.ok) throw backgroundError;
           const fullCollection = await fallbackResponse.json();
-          if (generation !== fetchGenerationRef.current) return;
-          collectionHydrationRef.current = { key: hydrationKey, status: 'complete' };
-          startTransition(() => setCollection(fullCollection));
+          if (generation !== fetchGenerationRef.current || controller.signal.aborted) return;
+          if (!collectionSessionCache.write(cacheLease, {
+            rows: fullCollection,
+            total: fullCollection.length,
+            status: 'complete',
+          })) return;
+          if (!collectionSessionCache.read(sessionQuery)?.complete) {
+            throw new Error('Incomplete collection hydration: duplicate or missing entry IDs');
+          }
+          collectionHydrationRef.current = { key: sessionQuery.queryKey, status: 'complete' };
+          startTransition(() => {
+            setCollection(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+              ? fullCollection : current);
+            setHydrationStatus(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+              ? 'complete' : current);
+            setHydrationError(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+              ? null : current);
+          });
           return;
         }
-        if (generation !== fetchGenerationRef.current) return;
-        collectionHydrationRef.current = { key: hydrationKey, status: 'complete' };
-        startTransition(() => setCollection(firstPage.concat(...pages)));
+        if (generation !== fetchGenerationRef.current || controller.signal.aborted) return;
+        const fullCollection = firstPage.concat(...pages);
+        partialRows = fullCollection;
+        if (fullCollection.length !== total) {
+          throw new Error(`Incomplete collection hydration: expected ${total}, received ${fullCollection.length}`);
+        }
+        if (!collectionSessionCache.write(cacheLease, {
+          rows: fullCollection,
+          total,
+          status: 'complete',
+        })) return;
+        if (!collectionSessionCache.read(sessionQuery)?.complete) {
+          throw new Error('Incomplete collection hydration: duplicate or missing entry IDs');
+        }
+        collectionHydrationRef.current = { key: sessionQuery.queryKey, status: 'complete' };
+        startTransition(() => {
+          setCollection(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+            ? fullCollection : current);
+          setHydrationStatus(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+            ? 'complete' : current);
+          setHydrationError(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+            ? null : current);
+        });
       }
     } catch (err) {
-      if (err?.name === 'AbortError') {
-        if (generation === fetchGenerationRef.current) {
-          collectionHydrationRef.current = { key: hydrationKey, status: 'aborted' };
-        }
+      if (err?.name === 'AbortError' || controller.signal.aborted
+        || generation !== fetchGenerationRef.current) {
         return;
       }
-      if (generation === fetchGenerationRef.current) {
-        collectionHydrationRef.current = { key: hydrationKey, status: 'error' };
-      }
+      collectionSessionCache.write(cacheLease, {
+        rows: partialRows,
+        total: expectedTotal,
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      collectionHydrationRef.current = { key: sessionQuery.queryKey, status: 'error' };
+      setHydrationStatus('error');
+      setHydrationError(err instanceof Error ? err.message : String(err));
       console.error(err);
       showToast(t('collection.errLoad'));
     } finally {
-      if (generation === fetchGenerationRef.current) {
+      if (generation === fetchGenerationRef.current && !controller.signal.aborted) {
         setLoading(false);
         setLoadingMore(false);
       }
     }
   };
 
-  const fetchSets = async () => {
+  const fetchSets = async (sessionQuery, isActive = () => true) => {
     try {
       const response = await fetch('/api/sets');
-      if (response.ok) setSetsList(await response.json());
+      if (!response.ok) return;
+      const sets = await response.json();
+      if (!isActive()) return;
+      collectionSessionCache.setSets(sessionQuery, sets);
+      setSetsList(sets);
     } catch (err) {
-      console.error('Error fetching sets:', err);
+      if (isActive()) console.error('Error fetching sets:', err);
     }
   };
 
@@ -393,8 +507,34 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // pure waste. Reconcile by data-generation key: catalog mode aborts a
   // partial ordinary hydration, and returning to any browser-filtered mode
   // restarts only when that hydration was aborted/partial or the key changed.
-  const collectionHydrationKey = `${String(statsTrigger)}|${tradeOnly ? 'trade' : 'all'}`;
+  const collectionHydrationKey = collectionSessionQuery.queryKey;
   useEffect(() => {
+    if (scryfallPredicate.mode !== 'catalog') {
+      const cached = collectionSessionCache.read(collectionSessionQuery);
+      if (cached?.complete) {
+        if (collectionHydrationRef.current.key !== collectionHydrationKey
+          && ['loading', 'partial'].includes(collectionHydrationRef.current.status)) {
+          fetchGenerationRef.current += 1;
+          fetchAbortRef.current?.abort();
+        }
+        setCollection(cached.rows);
+        if (cached.setsReady) setSetsList(cached.sets);
+        setLoading(false);
+        setLoadingMore(false);
+        setHydrationStatus('complete');
+        setHydrationError(null);
+        collectionHydrationRef.current = { key: collectionHydrationKey, status: 'complete' };
+        return;
+      }
+      if (cached) {
+        setCollection(cached.rows);
+        if (cached.setsReady) setSetsList(cached.sets);
+        setHydrationStatus(cached.status);
+        setHydrationError(cached.error);
+        collectionHydrationRef.current = { key: collectionHydrationKey, status: cached.status };
+      }
+    }
+
     const decision = reconcileCollectionHydration(
       scryfallPredicate.mode,
       collectionHydrationKey,
@@ -409,7 +549,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       setLoading(false);
       setLoadingMore(false);
     } else if (decision.action === 'start') {
-      fetchCollection(collectionHydrationKey);
+      fetchCollection(collectionSessionQuery);
     }
   // fetchCollection intentionally keys its lifecycle through refs above.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -482,15 +622,15 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           },
         });
         if (!isCurrent()) return;
-        startTransition(() => setLiveState({
-          queryKey: catalogQueryKey,
-          rows: result.rows,
-          loading: false,
-          error: null,
-          incomplete: result.incomplete,
-          total: result.total,
-          cacheStatus: result.cacheStatus,
-        }));
+        startTransition(() => setLiveState(previous => isCurrent() ? {
+            queryKey: catalogQueryKey,
+            rows: result.rows,
+            loading: false,
+            error: null,
+            incomplete: result.incomplete,
+            total: result.total,
+            cacheStatus: result.cacheStatus,
+          } : previous));
       } catch (err) {
         if (err?.name === 'AbortError' || !isCurrent()) return;
         let message = t('collection.scryfallLiveFailed');
@@ -609,34 +749,98 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // selectable and bulk actions hit real entry_ids (stacking merges rows).
   const displayCards = selectMode ? filteredCollection : processedCollection;
 
-  // Progressive rendering: a 20,000-card collection would otherwise mount every
-  // tile at once (tens of thousands of DOM nodes + images) and freeze the page
-  // for many seconds. Render a small first batch and extend ahead of the scroll
-  // position. 96 is several desktop/mobile screens without asking the browser
-  // to create and image-track hundreds of off-screen cards up front.
-  const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT);
-  const sentinelRef = useRef(null);
+  // The collection scrolls with the document, so the virtualizer tracks the
+  // viewport against the gallery/table's document offset. The spacer preserves
+  // the full scroll range while only viewport rows plus a small overscan stay
+  // mounted. Fixed row geometry is mirrored in index.css; ResizeObserver keeps
+  // the responsive auto-fill column calculation in step with container width.
+  const virtualRootRef = useRef(null);
+  const virtualFrameRef = useRef(null);
+  const [virtualWindow, setVirtualWindow] = useState({
+    startIndex: 0,
+    endIndex: INITIAL_RENDER_COUNT,
+    startRow: 0,
+    endRow: INITIAL_RENDER_COUNT,
+    rowCount: 0,
+    columns: 1,
+    rowStride: LIST_ROW_HEIGHT,
+    gap: 0,
+    totalSize: 0,
+  });
 
-  // Reset to the first batch whenever the visible card set can change (filters,
-  // sort, search, stacking, view mode, selection mode) or after a fresh fetch.
   useEffect(() => {
-    setVisibleCount(INITIAL_RENDER_COUNT);
-  }, [displayCards, viewMode, selectMode, collection]);
+    const root = virtualRootRef.current;
+    if (!root) return undefined;
 
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || visibleCount >= displayCards.length) return;
-    const observer = new IntersectionObserver(entries => {
-      if (entries[0]?.isIntersecting) {
-        setVisibleCount(c => Math.min(c + LOAD_MORE_RENDER_COUNT, displayCards.length));
+    const updateVirtualWindow = () => {
+      virtualFrameRef.current = null;
+      const width = root.clientWidth;
+      const gallery = viewMode === 'gallery';
+      const gap = gallery ? (window.innerWidth >= 769 ? 20 : 12) : 0;
+      const minCardWidth = window.innerWidth >= 769 ? 180 : 130;
+      const columns = gallery
+        ? Math.max(1, Math.floor((width + gap) / (minCardWidth + gap)))
+        : 1;
+      const cardWidth = gallery ? (width - gap * (columns - 1)) / columns : width;
+      const rowHeight = gallery ? (cardWidth / 0.718) + GALLERY_CARD_INFO_HEIGHT : LIST_ROW_HEIGHT;
+      const rowStride = rowHeight + gap;
+      const rootTop = root.getBoundingClientRect().top + window.scrollY;
+      const localScrollTop = Math.max(0, window.scrollY - rootTop);
+      const range = computeVirtualRange(
+        displayCards.length,
+        columns,
+        rowStride,
+        localScrollTop,
+        window.innerHeight,
+      );
+      const totalSize = Math.max(0, range.rowCount * rowStride - gap);
+      const next = { ...range, columns, rowStride, gap, totalSize };
+
+      setVirtualWindow(previous => (
+        previous.startIndex === next.startIndex
+        && previous.endIndex === next.endIndex
+        && previous.columns === next.columns
+        && Math.abs(previous.rowStride - next.rowStride) < 0.5
+        && Math.abs(previous.totalSize - next.totalSize) < 0.5
+          ? previous
+          : next
+      ));
+    };
+
+    const scheduleVirtualUpdate = () => {
+      if (virtualFrameRef.current == null) {
+        virtualFrameRef.current = window.requestAnimationFrame(updateVirtualWindow);
       }
-    }, { rootMargin: '800px' });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [displayCards, visibleCount]);
+    };
 
-  const visibleCards = displayCards.slice(0, visibleCount);
-  const showSentinel = visibleCount < displayCards.length;
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(scheduleVirtualUpdate);
+    resizeObserver?.observe(root);
+    window.addEventListener('scroll', scheduleVirtualUpdate, { passive: true });
+    window.addEventListener('resize', scheduleVirtualUpdate);
+    scheduleVirtualUpdate();
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('scroll', scheduleVirtualUpdate);
+      window.removeEventListener('resize', scheduleVirtualUpdate);
+      if (virtualFrameRef.current != null) {
+        window.cancelAnimationFrame(virtualFrameRef.current);
+        virtualFrameRef.current = null;
+      }
+    };
+  }, [displayCards.length, viewMode, showFilters, selectMode, loadingMore, hydrationError, liveLoading]);
+
+  const virtualCards = displayCards.slice(
+    Math.min(virtualWindow.startIndex, displayCards.length),
+    Math.min(virtualWindow.endIndex, displayCards.length),
+  );
+  const virtualTopSize = virtualWindow.startRow * virtualWindow.rowStride;
+  const virtualBottomSize = Math.max(
+    0,
+    (virtualWindow.rowCount - virtualWindow.endRow) * virtualWindow.rowStride,
+  );
 
   const totalValue = useMemo(
     () => displayCards.reduce((sum, item) => sum + (item.price_trend || 0) * (item.quantity || 1), 0),
@@ -644,6 +848,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   );
   const catalogResultsIncomplete = scryfallPredicate.mode === 'catalog'
     && (liveLoading || liveIncomplete);
+  const ordinaryResultsIncomplete = scryfallPredicate.mode !== 'catalog'
+    && hydrationStatus !== 'complete';
+  const resultsIncomplete = catalogResultsIncomplete || ordinaryResultsIncomplete;
+  const retryCollectionHydration = () => {
+    collectionSessionCache.invalidate(collectionSessionQuery);
+    collectionHydrationRef.current = { key: collectionHydrationKey, status: 'error' };
+    fetchCollection(collectionSessionQuery);
+  };
 
   return (
     <div>
@@ -897,9 +1109,18 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             {scryfallPredicate.mode === 'catalog' && liveIncomplete ? ` · ${t('collection.scryfallLiveIncomplete')}` : ''}
             {liveError ? ` · ${liveError}` : ''}
           </span>
-          {!catalogResultsIncomplete && (
+          {!resultsIncomplete && (
             <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
           )}
+        </div>
+      )}
+
+      {scryfallPredicate.mode !== 'catalog' && hydrationError && (
+        <div className="glass-panel" role="alert" style={{ marginBottom: '0.85rem', padding: '0.75rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+          <span>{t('collection.errLoad')}</span>
+          <button className="btn btn-secondary" onClick={retryCollectionHydration} style={{ fontSize: '0.72rem', padding: '0.3rem 0.7rem' }}>
+            Retry
+          </button>
         </div>
       )}
 
@@ -919,7 +1140,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <button
             className="btn btn-secondary"
             style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }}
-            disabled={catalogResultsIncomplete}
+            disabled={resultsIncomplete}
             onClick={() => setSelectedIds(new Set(filteredCollection.map(i => i.entry_id)))}
           >
             {t('bulk.selectAll', { count: filteredCollection.length })}
@@ -975,8 +1196,23 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
         </div>
       ) : viewMode === 'gallery' ? (
         /* Visual Cards Grid Gallery View */
-        <div className="card-grid">
-          {visibleCards.map((item) => {
+        <div
+          ref={virtualRootRef}
+          className="collection-virtual-spacer"
+          data-collection-virtual-spacer="gallery"
+          style={{ height: `${virtualWindow.totalSize}px` }}
+        >
+          <div
+            className="card-grid collection-virtual-grid"
+            style={{
+              position: 'absolute',
+              inset: '0 0 auto',
+              transform: `translateY(${virtualTopSize}px)`,
+              gridTemplateColumns: `repeat(${virtualWindow.columns}, minmax(0, 1fr))`,
+              gap: `${virtualWindow.gap}px`,
+            }}
+          >
+          {virtualCards.map((item) => {
             const rarityStyle = getCardRarityBorder(item.rarity);
             const selected = selectedIds.has(item.entry_id);
 
@@ -1068,7 +1304,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               </div>
             );
           })}
-          {showSentinel && <div ref={sentinelRef} style={{ height: 1, clear: 'both' }} aria-hidden="true" />}
+          </div>
         </div>
       ) : (
         /* Traditional List Table View */
@@ -1081,11 +1317,16 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                   <th style={{ width: '70px', textAlign: 'right' }}>{t('collection.colQtyValue')}</th>
                 </tr>
               </thead>
-              <tbody>
-                {visibleCards.map((item) => {
+              <tbody ref={virtualRootRef} data-collection-virtual-spacer="list">
+                {virtualTopSize > 0 && (
+                  <tr className="collection-virtual-list-spacer" aria-hidden="true">
+                    <td colSpan={2} style={{ height: `${virtualTopSize}px` }} />
+                  </tr>
+                )}
+                {virtualCards.map((item) => {
                   const selected = selectedIds.has(item.entry_id);
                   return (
-                  <tr key={item.entry_id} style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}>
+                  <tr className="collection-virtual-list-row" key={item.entry_id} style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}>
                     <td>
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         {selectMode && (
@@ -1139,8 +1380,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                   </tr>
                   );
                 })}
-                {showSentinel && (
-                  <tr><td colSpan={2} style={{ padding: 0 }}><div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" /></td></tr>
+                {virtualBottomSize > 0 && (
+                  <tr className="collection-virtual-list-spacer" aria-hidden="true">
+                    <td colSpan={2} style={{ height: `${virtualBottomSize}px` }} />
+                  </tr>
                 )}
               </tbody>
             </table>

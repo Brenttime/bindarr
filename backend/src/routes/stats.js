@@ -7,123 +7,143 @@ const router = express.Router();
 // 7. Get Collection Statistics & Analytics
 router.get('/stats', async (req, res) => {
   try {
-    // Retrieve all collection items to compute statistics
-    const query = `
-      SELECT
-        c.quantity, c.purchase_price, c.added_at, c.printing, c.condition, c.card_id,
-        cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.set_name, cc.set_id,
-        cc.price_trend, cc.price_normal, cc.price_holofoil
-      FROM collection c
-      JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ?
-    `;
-    const rows = await db.all(query, [req.user.id]);
-
-    let totalCards = 0;
-    let uniqueCards = rows.length;
-    let totalValue = 0;
-    let totalSpent = 0;
-    let nearMintCount = 0;
-    let vintageCount = 0;
-
     const now = Date.now();
     const oneDayMs = 24 * 60 * 60 * 1000;
     const sevenDaysMs = 7 * oneDayMs;
     const thirtyDaysMs = 30 * oneDayMs;
+    const cutoff7 = new Date(now - sevenDaysMs).toISOString();
+    const cutoff30 = new Date(now - thirtyDaysMs).toISOString();
 
-    // Change metrics use only snapshots this installation actually stored. Both
-    // ends are summed over the same cards, and a card is omitted unless history
-    // reaches the requested cutoff; no provider rolling average or invented
-    // backfill is treated as a dated price.
-    let value7dAgo = 0, valueNowFor7d = 0;
-    let value30dAgo = 0, valueNowFor30d = 0;
-    const historyByCard = new Map();
-    const cardIds = [...new Set(rows.map(r => r.card_id))];
-    if (cardIds.length) {
-      const placeholders = cardIds.map(() => '?').join(',');
-      const historyRows = await db.all(
-        `SELECT card_id, price, recorded_at FROM price_history
-         WHERE card_id IN (${placeholders}) ORDER BY recorded_at ASC`,
-        cardIds
-      );
-      for (const point of historyRows) {
-        if (!historyByCard.has(point.card_id)) historyByCard.set(point.card_id, []);
-        historyByCard.get(point.card_id).push({
-          price: Number(point.price),
-          time: parseSqliteUtc(point.recorded_at).getTime()
-        });
-      }
-    }
+    // Materialize the user's joined collection once inside SQLite, then reduce it
+    // there. The old route copied every wide collection row plus every historical
+    // point into JS. This query returns one row and performs three indexed history
+    // lookups per distinct owned card; its parameter count is constant.
+    const [aggregate] = await db.all(`
+      WITH owned AS MATERIALIZED (
+        SELECT c.id, c.card_id,
+               ROW_NUMBER() OVER (ORDER BY c.added_at DESC, c.id DESC) AS source_order,
+               CASE WHEN c.quantity IS NULL OR c.quantity = 0 THEN 1 ELSE c.quantity END AS qty,
+               COALESCE(c.purchase_price, 0) AS purchase_price,
+               c.condition, c.added_at, c.printing,
+               cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.set_name, cc.set_id,
+               CASE
+                 WHEN c.printing = 'Holofoil' AND cc.price_holofoil IS NOT NULL AND cc.price_holofoil > 0 THEN cc.price_holofoil
+                 WHEN c.printing = 'Normal' AND cc.price_normal IS NOT NULL AND cc.price_normal > 0 THEN cc.price_normal
+                 ELSE COALESCE(cc.price_trend, 0)
+               END AS current_price
+        FROM collection c
+        JOIN card_cache cc ON c.card_id = cc.id
+        WHERE c.user_id = ?
+      ),
+      card_stats AS MATERIALIZED (
+        SELECT card_id, types, subtypes, supertype, rarity, set_name, set_id,
+               SUM(qty) AS qty, SUM(qty * current_price) AS current_value,
+               MIN(source_order) AS first_order
+        FROM owned
+        GROUP BY card_id
+      ),
+      rarity_stats AS (
+        SELECT COALESCE(NULLIF(rarity, ''), 'Unknown') AS name, SUM(qty) AS value,
+               MIN(first_order) AS first_order
+        FROM card_stats
+        GROUP BY COALESCE(NULLIF(rarity, ''), 'Unknown')
+      ),
+      set_stats AS (
+        SELECT COALESCE(CAST(cs.set_id AS TEXT), 'null') AS id,
+               COALESCE(NULLIF(MAX(cs.set_name), ''), 'Other') AS name,
+               SUM(cs.qty) AS count, SUM(cs.current_value) AS value,
+               COUNT(*) AS owned_unique,
+               MAX(COALESCE(NULLIF(s.printed_total, 0), NULLIF(s.total, 0))) AS size
+        FROM card_stats cs
+        LEFT JOIN sets s ON s.id = cs.set_id
+        GROUP BY cs.set_id
+      ),
+      typed_cards AS MATERIALIZED (
+        SELECT cs.*,
+               CASE
+                 WHEN EXISTS (SELECT 1 FROM json_each(COALESCE(cs.subtypes, '[]')) WHERE value = 'Land')
+                   OR cs.supertype = 'Land'
+                   OR (json_array_length(COALESCE(cs.types, '[]')) = 0
+                       AND EXISTS (SELECT 1 FROM json_each(COALESCE(cs.subtypes, '[]'))
+                                   WHERE value IN ('Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Land')))
+                   THEN 'land'
+                 WHEN json_array_length(COALESCE(cs.types, '[]')) = 0 THEN 'colorless'
+                 ELSE 'typed'
+               END AS type_class
+        FROM card_stats cs
+      ),
+      type_rows AS (
+        SELECT card_id, qty, 'Land' AS name, first_order, 0 AS type_order
+        FROM typed_cards WHERE type_class = 'land'
+        UNION ALL
+        SELECT card_id, qty, 'Colorless', first_order, 0 FROM typed_cards WHERE type_class = 'colorless'
+        UNION ALL
+        SELECT tc.card_id, tc.qty, jt.value, tc.first_order, CAST(jt.key AS INTEGER)
+        FROM typed_cards tc, json_each(COALESCE(tc.types, '[]')) jt
+        WHERE tc.type_class = 'typed'
+      ),
+      type_stats AS (
+        SELECT name, SUM(qty) AS value,
+               MIN((first_order * 1000) + type_order) AS first_position
+        FROM type_rows
+        GROUP BY name
+      ),
+      change_owned AS (
+        SELECT card_id,
+               SUM(CASE WHEN julianday(added_at) <= julianday(?) THEN qty ELSE 0 END) AS qty7,
+               SUM(CASE WHEN julianday(added_at) <= julianday(?) THEN qty ELSE 0 END) AS qty30
+        FROM owned
+        GROUP BY card_id
+      ),
+      change_prices AS MATERIALIZED (
+        SELECT co.*,
+               (SELECT price FROM price_history ph
+                WHERE ph.card_id = co.card_id
+                ORDER BY ph.recorded_at DESC LIMIT 1) AS current_history,
+               (SELECT price FROM price_history ph
+                WHERE ph.card_id = co.card_id AND julianday(ph.recorded_at) <= julianday(?)
+                ORDER BY ph.recorded_at DESC LIMIT 1) AS history7,
+               (SELECT price FROM price_history ph
+                WHERE ph.card_id = co.card_id AND julianday(ph.recorded_at) <= julianday(?)
+                ORDER BY ph.recorded_at DESC LIMIT 1) AS history30
+        FROM change_owned co
+      )
+      SELECT COALESCE(SUM(qty), 0) AS total_cards,
+             COUNT(*) AS unique_cards,
+             COALESCE(SUM(qty * current_price), 0) AS total_value,
+             COALESCE(SUM(qty * purchase_price), 0) AS total_spent,
+             COALESCE(SUM(CASE WHEN condition = 'Near Mint' THEN qty ELSE 0 END), 0) AS near_mint_count,
+             (SELECT json_group_array(json_object('name', name, 'value', value))
+                FROM (SELECT name, value FROM rarity_stats ORDER BY first_order)) AS rarities,
+             (SELECT json_group_array(json_object('id', id, 'name', name, 'count', count,
+                                                   'value', value, 'ownedUnique', owned_unique, 'size', size))
+                FROM set_stats) AS sets,
+             (SELECT json_group_array(json_object('name', name, 'value', value))
+                FROM (SELECT name, value FROM type_stats ORDER BY first_position)) AS types,
+             (SELECT COALESCE(SUM(CASE WHEN qty7 <> 0 AND history7 IS NOT NULL AND current_history IS NOT NULL
+                                      THEN qty7 * history7 ELSE 0 END), 0) FROM change_prices) AS value7_ago,
+             (SELECT COALESCE(SUM(CASE WHEN qty7 <> 0 AND history7 IS NOT NULL AND current_history IS NOT NULL
+                                      THEN qty7 * current_history ELSE 0 END), 0) FROM change_prices) AS value7_now,
+             (SELECT COALESCE(SUM(CASE WHEN qty30 <> 0 AND history30 IS NOT NULL AND current_history IS NOT NULL
+                                      THEN qty30 * history30 ELSE 0 END), 0) FROM change_prices) AS value30_ago,
+             (SELECT COALESCE(SUM(CASE WHEN qty30 <> 0 AND history30 IS NOT NULL AND current_history IS NOT NULL
+                                      THEN qty30 * current_history ELSE 0 END), 0) FROM change_prices) AS value30_now
+      FROM owned
+    `, [req.user.id, cutoff7, cutoff30, cutoff7, cutoff30]);
 
-    const typeCounts = {};
-    const rarityCounts = {};
-    const setCounts = {};
-
-    rows.forEach(row => {
-      const qty = row.quantity || 1;
-      const price = resolveCardPrice(row);
-      const addedTime = row.added_at ? parseSqliteUtc(row.added_at).getTime() : now;
-
-      totalCards += qty;
-      totalValue += qty * price;
-      totalSpent += qty * (row.purchase_price || 0);
-
-      if (row.condition === 'Near Mint') {
-        nearMintCount += qty;
-      }
-
-      if (isVintageSet(row.set_id)) {
-        vintageCount += qty;
-      }
-
-      const history = historyByCard.get(row.card_id) || [];
-      const currentPoint = history[history.length - 1];
-      const pointAt = (cutoff) => {
-        for (let i = history.length - 1; i >= 0; i--) {
-          if (history[i].time <= cutoff) return history[i];
-        }
-        return null;
-      };
-      const sevenDayPoint = pointAt(now - sevenDaysMs);
-      const thirtyDayPoint = pointAt(now - thirtyDaysMs);
-      if (addedTime <= now - sevenDaysMs && sevenDayPoint && currentPoint) {
-        value7dAgo += qty * sevenDayPoint.price;
-        valueNowFor7d += qty * currentPoint.price;
-      }
-      if (addedTime <= now - thirtyDaysMs && thirtyDayPoint && currentPoint) {
-        value30dAgo += qty * thirtyDayPoint.price;
-        valueNowFor30d += qty * currentPoint.price;
-      }
-
-      // Parse types
-      const types = JSON.parse(row.types || '[]');
-      const subtypes = JSON.parse(row.subtypes || '[]');
-
-      {
-        const isLand = subtypes.includes('Land') || row.supertype === 'Land' || (types.length === 0 && subtypes.some(s => ['Plains','Island','Swamp','Mountain','Forest','Land'].includes(s)));
-        if (isLand) {
-          typeCounts['Land'] = (typeCounts['Land'] || 0) + qty;
-        } else if (types.length === 0) {
-          typeCounts['Colorless'] = (typeCounts['Colorless'] || 0) + qty;
-        } else {
-          types.forEach(t => {
-            typeCounts[t] = (typeCounts[t] || 0) + qty;
-          });
-        }
-      }
-
-      // Rarity
-      const rarity = row.rarity || 'Unknown';
-      rarityCounts[rarity] = (rarityCounts[rarity] || 0) + qty;
-
-      // Set
-      const set = row.set_name || 'Other';
-      if (!setCounts[row.set_id]) {
-        setCounts[row.set_id] = { name: set, count: 0, value: 0 };
-      }
-      setCounts[row.set_id].count += qty;
-      setCounts[row.set_id].value += qty * price;
-    });
+    const totalCards = aggregate.total_cards;
+    const uniqueCards = aggregate.unique_cards;
+    const totalValue = aggregate.total_value;
+    const totalSpent = aggregate.total_spent;
+    const nearMintCount = aggregate.near_mint_count;
+    const types = JSON.parse(aggregate.types || '[]');
+    const rarities = JSON.parse(aggregate.rarities || '[]');
+    const allSets = JSON.parse(aggregate.sets || '[]');
+    const vintageCount = allSets.reduce((sum, set) => sum + (isVintageSet(set.id) ? set.count : 0), 0);
+    const value7dAgo = aggregate.value7_ago;
+    const valueNowFor7d = aggregate.value7_now;
+    const value30dAgo = aggregate.value30_ago;
+    const valueNowFor30d = aggregate.value30_now;
 
     // Get top most valuable cards (scoped to user)
     const topValuableQuery = `
@@ -162,36 +182,13 @@ router.get('/stats', async (req, res) => {
     // One query for the whole thing, rather than one per set inside a loop: this
     // ran a COUNT(DISTINCT) per set the user owns cards from, which on a broad
     // collection is dozens of round trips to answer a single panel.
-    const setIds = Object.keys(setCounts);
-    const setProgress = [];
-    if (setIds.length) {
-      const holes = setIds.map(() => '?').join(',');
-      const rows = await db.all(`
-        SELECT cc.set_id,
-               COUNT(DISTINCT c.card_id) AS owned,
-               (SELECT COALESCE(NULLIF(s.printed_total, 0), NULLIF(s.total, 0))
-                  FROM sets s WHERE s.id = cc.set_id) AS size
-        FROM collection c
-        JOIN card_cache cc ON c.card_id = cc.id
-        WHERE c.user_id = ? AND cc.set_id IN (${holes})
-        GROUP BY cc.set_id
-      `, [req.user.id, ...setIds]);
-
-      for (const row of rows) {
-        // A set the sync has not reached yet has no size, so it has no completion
-        // to report. Skipped rather than given a placeholder denominator: "3 / 150"
-        // for a set that actually holds 64 cards is a wrong answer presented as a
-        // measurement, which is what the old flat-150 fallback did.
-        if (!row.size) continue;
-        setProgress.push({
-          setId: row.set_id,
-          setName: setCounts[row.set_id].name,
-          ownedUnique: row.owned,
-          totalCards: row.size,
-          percent: Math.min(Math.round((row.owned / row.size) * 100), 100)
-        });
-      }
-    }
+    const setProgress = allSets.filter(set => set.size).map(set => ({
+      setId: set.id,
+      setName: set.name,
+      ownedUnique: set.ownedUnique,
+      totalCards: set.size,
+      percent: Math.min(Math.round((set.ownedUnique / set.size) * 100), 100)
+    }));
 
     // Sort set progress by completion percentage descending
     setProgress.sort((a, b) => b.percent - a.percent);
@@ -247,13 +244,13 @@ router.get('/stats', async (req, res) => {
         change1y: { available: false, abs: null, pct: null },
         change5y: { available: false, abs: null, pct: null }
       },
-      types: Object.keys(typeCounts).map(name => ({ name, value: typeCounts[name] })),
-      rarities: Object.keys(rarityCounts).map(name => ({ name, value: rarityCounts[name] })),
-      sets: Object.keys(setCounts).map(id => ({
-        id,
-        name: setCounts[id].name,
-        count: setCounts[id].count,
-        value: parseFloat(setCounts[id].value.toFixed(2))
+      types,
+      rarities,
+      sets: allSets.map(set => ({
+        id: set.id,
+        name: set.name,
+        count: set.count,
+        value: parseFloat(set.value.toFixed(2))
       })).sort((a, b) => b.value - a.value).slice(0, 8),
       topValuable,
       recentAdditions,
@@ -269,50 +266,6 @@ router.get('/stats', async (req, res) => {
 router.get('/stats/history', async (req, res) => {
   try {
     const { period = '30d' } = req.query;
-
-    // Retrieve all collection items to compute history
-    const query = `
-      SELECT c.quantity, c.added_at, c.printing, cc.id as card_id, cc.price_trend, cc.price_normal, cc.price_holofoil
-      FROM collection c
-      JOIN card_cache cc ON c.card_id = cc.id
-      WHERE c.user_id = ?
-    `;
-    const items = await db.all(query, [req.user.id]);
-
-    // Real recorded price snapshots for every card this user owns, oldest
-    // first, so each item's price at any past point can be looked up without
-    // per-item queries. No source anywhere provides price history beyond
-    // what this table accumulates over the app's actual real lifetime.
-    const cardIds = [...new Set(items.map(i => i.card_id))];
-    let historyByCard = {};
-    if (cardIds.length > 0) {
-      const placeholders = cardIds.map(() => '?').join(',');
-      const historyRows = await db.all(
-        `SELECT card_id, price, recorded_at FROM price_history WHERE card_id IN (${placeholders}) ORDER BY recorded_at ASC`,
-        cardIds
-      );
-      historyRows.forEach(r => {
-        if (!historyByCard[r.card_id]) historyByCard[r.card_id] = [];
-        historyByCard[r.card_id].push({ price: r.price, time: parseSqliteUtc(r.recorded_at).getTime() });
-      });
-    }
-
-    // Real price for a card at a point in time: the latest recorded snapshot
-    // at or before that time; if history only starts later, carry the
-    // earliest real snapshot backward rather than guess; if the card has no
-    // history at all, fall back to its current real price_trend. Every value
-    // used here was actually recorded or is the actual current price — never
-    // a fabricated curve.
-    const realPriceAt = (item, targetTime) => {
-      const hist = historyByCard[item.card_id];
-      if (!hist || hist.length === 0) return resolveCardPrice(item);
-      let best = null;
-      for (const h of hist) {
-        if (h.time <= targetTime) best = h;
-        else break;
-      }
-      return (best || hist[0]).price;
-    };
 
     const now = Date.now();
     let step = 0;
@@ -341,24 +294,90 @@ router.get('/stats/history', async (req, res) => {
       formatLabel = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     }
 
-    const historyData = [];
-    for (let i = count - 1; i >= 0; i--) {
-      const targetTime = now - (i * step);
-      const targetDate = new Date(targetTime);
+    const targets = Array.from({ length: count }, (_, index) => now - ((count - 1 - index) * step));
 
-      let totalValue = 0;
-      items.forEach(item => {
-        const addedTime = parseSqliteUtc(item.added_at).getTime();
-        if (addedTime <= targetTime) {
-          totalValue += item.quantity * realPriceAt(item, targetTime);
-        }
-      });
+    // Collection additions and price movements are events. Read each once, then
+    // sweep the (at most 30) targets in order. SQLite packs each card's physical
+    // entries and recorded prices into JSON so the driver returns one row per card,
+    // not tens of thousands of tiny row objects. The join keeps the parameter count
+    // constant; sorting each decoded history by the stored timestamp preserves the
+    // old route's complete recorded_at stream and carry-back rules.
+    const cards = await db.all(`
+      WITH cards AS MATERIALIZED (
+        SELECT c.card_id,
+               json_group_array(json_array(
+                 c.quantity, c.added_at, c.printing,
+                 cc.price_trend, cc.price_normal, cc.price_holofoil
+               )) AS additions
+        FROM collection c
+        JOIN card_cache cc ON cc.id = c.card_id
+        WHERE c.user_id = ?
+        GROUP BY c.card_id
+      ),
+      histories AS MATERIALIZED (
+        SELECT ph.card_id,
+               json_group_array(json_array(ph.price, ph.recorded_at)) AS history
+        FROM price_history ph
+        JOIN cards c ON c.card_id = ph.card_id
+        GROUP BY ph.card_id
+      )
+      SELECT c.card_id, c.additions, COALESCE(h.history, '[]') AS history
+      FROM cards c
+      LEFT JOIN histories h ON h.card_id = c.card_id
+    `, [req.user.id]);
 
-      historyData.push({
-        date: formatLabel(targetDate),
-        value: parseFloat(totalValue.toFixed(2))
-      });
+    for (const card of cards) {
+      card.additions = JSON.parse(card.additions || '[]').map(([
+        quantity, added_at, printing, price_trend, price_normal, price_holofoil
+      ]) => {
+        const time = parseSqliteUtc(added_at).getTime();
+        if (!Number.isFinite(time)) return null;
+        return {
+          time,
+          quantity,
+          currentValue: quantity * resolveCardPrice({
+            printing, price_trend, price_normal, price_holofoil
+          })
+        };
+      }).filter(Boolean);
+      card.history = JSON.parse(card.history || '[]').map(([price, recordedAt]) => ({
+        price,
+        recordedAt,
+        time: parseSqliteUtc(recordedAt).getTime()
+      })).sort((a, b) => a.recordedAt < b.recordedAt ? -1 : (a.recordedAt > b.recordedAt ? 1 : 0));
     }
+
+    const totals = Array(count).fill(0);
+    for (const card of cards.values()) {
+      card.additions.sort((a, b) => a.time - b.time);
+      let additionIndex = 0;
+      let ownedQuantity = 0;
+      let ownedCurrentValue = 0;
+      let historyIndex = -1;
+
+      for (let index = 0; index < targets.length; index++) {
+        const target = targets[index];
+        while (additionIndex < card.additions.length && card.additions[additionIndex].time <= target) {
+          ownedQuantity += card.additions[additionIndex].quantity;
+          ownedCurrentValue += card.additions[additionIndex].currentValue;
+          additionIndex++;
+        }
+        if (card.history.length === 0) {
+          totals[index] += ownedCurrentValue;
+          continue;
+        }
+        while (historyIndex + 1 < card.history.length && card.history[historyIndex + 1].time <= target) {
+          historyIndex++;
+        }
+        const price = historyIndex >= 0 ? card.history[historyIndex].price : card.history[0].price;
+        totals[index] += ownedQuantity * price;
+      }
+    }
+
+    const historyData = targets.map((target, index) => ({
+      date: formatLabel(new Date(target)),
+      value: parseFloat(totals[index].toFixed(2))
+    }));
 
     res.json(historyData);
   } catch (error) {

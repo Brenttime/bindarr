@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen, DollarSign } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
@@ -11,7 +11,7 @@ import { buildDeckExport, parseDeckLine } from '../utils/deckText';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 import { canRegisterDeckInCollection, deckRegistrationCardCount } from '../utils/deckCollectionRegistration';
-import { cardKey, findSameCard, quantityByCardName } from '../utils/cardIdentity';
+import { cardKey, findSameCard } from '../utils/cardIdentity';
 import { deckMinimumValueHint, deckMinimumValueText, deckUnpricedCountText } from '../utils/deckMinimumValue';
 
 // Basic Lands are exempt from the "max 4 of a card" deck rule.
@@ -23,10 +23,73 @@ const isBasicLand = (card) => {
     (subs.includes('Basic') || basicNames.includes(card.name));
 };
 
-// Total copies of a logical card already in a deck, regardless of printing.
-const deckCountByName = (deckCards, name) => quantityByCardName(deckCards, name);
+const EMPTY_DECK_CARDS = [];
+const MTG_MAIN_TYPES = ['Creature', 'Planeswalker', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Battle', 'Land'];
+const GROUP_ORDER = ['Creature', 'Planeswalker', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Battle', 'Land', 'Other'];
 
-// What a new deck starts as.
+const cardGroup = (card) => {
+  const subs = card.subtypes || [];
+  for (const type of MTG_MAIN_TYPES) if (subs.includes(type)) return type;
+  return 'Other';
+};
+
+function deriveDeckRenderData(deckCards) {
+  const groupBuckets = Object.fromEntries(GROUP_ORDER.map(name => [name, { name, cards: [], count: 0 }]));
+  const manaCounts = { '0': 0, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7+': 0 };
+  const colorLandCounts = {};
+  const countsByName = new Map();
+  let totalDeckCardsCount = 0;
+  let basicLandCount = 0;
+
+  for (const card of deckCards) {
+    const quantity = card.quantity;
+    const group = cardGroup(card);
+    const bucket = groupBuckets[group];
+    bucket.cards.push(card);
+    bucket.count += quantity;
+    totalDeckCardsCount += quantity;
+    if (isBasicLand(card)) basicLandCount += quantity;
+
+    const nameKey = cardKey(card);
+    if (nameKey) countsByName.set(nameKey, (countsByName.get(nameKey) || 0) + Number(quantity || 0));
+
+    const manaValue = card.cmc;
+    if (manaValue !== null && manaValue !== undefined) {
+      const manaBucket = manaValue >= 7 ? '7+' : String(Math.floor(manaValue));
+      if (manaCounts[manaBucket] !== undefined) manaCounts[manaBucket] += quantity;
+    }
+
+    const subs = card.subtypes || [];
+    const isLand = subs.includes('Land') || card.supertype === 'Land' || group === 'Land';
+    if (isLand) {
+      const basicLandTypes = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'];
+      const foundType = basicLandTypes.find(type => subs.includes(type) || card.name.includes(type));
+      const label = foundType ? `Land (${foundType})` : 'Land (Nonbasic)';
+      colorLandCounts[label] = (colorLandCounts[label] || 0) + quantity;
+    } else {
+      const colors = card.colors || card.types || [];
+      if (colors.length === 0) {
+        colorLandCounts.Colorless = (colorLandCounts.Colorless || 0) + quantity;
+      } else {
+        for (const color of colors) {
+          const colorName = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' }[color] || color;
+          colorLandCounts[colorName] = (colorLandCounts[colorName] || 0) + quantity;
+        }
+      }
+    }
+  }
+
+  const deckGroups = GROUP_ORDER.map(name => groupBuckets[name]).filter(group => group.cards.length > 0);
+  return {
+    basicLandCount,
+    countsByName,
+    deckGroups,
+    totalDeckCardsCount,
+    supertypeData: deckGroups.map(group => ({ name: group.name, value: group.count })),
+    manaCurveData: Object.entries(manaCounts).map(([cost, count]) => ({ cost, count })),
+    colorLandData: Object.entries(colorLandCounts).map(([name, value]) => ({ name, value })),
+  };
+}
 
 function DeckBuilder({ showToast, onNavigate }) {
   const { t } = useT();
@@ -240,7 +303,7 @@ function DeckBuilder({ showToast, onNavigate }) {
         return;
       }
       
-      if (!isBasicLand(card) && deckCountByName(activeDeck.cards, card.name) >= 4) {
+      if (!isBasicLand(card) && (countsByName.get(cardKey(card)) || 0) >= 4) {
         showToast(t('deck.errCopyLimit', { count: 4, name: displayName(card) }));
         return;
       }
@@ -581,7 +644,7 @@ function DeckBuilder({ showToast, onNavigate }) {
           if (cards.length > 0) {
             const card = cards[0];
             const owned = card.owned_qty || 0;
-            const inDeck = quantityByCardName(activeDeck.cards, card);
+            const inDeck = countsByName.get(cardKey(card)) || 0;
             results.push({
               rawName,
               requestedQty: qty,
@@ -670,74 +733,18 @@ function DeckBuilder({ showToast, onNavigate }) {
     }
   };
 
-  // Card-type buckets, read off the parsed type line stored in subtypes.
-  const MTG_MAIN_TYPES = ['Creature', 'Planeswalker', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Battle', 'Land'];
-  const cardGroup = (card) => {
-    const subs = card.subtypes || [];
-    for (const t of MTG_MAIN_TYPES) if (subs.includes(t)) return t;
-    return 'Other';
-  };
-
-  // Groups order
-  const GROUP_ORDER = ['Creature', 'Planeswalker', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Battle', 'Land', 'Other'];
-
-  // --- CHART DATA GENERATION ---
-  const getSupertypeChartData = () => {
-    if (!activeDeck) return [];
-    const counts = {};
-    activeDeck.cards.forEach(c => {
-      const g = cardGroup(c);
-      counts[g] = (counts[g] || 0) + c.quantity;
-    });
-    return Object.keys(counts).map(key => ({ name: key, value: counts[key] })).filter(d => d.value > 0);
-  };
-
-  const getManaCurveData = () => {
-    if (!activeDeck) return [];
-    const counts = { '0': 0, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7+': 0 };
-    activeDeck.cards.forEach(c => {
-      const val = c.cmc;
-      if (val !== null && val !== undefined) {
-        const bucket = val >= 7 ? '7+' : String(Math.floor(val));
-        if (counts[bucket] !== undefined) counts[bucket] += c.quantity;
-      }
-    });
-    return Object.keys(counts).map(cost => ({ cost, count: counts[cost] }));
-  };
-
-  // Color and Land type distribution for the deck's right-column chart.
-  const getColorLandData = () => {
-    if (!activeDeck) return [];
-    const map = {};
-    // Color and Land type distribution
-    activeDeck.cards.forEach(c => {
-      const subs = c.subtypes || [];
-      const isLand = subs.includes('Land') || c.supertype === 'Land' || cardGroup(c) === 'Land';
-      if (isLand) {
-        const basicLandTypes = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'];
-        const foundType = basicLandTypes.find(t => subs.includes(t) || c.name.includes(t));
-        const label = foundType ? `Land (${foundType})` : 'Land (Nonbasic)';
-        map[label] = (map[label] || 0) + c.quantity;
-      } else {
-        const colors = c.colors || c.types || [];
-        if (colors.length === 0) {
-          map['Colorless'] = (map['Colorless'] || 0) + c.quantity;
-        } else {
-          colors.forEach(col => {
-            const colorName = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' }[col] || col;
-            map[colorName] = (map[colorName] || 0) + c.quantity;
-          });
-        }
-      }
-    });
-    return Object.keys(map).map(key => ({ name: key, value: map[key] }));
-  };
-
-  const totalDeckCardsCount = activeDeck ? activeDeck.cards.reduce((sum, c) => sum + c.quantity, 0) : 0;
+  const deckCards = activeDeck?.cards || EMPTY_DECK_CARDS;
+  const deckDerived = useMemo(() => deriveDeckRenderData(deckCards), [deckCards]);
+  const {
+    basicLandCount,
+    countsByName,
+    deckGroups,
+    totalDeckCardsCount,
+    supertypeData,
+    manaCurveData,
+    colorLandData,
+  } = deckDerived;
   const targetDeckCardsCount = activeDeck?.target_size || 60;
-  const supertypeData = getSupertypeChartData();
-  const colorLandData = getColorLandData();
-  const manaCurveData = getManaCurveData();
 
   const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
@@ -1464,16 +1471,16 @@ function DeckBuilder({ showToast, onNavigate }) {
                   ) : searchResults.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '1rem', maxHeight: '240px', overflowY: 'auto', background: 'rgba(0,0,0,0.15)', padding: '0.5rem', borderRadius: 'var(--radius-sm)' }}>
                       {searchResults.map(card => {
-                          const qtyInDeck = quantityByCardName(activeDeck?.cards, card);
+                          const qtyInDeck = countsByName.get(cardKey(card)) || 0;
                           const ownedQty = card.owned_qty || 0;
                           const isAtMaxOwned = qtyInDeck >= ownedQty;
-                          const isAtRuleMax = !isBasicLand(card) && deckCountByName(activeDeck?.cards, card.name) >= 4;
+                          const isAtRuleMax = !isBasicLand(card) && qtyInDeck >= 4;
                           const disabledAdd = savingCard || isAtMaxOwned || isAtRuleMax;
 
                           return (
                             <div key={card.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.35rem 0.5rem', background: 'rgba(255,255,255,0.02)', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
-                                <CardImage card={card} style={{ width: '24px', height: '33px', objectFit: 'cover', borderRadius: '2px' }} />
+                                <CardImage card={card} loading="lazy" decoding="async" style={{ width: '24px', height: '33px', objectFit: 'cover', borderRadius: '2px' }} />
                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                                   <span style={{ fontSize: '0.8rem', color: 'var(--text-strong)' }}>{displayName(card)} ({card.set_name} • #{card.number})</span>
                                   <span style={{ fontSize: '0.65rem', color: isAtMaxOwned ? 'var(--accent-red)' : 'var(--text-secondary)' }}>Owned: {ownedQty} | In Deck: {qtyInDeck}</span>
@@ -1523,12 +1530,8 @@ function DeckBuilder({ showToast, onNavigate }) {
                   {activeDeck.cards.length === 0 ? (
                     <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>{t('deck.emptyDeck')}</p>
                   ) : (
-                    GROUP_ORDER.map(supertype => {
-                      const list = activeDeck.cards.filter(c => {
-                        return cardGroup(c).toLowerCase() === supertype.toLowerCase();
-                      });
-                      if (list.length === 0) return null;
-                      const sum = list.reduce((total, c) => total + c.quantity, 0);
+                    deckGroups.map(group => {
+                      const { name: supertype, cards: list, count: sum } = group;
 
                       return (
                         <div key={supertype} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -1543,7 +1546,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                               {list.map(card => (
                                 <div key={card.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.01)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
-                                    <CardImage card={card} style={{ width: '32px', height: '44px', objectFit: 'cover', borderRadius: '2px' }} />
+                                    <CardImage card={card} loading="lazy" decoding="async" style={{ width: '32px', height: '44px', objectFit: 'cover', borderRadius: '2px' }} />
                                     <div>
                                       <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-strong)' }}>{displayName(card)}</div>
                                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{card.set_name} • #{card.number}</div>
@@ -1565,7 +1568,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                                       <button
                                         className="btn btn-secondary btn-icon-only"
                                         style={{ width: '22px', height: '22px', padding: 0 }}
-                                        disabled={savingCard || card.quantity >= (card.owned_qty || 0) || (!isBasicLand(card) && deckCountByName(activeDeck.cards, card.name) >= 4)}
+                                        disabled={savingCard || card.quantity >= (card.owned_qty || 0) || (!isBasicLand(card) && (countsByName.get(cardKey(card)) || 0) >= 4)}
                                         onClick={() => handleUpdateCardQty(card.id, card.quantity + 1)}
                                       >
                                         +
@@ -1583,7 +1586,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                               {list.map(card => (
                                 <div key={card.id} style={{ position: 'relative', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', transition: 'transform 0.15s' }}>
                                   <div style={{ position: 'relative', width: '100%', aspectRatio: 0.718, cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
-                                    <CardImage card={card} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    <CardImage card={card} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                     <span style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.85)', color: 'var(--accent-yellow)', fontSize: '0.75rem', fontWeight: 800, padding: '1px 6px', borderRadius: '10px', border: '1px solid var(--accent-yellow)' }}>
                                       x{card.quantity}
                                     </span>
@@ -1593,7 +1596,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                                       <button className={`btn ${card.quantity === 1 ? 'btn-danger' : 'btn-secondary'} btn-icon-only`} style={{ width: '20px', height: '20px', fontSize: '0.7rem', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} disabled={savingCard} onClick={() => handleUpdateCardQty(card.id, card.quantity - 1)} title={t(card.quantity === 1 ? 'deck.removeFromDeck' : 'deck.decreaseQty')}>
                                         {card.quantity === 1 ? <Trash2 size={10} /> : '-'}
                                       </button>
-                                      <button className="btn btn-secondary btn-icon-only" style={{ width: '20px', height: '20px', fontSize: '0.7rem', padding: 0 }} disabled={savingCard || card.quantity >= (card.owned_qty || 0) || (!isBasicLand(card) && deckCountByName(activeDeck.cards, card.name) >= 4)} onClick={() => handleUpdateCardQty(card.id, card.quantity + 1)}>+</button>
+                                      <button className="btn btn-secondary btn-icon-only" style={{ width: '20px', height: '20px', fontSize: '0.7rem', padding: 0 }} disabled={savingCard || card.quantity >= (card.owned_qty || 0) || (!isBasicLand(card) && (countsByName.get(cardKey(card)) || 0) >= 4)} onClick={() => handleUpdateCardQty(card.id, card.quantity + 1)}>+</button>
                                     </div>
                                   </div>
                                 </div>
@@ -1634,7 +1637,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                       <span>{t('deck.basicLands')}</span>
                       <strong style={{ color: 'var(--accent-yellow)' }}>
-                        {activeDeck.cards.filter(c => isBasicLand(c)).reduce((s, c) => s + c.quantity, 0)} {t('deck.basicLandsCount', { count: activeDeck.cards.filter(c => isBasicLand(c)).reduce((s, c) => s + c.quantity, 0) })}
+                        {basicLandCount} {t('deck.basicLandsCount', { count: basicLandCount })}
                       </strong>
                     </div>
                   </div>

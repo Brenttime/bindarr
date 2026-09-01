@@ -138,6 +138,15 @@ router.get('/:id', async (req, res) => {
          JOIN card_cache list_cc ON list_cc.id = lc.card_id
          WHERE lc.list_id = ? AND lc.quantity > 0
          GROUP BY ${sqlCardKey('list_cc')}
+       ),
+       owned AS (
+         SELECT
+           ${sqlCardKey('owned_cc')} AS card_key,
+           SUM(collection_row.quantity) AS quantity
+         FROM collection collection_row
+         JOIN card_cache owned_cc ON owned_cc.id = collection_row.card_id
+         WHERE collection_row.user_id = ? AND collection_row.quantity > 0
+         GROUP BY ${sqlCardKey('owned_cc')}
        )
        SELECT
          requested.quantity,
@@ -145,16 +154,10 @@ router.get('/:id', async (req, res) => {
          cc.supertype, cc.subtypes, cc.types,
          cc.rarity, cc.set_id, cc.set_name, cc.number,
          cc.image_url, cc.price_trend,
-         (
-           SELECT COALESCE(SUM(owned.quantity), 0)
-           FROM collection owned
-           JOIN card_cache owned_cc ON owned_cc.id = owned.card_id
-           WHERE owned.user_id = ?
-             AND owned.quantity > 0
-             AND ${sqlCardKey('owned_cc')} = requested.card_key
-         ) AS owned_qty
+         COALESCE(owned.quantity, 0) AS owned_qty
        FROM requested
        JOIN card_cache cc ON cc.id = requested.representative_id
+       LEFT JOIN owned ON owned.card_key = requested.card_key
        ORDER BY cc.name ASC`,
       [id, req.user.id]
     );
