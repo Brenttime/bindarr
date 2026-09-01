@@ -26,10 +26,33 @@ const PRINTING_VALUES = ['Normal', 'Holofoil'];
 // A collection-scope search already reports owned_qty from its own join.
 async function attachOwnedQty(cards, userId) {
   if (!Array.isArray(cards) || cards.length === 0 || !userId) return;
+  // Carry enough provider metadata into SQLite to identify results that have
+  // not been cached yet. Some internal callers expose the printing id as
+  // `card_id`, while normalized provider cards use `id`.
+  const targets = cards.map(card => ({
+    // Collection-shaped rows can contain both: `id` is then the physical row
+    // id and `card_id` is the provider printing id, so the explicit alias wins.
+    card_id: card && (card.card_id || card.id) ? (card.card_id || card.id) : null,
+    name: card && card.name ? card.name : null,
+  }));
   const rows = await db.all(
     `WITH target_cards AS (
-       SELECT CAST(key AS INTEGER) AS target_index, value AS card_id
+       SELECT
+         CAST(key AS INTEGER) AS target_index,
+         json_extract(value, '$.card_id') AS card_id,
+         json_extract(value, '$.name') AS name
        FROM json_each(?)
+     ),
+     target_identity AS (
+       SELECT
+         target_cards.target_index,
+         COALESCE(
+           NULLIF(${sqlCardKey('cached_target')}, ''),
+           NULLIF(LOWER(TRIM(target_cards.name)), '')
+         ) AS card_key
+       FROM target_cards
+       LEFT JOIN card_cache cached_target
+         ON cached_target.id = target_cards.card_id
      ),
      owned AS MATERIALIZED (
        SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(c.quantity) AS qty
@@ -38,12 +61,11 @@ async function attachOwnedQty(cards, userId) {
        WHERE c.user_id = ? AND c.quantity > 0
        GROUP BY ${sqlCardKey('owned_cc')}
      )
-     SELECT target_cards.target_index, COALESCE(owned.qty, 0) AS qty
-     FROM target_cards
-     JOIN card_cache target ON target.id = target_cards.card_id
-     LEFT JOIN owned ON owned.card_key = ${sqlCardKey('target')}
-     ORDER BY target_cards.target_index`,
-    [JSON.stringify(cards.map(card => card && card.id ? card.id : null)), userId]
+     SELECT target_identity.target_index, COALESCE(owned.qty, 0) AS qty
+     FROM target_identity
+     LEFT JOIN owned ON owned.card_key = target_identity.card_key
+     ORDER BY target_identity.target_index`,
+    [JSON.stringify(targets), userId]
   );
   const owned = new Map(rows.map(row => [row.target_index, row.qty]));
   // Every search result keeps its own art/set/collector number, but the owned

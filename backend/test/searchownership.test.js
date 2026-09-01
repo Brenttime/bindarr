@@ -179,6 +179,53 @@ async function main() {
     assert.strictEqual(internetOutput[3].owned_qty, 0, 'internet results retain unowned=0 behavior');
 
     captured = [];
+    const uncachedProviderCards = [
+      {
+        id: 'provider-uncached-bolt',
+        name: 'Lightning Bolt',
+        set: 'new',
+        collector_number: '1',
+      },
+      {
+        card_id: 'provider-card-id-bolt',
+        name: 'Lightning Bolt',
+        set: 'new',
+        collector_number: '2',
+      },
+      {
+        id: 'physical-collection-row-id',
+        card_id: 'owned-custom',
+        name: 'Noncanonical Caller Alias',
+        set: 'custom',
+        collector_number: '99',
+      },
+      {
+        card_id: 'provider-card-id-unowned',
+        name: 'Unowned Provider Card',
+        set: 'new',
+        collector_number: '3',
+      },
+    ];
+    const uncachedOutput = await callSearch(handler, user.lastID, 'internet', uncachedProviderCards);
+    assert.strictEqual(captured.length, 1,
+      'uncached and card_id-alias targets still execute one set-wise ownership query');
+    assert.strictEqual(uncachedOutput[0].owned_qty, 9,
+      'an uncached provider printing is enriched from its provider name');
+    assert.strictEqual(uncachedOutput[1].owned_qty, 9,
+      'an uncached card_id-alias printing is enriched without a cache row');
+    assert.strictEqual(uncachedOutput[2].owned_qty, 2,
+      'card_id wins over a physical row id and caller-supplied name alias');
+    assert.strictEqual(uncachedOutput[3].owned_qty, 0,
+      'an unowned uncached card_id alias is explicitly zero');
+    assert.deepStrictEqual(
+      uncachedOutput.map(card => card.card_id),
+      uncachedProviderCards.map(card => card.card_id),
+      'card_id aliases and unrelated provider fields are preserved'
+    );
+    assert.ok(captured[0].params.length <= 2,
+      'mixed uncached targets retain a constant ownership-query parameter count');
+
+    captured = [];
     const collectionCards = targets.slice(0, 24).map((card, index) => ({
       ...card,
       owned_qty: index === 0 || index === 1 ? 9 : index === 2 ? 2 : 0,
