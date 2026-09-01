@@ -26,23 +26,51 @@ const PRINTING_VALUES = ['Normal', 'Holofoil'];
 // A collection-scope search already reports owned_qty from its own join.
 async function attachOwnedQty(cards, userId) {
   if (!Array.isArray(cards) || cards.length === 0 || !userId) return;
-  const ids = [...new Set(cards.map(card => card.id).filter(Boolean))];
-  if (ids.length === 0) return;
+  // Carry enough provider metadata into SQLite to identify results that have
+  // not been cached yet. Some internal callers expose the printing id as
+  // `card_id`, while normalized provider cards use `id`.
+  const targets = cards.map(card => ({
+    // Collection-shaped rows can contain both: `id` is then the physical row
+    // id and `card_id` is the provider printing id, so the explicit alias wins.
+    card_id: card && (card.card_id || card.id) ? (card.card_id || card.id) : null,
+    name: card && card.name ? card.name : null,
+  }));
   const rows = await db.all(
-    `SELECT target.id AS card_id, COALESCE(SUM(c.quantity), 0) AS qty
-     FROM card_cache target
-     LEFT JOIN card_cache owned_cc
-       ON ${sqlCardKey('owned_cc')} = ${sqlCardKey('target')}
-     LEFT JOIN collection c
-       ON c.card_id = owned_cc.id AND c.user_id = ? AND c.quantity > 0
-     WHERE target.id IN (${ids.map(() => '?').join(',')})
-     GROUP BY target.id`,
-    [userId, ...ids]
+    `WITH target_cards AS (
+       SELECT
+         CAST(key AS INTEGER) AS target_index,
+         json_extract(value, '$.card_id') AS card_id,
+         json_extract(value, '$.name') AS name
+       FROM json_each(?)
+     ),
+     target_identity AS (
+       SELECT
+         target_cards.target_index,
+         COALESCE(
+           NULLIF(${sqlCardKey('cached_target')}, ''),
+           NULLIF(LOWER(TRIM(target_cards.name)), '')
+         ) AS card_key
+       FROM target_cards
+       LEFT JOIN card_cache cached_target
+         ON cached_target.id = target_cards.card_id
+     ),
+     owned AS MATERIALIZED (
+       SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(c.quantity) AS qty
+       FROM collection c
+       JOIN card_cache owned_cc ON owned_cc.id = c.card_id
+       WHERE c.user_id = ? AND c.quantity > 0
+       GROUP BY ${sqlCardKey('owned_cc')}
+     )
+     SELECT target_identity.target_index, COALESCE(owned.qty, 0) AS qty
+     FROM target_identity
+     LEFT JOIN owned ON owned.card_key = target_identity.card_key
+     ORDER BY target_identity.target_index`,
+    [JSON.stringify(targets), userId]
   );
-  const owned = new Map(rows.map(row => [row.card_id, row.qty]));
+  const owned = new Map(rows.map(row => [row.target_index, row.qty]));
   // Every search result keeps its own art/set/collector number, but the owned
   // badge answers "how many of this game card do I own?" across all printings.
-  for (const card of cards) card.owned_qty = owned.get(card.id) || 0;
+  for (let i = 0; i < cards.length; i++) cards[i].owned_qty = owned.get(i) || 0;
 }
 
 // 1. Search cards (Scryfall + database cache).
@@ -54,10 +82,14 @@ async function searchCards(req, res) {
   // When present it replaces the name/number/set fields entirely; the backend
   // passes it through to Scryfall verbatim.
   const q = typeof query.q === 'string' ? query.q : '';
-  // 1-based page over `limit`-sized pages. 250 is a sane cap on how much one
-  // Scryfall search will page through per request.
+  // 1-based page over `limit`-sized pages. Collection-catalog pages are local
+  // rows and may be large (bulk-selection uses them); ordinary internet search
+  // remains capped at 250 so one request cannot walk an excessive Scryfall
+  // window.
   const page = Math.max(1, parseInt(query.page, 10) || 1);
-  const limit = Math.min(250, Math.max(1, parseInt(query.limit, 10) || 60));
+  const maxLimit = scope === 'collection' && q.trim() ? 2000 : 250;
+  const limit = Math.min(maxLimit, Math.max(1, parseInt(query.limit, 10) || 60));
+  const hasCatalogWindow = query.page != null || query.limit != null;
   try {
     // A raw query against the collection scope that uses an operator the
     // stored rows cannot answer (otag:, availability:, artist:, ...) is
@@ -79,11 +111,29 @@ async function searchCards(req, res) {
         throw e;
       }
       if (mode === 'catalog') {
-        const { cards, total } = await scryfallApi.resolveCollectionQuery({
+        const includeTotal = query.count !== '0';
+        const { cards, total, complete, upstreamTotal, cacheStatus, snapshot } = await scryfallApi.resolveCollectionQuery({
           q, userId: req.user.id, lang,
+          // Preserve the historical API contract: callers that omit page and
+          // limit receive the complete owned result. Only explicit pagination
+          // opts into a bounded row window.
+          rowLimit: hasCatalogWindow ? limit : null,
+          rowOffset: hasCatalogWindow ? (page - 1) * limit : 0,
+          includeTotal,
+          expectedSnapshot: typeof query.snapshot === 'string' ? query.snapshot : null,
         });
-        res.set('X-Total-Count', String(total));
-        res.set('Access-Control-Expose-Headers', 'X-Total-Count');
+        if (total != null) res.set('X-Total-Count', String(total));
+        // Completeness: a walk that hit its page cap answered from a real
+        // PREFIX of the tag's match list. Tell the UI so it can say "may be
+        // incomplete" instead of presenting a truncated result as the whole.
+        res.set('X-Catalog-Complete', complete ? '1' : '0');
+        if (upstreamTotal != null) res.set('X-Catalog-Upstream-Total', String(upstreamTotal));
+        // 'fresh' = served from the durable cache (no upstream this request);
+        // 'stale' = cache served + background refresh in flight; 'resolved' =
+        // this request paid for the walk.
+        res.set('X-Catalog-Cache', cacheStatus || 'unknown');
+        if (snapshot) res.set('X-Catalog-Snapshot', snapshot);
+        res.set('Access-Control-Expose-Headers', 'X-Total-Count, X-Catalog-Complete, X-Catalog-Upstream-Total, X-Catalog-Cache, X-Catalog-Snapshot');
         return res.json(cards);
       }
     }
@@ -106,7 +156,7 @@ async function searchCards(req, res) {
         }
       }
     }
-    await attachOwnedQty(cards, req.user.id);
+    if (scope !== 'collection') await attachOwnedQty(cards, req.user.id);
     // Header, not the body: every existing caller expects a bare array here.
     if (total != null) {
       res.set('X-Total-Count', String(total));
@@ -130,6 +180,9 @@ async function searchCards(req, res) {
     }
     if (error.message === 'INVALID_QUERY') {
       return res.status(400).json({ error: 'INVALID_QUERY' });
+    }
+    if (error.message === 'CATALOG_SNAPSHOT_CHANGED') {
+      return res.status(409).json({ error: 'CATALOG_SNAPSHOT_CHANGED' });
     }
     if (error.message === 'UPSTREAM_UNAVAILABLE') {
       return res.status(503).json({ error: 'Card API is having trouble. Try again in a moment.' });

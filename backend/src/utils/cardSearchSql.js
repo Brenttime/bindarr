@@ -74,28 +74,56 @@ function nameClause(prefix, name) {
 
 // What the user OWNS, across every language they own it in.
 function collectionQuery({ userId, name, number, setList = [], limit, offset }) {
-  let sql = `
-    WITH logical_owned AS (
-      SELECT ${sqlCardKey('owned_cc')} AS card_key, SUM(owned.quantity) AS owned_qty
-      FROM collection owned
-      JOIN card_cache owned_cc ON owned.card_id = owned_cc.id
-      WHERE owned.user_id = ? AND owned.quantity > 0
-      GROUP BY ${sqlCardKey('owned_cc')}
+  const filters = [
+    nameClause('owned.', name),
+    numberClause('owned.number', number),
+    setSqlFilter(setList, 'owned'),
+  ].filter(Boolean);
+  const matchingFilter = filters.length
+    ? ` FILTER (WHERE ${filters.map(part => part.clause).join(' AND ')})`
+    : '';
+
+  // Read the tenant collection once. Each logical-card group carries its total
+  // quantity and only the distinct printing ids that match the requested fields.
+  // Expanding those ids after the aggregate avoids both the old second collection
+  // scan and its expression join back to every owned target. JSON is an internal
+  // row carrier here (one SQL value), not a target-sized placeholder list.
+  const sql = `
+    WITH owned_rows AS (
+      SELECT
+        c.card_id,
+        c.quantity,
+        ${sqlCardKey('owned_cc')} AS card_key,
+        owned_cc.name,
+        owned_cc.printed_name,
+        owned_cc.number,
+        owned_cc.set_name,
+        owned_cc.set_id
+      FROM collection c
+      JOIN card_cache owned_cc ON c.card_id = owned_cc.id
+      WHERE c.user_id = ? AND c.quantity > 0
+    ),
+    logical_owned AS (
+      SELECT
+        card_key,
+        SUM(quantity) AS owned_qty,
+        json_group_array(DISTINCT card_id)${matchingFilter} AS matching_card_ids
+      FROM owned_rows owned
+      GROUP BY card_key
+    ),
+    matched AS (
+      SELECT owned_printing.value AS card_id, logical_owned.owned_qty
+      FROM logical_owned
+      JOIN json_each(logical_owned.matching_card_ids) owned_printing
+      ORDER BY owned_printing.value
+      LIMIT ? OFFSET ?
     )
-    SELECT cc.*, logical_owned.owned_qty
-    FROM collection c
-    JOIN card_cache cc ON c.card_id = cc.id
-    JOIN logical_owned ON logical_owned.card_key = ${sqlCardKey('cc')}
-    WHERE c.user_id = ? AND c.quantity > 0
+    SELECT cc.*, matched.owned_qty
+    FROM matched
+    JOIN card_cache cc ON matched.card_id = cc.id
+    ORDER BY matched.card_id
   `;
-  const params = [userId, userId];
-  for (const part of [nameClause('cc.', name), numberClause('cc.number', number), setSqlFilter(setList, 'cc')]) {
-    if (!part) continue;
-    sql += ` AND ${part.clause}`;
-    params.push(...part.params);
-  }
-  sql += ` GROUP BY cc.id LIMIT ? OFFSET ?`;
-  params.push(limit, offset);
+  const params = [userId, ...filters.flatMap(part => part.params), limit, offset];
   return { sql, params };
 }
 
@@ -124,10 +152,19 @@ function localCacheQuery({ language, name, number, setList = [], limit, offset }
 // the returned rows drop into the collection screen's tiles unchanged (entry_id
 // drives bulk actions; quantity/condition/printing/language are per-entry).
 // One row per owned printing, same as the collection list.
-function ownedByNames(userId, names) {
+function ownedByNames(userId, names, { limit = 60, offset = 0 } = {}) {
   const clean = [...new Set(names.map(n => String(n || '').trim().toLowerCase()).filter(Boolean))];
-  if (!clean.length) return { sql: null, params: [] };
-  const placeholders = clean.map(() => '?').join(', ');
+  if (!clean.length) return { sql: null, params: [], countSql: null, countParams: [] };
+  // One JSON parameter instead of thousands of IN-list placeholders. This keeps
+  // broad live-fallback memberships below SQLite's variable ceiling while the
+  // local row window remains independently paginated.
+  const membership = JSON.stringify(clean);
+  const base = `
+    FROM collection c
+    JOIN card_cache cc ON c.card_id = cc.id
+    WHERE c.user_id = ? AND c.quantity > 0
+      AND ${sqlCardKey('cc')} IN (SELECT value FROM json_each(?))`;
+  const windowSql = limit == null ? '' : ' LIMIT ? OFFSET ?';
   const sql = `
     SELECT
       c.id AS entry_id,
@@ -141,6 +178,7 @@ function ownedByNames(userId, names) {
       c.is_trade,
       c.favorite,
       c.notes,
+      cc.oracle_id,
       cc.name,
       cc.printed_name,
       cc.supertype,
@@ -156,18 +194,21 @@ function ownedByNames(userId, names) {
       cc.price_trend,
       cc.price_normal,
       cc.price_holofoil,
+      cc.price_etched,
       cc.price_currency,
       cc.price_source,
       cc.tcgplayer_url,
       cc.cardmarket_url,
       cc.tcgplayer_product_id
-    FROM collection c
-    JOIN card_cache cc ON c.card_id = cc.id
-    WHERE c.user_id = ? AND c.quantity > 0
-      AND ${sqlCardKey('cc')} IN (${placeholders})
-    ORDER BY c.added_at DESC, c.id DESC
+    ${base}
+    ORDER BY c.added_at DESC, c.id DESC${windowSql}
   `;
-  return { sql, params: [userId, ...clean] };
+  return {
+    sql,
+    params: limit == null ? [userId, membership] : [userId, membership, limit, offset],
+    countSql: `SELECT COUNT(*) AS n ${base}`,
+    countParams: [userId, membership],
+  };
 }
 
 module.exports = { collectionQuery, localCacheQuery, ownedByNames, nameClause, numberClause };

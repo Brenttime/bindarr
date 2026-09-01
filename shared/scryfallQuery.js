@@ -327,14 +327,17 @@ function parse(query) {
   return parseTokens(tokenize(trimmed));
 }
 
-// Every operator name used anywhere in the parsed tree (negation and grouping
-// included), in order of first appearance.
+// Every explicit or implicit operator name used anywhere in the parsed tree
+// (negation and grouping included), in order of first appearance. Bare and
+// quoted terms are implicit `name:` leaves for routing purposes; treating them
+// differently would let name-targeted extras bypass the remote fallback gate.
 function collectOperators(ast) {
   const ops = new Set();
   (function walk(n) {
     if (n.op === 'not') return walk(n.term);
     if (n.op === 'and' || n.op === 'or') { n.terms.forEach(walk); return; }
     if (n.kind === 'op') ops.add(n.op);
+    else if (n.kind === 'name') ops.add('name');
   })(ast);
   return ops;
 }

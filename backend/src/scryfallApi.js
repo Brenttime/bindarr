@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 const db = require('./db');
 const { parseCardRow, recordPrice, shouldSweepPrices, markPricesSwept, resolveCardPrice } = require('./utils/priceHelpers');
 const { parseSetList } = require('./utils/setQuery');
@@ -6,6 +7,7 @@ const cardSearchSql = require('./utils/cardSearchSql');
 const languages = require('./utils/languages');
 const { cacheNormalizedCards } = require('./utils/cardCache');
 const { sqlCardKey } = require('./utils/cardIdentity');
+const { oracleIdForCard, defaultSearchEligible } = require('./utils/oracleId');
 
 // Scryfall needs no API key but asks callers to identify themselves and accept
 // JSON. See https://scryfall.com/docs/api. IDs from Scryfall are UUIDs / set-num
@@ -234,6 +236,11 @@ function normalizeCard(raw, lang) {
 
   return {
     id: `mtg-${raw.id}`,
+    // Stable game-card identity shared by every printing. Oracle Tags assign to
+    // this UUID, so preserving it on every fetch makes future collection tag
+    // searches fully local.
+    oracle_id: oracleIdForCard(raw),
+    scryfall_search_eligible: defaultSearchEligible(raw),
     name: face.name || raw.name || '',
     // `supertype` tags these as Magic cards for UI that keys off it.
     supertype: 'MTG',
@@ -864,7 +871,7 @@ async function getCardById(cardId) {
 // dozens of rate-limited Scryfall pages. That walk is the expensive part and
 // it is a property of the QUERY, not of the user — every owner of the same
 // collection gets the same match list. Cache the resolved set of card names
-// per (scoped query) so:
+// per (canonical query, lang) so:
 //   - re-running the same tag (re-render, remount, typo-retry) is instant;
 //   - two users on the same install resolve the tag only ONCE;
 //   - a failed upstream call is NOT cached, so the next try re-fetches.
@@ -875,82 +882,210 @@ async function getCardById(cardId) {
 // first broad tag someone typed. On disk, a restart serves the walk from the
 // database in milliseconds.
 //
-// The TTL is a day, not minutes, precisely because it is durable: the
-// intersect runs against the LIVE local collection on every request, so a
-// user who adds cards sees them immediately — only the upstream tag
-// assignments (Scryfall's otag: curation, which changes rarely) can go stale,
-// bounded by the TTL. A new set's cards only match an existing tag through a
-// fresh walk after that.
-const COLLECTION_QUERY_TTL_MS = 24 * 60 * 60 * 1000;
+// The durable entry is STALE-WHILE-REVALIDATE, not hard-TTL:
+//   - FRESH  (<= CQC_SWR_MAX_AGE_MS): served from cache, no walk, ever.
+//   - STALE  (older than that; indefinitely when complete, up to
+//     CQC_STALE_MS when incomplete): served immediately with status 'stale',
+//     and exactly one
+//     background revalidation (deduped by the in-flight map, paced by the
+//     global Scryfall limiter) re-walks it. The user never waits on the
+//     14-second cold walk twice for the same tag.
+//   - COMPLETE entries remain serve-stale indefinitely. Even a month-old known
+//     complete result answers immediately while one background refresh runs.
+//   - INCOMPLETE entries older than the stale bound synchronously re-resolve.
+// Freshness matters less than it looks: the intersect runs against the LIVE
+// local collection on every request, so a user who adds cards sees them
+// immediately — only Scryfall's own tag assignments (rarely re-curated) can
+// be briefly stale while a background refresh is pending.
+//
+// Completeness: a walk that hit its page cap (hasMore at the cut) is a
+// PARTIAL answer. It is still persisted — the names it DID resolve are real
+// and useful — but flagged complete=0 so the UI can show "may be incomplete"
+// and revalidation keeps retrying (with the cap raised) until the walk
+// finishes cleanly. Persisting a partial walk as complete was the old bug:
+// otag:card-advantage (6,183 cards) lost its final 183 cards to the 6000
+// cap, and that truncation was cached for 24 hours with no warning.
+//
+// `limit` caps how far one walk may page (20,000 game cards ≈ 115 Scryfall
+// pages ≈ 58s at the 2 req/s ceiling — above the broadest otag: in
+// practice; if a walk still hits it, the answer is flagged incomplete, not
+// silently truncated).
+const CQC_SWR_MAX_AGE_MS = 6 * 60 * 60 * 1000;   // fresh for six hours
+const CQC_STALE_MS = 7 * 24 * 60 * 60 * 1000;    // serve-stale up to seven days
+const CQC_DEFAULT_WALK_LIMIT = 20000;
 const collectionQueryCache = new Map();
 const inflightCollectionNames = new Map();
+
+// One cache entry, in memory or on disk:
+//   names        Set of lowercased match names (DFC faces + full "A // B")
+//   fetched      raw upstream cards from the LAST walk (null on any hit) —
+//                used only to backfill card_cache, never to answer
+//   complete     false when the last walk hit its page cap
+//   total        upstream total_cards (null when unknown)
+//   fetchedCount cards actually pulled in the last walk
+//   resolvedAt   epoch ms of the last successful walk
+function cqcEntry({ names, complete = true, total = null, fetchedCount = 0, resolvedAt = Date.now() }) {
+  return { names, complete, total, fetchedCount, resolvedAt };
+}
+
+// The query as sent upstream already carries lang:xx for non-English (via
+// langSearch inside fetchWindow/scryPage), so the cache key uses the CLEAN
+// scoped query plus the canonical language code. Normalizing 'en'/absent to
+// one key (and reusing the stored code) keeps 'otag:ramp' and 'otag:ramp'
+// (lang=en) from each paying for the walk under a different row.
+function cqcScope(scoped, lang) {
+  return { scoped, langCode: languages.toCode(lang) };
+}
+
 async function fetchCollectionNames(scoped, lang, limit) {
-  const key = `${scoped}\u0000${lang || ''}`;
+  const { scoped: q, langCode } = cqcScope(scoped, lang);
+  const key = `${q}\u0000${langCode}`;
   const now = Date.now();
-  const hit = collectionQueryCache.get(key);
-  if (hit && hit.expires > now) return { names: hit.names, fetched: null };
-  if (inflightCollectionNames.has(key)) return inflightCollectionNames.get(key);
-  const p = (async () => {
+  let hit = collectionQueryCache.get(key);
+  if (!hit || !hit.resolvedAt) {
     // Disk hit: an earlier run (possibly a previous container) already paid
-    // for the walk. A read failure must never break a search — fall through
-    // to a fresh walk.
+    // for a walk. A read failure must never break a search — fall through to
+    // a fresh walk.
     try {
       const row = await db.get(
-        'SELECT names, expires_at FROM collection_query_cache WHERE query = ? AND lang = ? AND expires_at > ?',
-        [scoped, lang || '', now]
+        'SELECT names, upstream_total, fetched_count, complete, resolved_at FROM collection_query_cache WHERE query = ? AND lang = ?',
+        [q, langCode]
       );
       if (row) {
-        const names = new Set(JSON.parse(row.names));
-        collectionQueryCache.set(key, { names, expires: row.expires_at });
-        return { names, fetched: null };
+        hit = cqcEntry({
+          names: new Set(JSON.parse(row.names)),
+          complete: !!row.complete,
+          total: row.upstream_total,
+          fetchedCount: row.fetched_count || 0,
+          resolvedAt: row.resolved_at,
+        });
+        collectionQueryCache.set(key, hit);
       }
     } catch (e) {
       console.error('collection_query_cache read failed:', e.message);
     }
-    // Walk by GAME CARD, not by printing: the answer is a set of names, and
-    // hundreds of printings per card would otherwise inflate the walk ~4x
-    // (otag:ramp is 2,287 cards but 9,231 printings → 13 pages instead of
-    // 53 at the 2 req/s ceiling). unique:cards returns the same names —
-    // English canonical, front face for DFCs — that the intersect matches on.
-    const { cards: fetched } = await fetchWindow(`${scoped} unique:cards`, lang, 0, limit);
-    const names = new Set();
-    for (const raw of fetched) {
-      const full = String(raw.name || '').trim().toLowerCase();
-      if (!full) continue;
-      names.add(full);
-      // A game card matches if owned under the FULL "A // B" string OR under a
-      // face (the cache stores DFCs under the front face only).
-      if (full.includes(' // ')) {
-        full.split(' // ').forEach(part => {
-          const p2 = part.trim();
-          if (p2) names.add(p2);
-        });
-      }
+  }
+  const age = hit ? now - hit.resolvedAt : Infinity;
+  if (hit && (hit.complete || age <= CQC_STALE_MS)) {
+    // Fresh OR stale-but-usable: answer from the cached names immediately —
+    // the caller intersects them against the LIVE collection, so the served
+    // list is correct for THIS user regardless of cache age. Stale entries
+    // also trigger exactly one background revalidation (deduped by the
+    // in-flight map, paced by the global Scryfall limiter); a concurrent
+    // request finds that map entry and serves the cache instead of joining.
+    if (age > CQC_SWR_MAX_AGE_MS && !inflightCollectionNames.has(key)) {
+      startRevalidation(q, lang, langCode, key, limit);
     }
-    collectionQueryCache.set(key, { names, expires: Date.now() + COLLECTION_QUERY_TTL_MS });
-    // Expired entries are dead weight (a Set of names per query) — reap them
-    // opportunistically as new ones land so the map never outgrows recent use.
-    for (const [k, v] of collectionQueryCache) if (v.expires <= Date.now()) collectionQueryCache.delete(k);
-    // Durability: persist for the next restart. Best-effort — a write failure
-    // degrades to the pre-persistence in-memory-only behavior, never to a
-    // broken search.
-    try {
-      await db.run(
-        `INSERT INTO collection_query_cache (query, lang, names, expires_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(query, lang) DO UPDATE SET names = excluded.names, expires_at = excluded.expires_at`,
-        [scoped, lang || '', JSON.stringify([...names]), Date.now() + COLLECTION_QUERY_TTL_MS]
-      );
-    } catch (e) {
-      console.error('collection_query_cache write failed:', e.message);
-    }
-    // `fetched` is only returned on a MISS so the caller backfills the card
-    // cache exactly once per query (a cache hit means the cards are already
-    // stored from the first resolve).
-    return { names, fetched };
+    return {
+      entry: hit,
+      fetched: null,
+      status: age <= CQC_SWR_MAX_AGE_MS ? 'fresh' : 'stale',
+    };
+  }
+  // No entry, or an incomplete entry older than the stale bound: a synchronous
+  // walk is required before the request can answer. Concurrent callers share it.
+  if (inflightCollectionNames.has(key)) return inflightCollectionNames.get(key);
+  const p = (async () => {
+    const { entry, fetched } = await runWalk(q, lang, langCode, key, limit);
+    return { entry, fetched, status: 'resolved' };
   })();
   inflightCollectionNames.set(key, p);
   p.catch(() => {}).finally(() => inflightCollectionNames.delete(key));
   return p;
+}
+
+// The walk itself: page Scryfall by game card, build the name set, update the
+// in-memory map, persist. Throws on upstream failure — the caller decides
+// (a failed walk must never evict a still-usable cached entry).
+async function runWalk(q, lang, langCode, key, limit) {
+  // Walk by GAME CARD, not by printing: the answer is a set of names, and
+  // hundreds of printings per card would otherwise inflate the walk ~4x
+  // (otag:ramp is 2,287 cards but 9,231 printings → 13 pages instead of
+  // 53 at the 2 req/s ceiling). unique:cards returns the same names —
+  // English canonical, front face for DFCs — that the intersect matches on.
+  let fetched;
+  let hasMore;
+  let total;
+  try {
+    ({ cards: fetched, hasMore, total } = await fetchWindow(`${q} unique:cards`, lang, 0, limit));
+  } catch (error) {
+    // A syntactically valid query with no matches is a complete, durable empty
+    // membership. Caching it prevents every repeat from paying for the same 404.
+    if (error.response && error.response.status === 404) {
+      fetched = [];
+      hasMore = false;
+      total = 0;
+    } else {
+      throw error;
+    }
+  }
+  const names = new Set();
+  for (const raw of fetched) {
+    const full = String(raw.name || '').trim().toLowerCase();
+    if (!full) continue;
+    names.add(full);
+    // A game card matches if owned under the FULL "A // B" string OR under a
+    // face (the cache stores DFCs under the front face only).
+    if (full.includes(' // ')) {
+      full.split(' // ').forEach(part => {
+        const p2 = part.trim();
+        if (p2) names.add(p2);
+      });
+    }
+  }
+  const entry = cqcEntry({
+    names,
+    // hasMore=true at the cut means the walk stopped before the last card:
+    // the names are a REAL but INCOMPLETE prefix. total==null (an upstream
+    // that omits the count) is not a reason to doubt completeness.
+    complete: !hasMore,
+    total,
+    fetchedCount: fetched.length,
+  });
+  collectionQueryCache.set(key, entry);
+  // Entries past the stale bound are dead weight (a Set of names per query) —
+  // reap them opportunistically as new ones land so the map tracks recent use.
+  for (const [k, v] of collectionQueryCache) {
+    const a = v.resolvedAt ? Date.now() - v.resolvedAt : Infinity;
+    if (!v.complete && a > CQC_STALE_MS) collectionQueryCache.delete(k);
+  }
+  // Durability: persist the resolved set (+ completeness) for the next
+  // restart and for every stale hit in between. Best-effort — a write
+  // failure degrades to the in-memory behavior, never to a broken search.
+  // A valid EMPTY answer is persisted too: a nonexistent tag would otherwise
+  // pay the upstream 404 walk on every retry.
+  try {
+    await db.run(
+      `INSERT INTO collection_query_cache (query, lang, names, upstream_total, fetched_count, complete, resolved_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(query, lang) DO UPDATE SET
+         names = excluded.names,
+         upstream_total = excluded.upstream_total,
+         fetched_count = excluded.fetched_count,
+         complete = excluded.complete,
+         resolved_at = excluded.resolved_at,
+         expires_at = excluded.expires_at`,
+      [q, langCode, JSON.stringify([...names]), total, fetched.length,
+       entry.complete ? 1 : 0, entry.resolvedAt, Date.now() + CQC_STALE_MS]
+    );
+  } catch (e) {
+    console.error('collection_query_cache write failed:', e.message);
+  }
+  return { entry, fetched };
+}
+
+// One background revalidation for a stale cache entry. Fire-and-forget: the
+// request that noticed the staleness already answered from the cache, so a
+// failure here is logged and the NEXT request simply re-triggers it. The
+// in-flight map makes concurrent requests collapse into this single walk.
+function startRevalidation(q, lang, langCode, key, limit) {
+  const p = (async () => {
+    const { entry } = await runWalk(q, lang, langCode, key, limit);
+    return { entry, fetched: null, status: 'stale-refreshed' };
+  })();
+  inflightCollectionNames.set(key, p);
+  p.catch(e => console.error('catalog cache revalidation failed:', e.message))
+   .finally(() => inflightCollectionNames.delete(key));
 }
 
 // Resolve a CATALOG-ONLY Scryfall query ("otag:sneak", "availability:modern",
@@ -965,55 +1100,171 @@ async function fetchCollectionNames(scoped, lang, limit) {
 // through the same rate-limited queue and language scoping as every other raw
 // search; only the answer's shape differs.
 //
-// `limit` caps how far upstream paging may walk (6000 ≈ 35 Scryfall pages —
-// covers every tag short of the broadest functional ones) so one request
-// cannot turn into an unbounded crawl.
-async function resolveCollectionQuery({ q = '', userId = null, lang = null, limit = 6000 } = {}) {
+// `limit` caps how far one walk may page (20,000 game cards ≈ 115 Scryfall
+// pages — above the broadest tag in practice; a walk that still hits it
+// returns a flagged-incomplete answer, not a silently truncated one).
+//
+// Returns { cards, total, complete, upstreamTotal, cacheStatus }:
+//   cards         the user's owned rows for the matched game cards
+//   total         how many owned rows matched (the X-Total-Count)
+//   complete      false when the upstream walk hit its page cap — the names
+//                 are a real prefix, but cards past the cut are not in the
+//                 match list, so the answer may be missing owned copies
+//   upstreamTotal Scryfall's total_cards for the tag (null when unknown)
+//   cacheStatus   'fresh' (cache, no walk this request) | 'stale' (cache
+//                 served + background refresh in flight) | 'resolved'
+//                 (this request paid for the walk)
+function catalogMembershipVersion(entry) {
+  const names = [...(entry?.names || [])].map(String).sort();
+  return crypto.createHash('sha256').update(names.join('\u0000')).digest('hex').slice(0, 20);
+}
+
+async function readCatalogSnapshot(client, mode, sourceVersion, expectedSnapshot = null) {
+  const row = await client.get('SELECT revision FROM collection_snapshot WHERE id = 1');
+  const token = `${mode}:${sourceVersion}:${Number(row?.revision) || 0}`;
+  if (expectedSnapshot && expectedSnapshot !== token) {
+    const error = new Error('CATALOG_SNAPSHOT_CHANGED');
+    error.expectedSnapshot = expectedSnapshot;
+    error.actualSnapshot = token;
+    throw error;
+  }
+  return token;
+}
+
+async function resolveCollectionQuery({
+  q = '', userId = null, lang = null,
+  rowLimit = 60, rowOffset = 0, walkLimit = CQC_DEFAULT_WALK_LIMIT,
+  includeTotal = true, expectedSnapshot = null,
+} = {}) {
   const cleanRaw = String(q || '').trim();
-  if (!cleanRaw || !userId) return { cards: [], total: 0 };
+  if (!cleanRaw || !userId) return { cards: [], total: includeTotal ? 0 : null, complete: true, upstreamTotal: null, cacheStatus: 'none', snapshot: null };
+
+  // A catalog-classified query made only of data-backed operators plus otag:
+  // becomes a single SQLite SELECT as soon as a complete local tag generation
+  // and oracle-id backfill are available. Unsupported operators retain the
+  // existing Scryfall/SWR path below.
+  const { analyze, QuerySyntaxError } = require('../../shared/scryfallQuery.js');
+  const oracleTags = require('./oracleTags');
+  let parsed;
+  try {
+    parsed = analyze(cleanRaw);
+  } catch (error) {
+    if (error instanceof QuerySyntaxError) throw new Error('INVALID_QUERY');
+    throw error;
+  }
+  if (oracleTags.supportsLocalCollectionQuery(parsed)) {
+    const local = await db.withDedicatedReadTransaction(async (readDb) => {
+      if (!await oracleTags.isReady(readDb, userId)) return null;
+      const generation = await readDb.get(
+        'SELECT id FROM oracle_tag_generations WHERE active = 1 LIMIT 1'
+      );
+      const snapshot = await readCatalogSnapshot(
+        readDb, 'local', Number(generation?.id) || 0, expectedSnapshot,
+      );
+      const rawSql = require('./utils/rawQuerySql');
+      const compiled = rawSql.compileCollectionQuery({
+        ast: parsed.ast,
+        userId,
+        limit: rowLimit,
+        offset: rowOffset,
+      });
+      // The coverage gate, rows, count, and active tag generation are pinned to
+      // one WAL snapshot. A collection mutation can no longer slip an unresolved
+      // owned row between readiness and a falsely-complete local answer.
+      const rows = await readDb.all(compiled.sql, compiled.params);
+      const count = includeTotal
+        ? await readDb.get(compiled.countSql, compiled.countParams)
+        : null;
+      return {
+        cards: rows.map(row => ({ ...parseCardRow(row), price_trend: resolveCardPrice(row) })),
+        total: includeTotal ? (Number(count && count.n) || 0) : null,
+        complete: true,
+        upstreamTotal: null,
+        cacheStatus: 'local',
+        snapshot,
+      };
+    });
+    if (local) return local;
+  }
   const rawWithLanguageScope = languages.resolve(lang).scryfall === 'en'
     ? cleanRaw
     : `(${cleanRaw})`;
-  let names;
-  let fetched = null;
+  let result;
   try {
-    ({ names, fetched } = await fetchCollectionNames(rawWithLanguageScope, lang, limit));
+    result = await fetchCollectionNames(rawWithLanguageScope, lang, walkLimit);
   } catch (err) {
-    // Same answer-vs-failure split as the raw-search path: 404/422 are valid
-    // "nothing matched" answers, 400 is a fixable query, 429 is throttling.
-    // (A failure is not cached — see fetchCollectionNames — so a retry
-    // re-fetches.)
-    if (err.response && (err.response.status === 404 || err.response.status === 422)) {
-      return { cards: [], total: 0 };
+    // A 404 is a valid empty membership and is already cached by runWalk.
+    // 400/422 are fixable query errors; throttling and transport failures remain
+    // distinct. A failure never evicts a usable cached entry.
+    if (err.response && err.response.status === 404) {
+      return db.withDedicatedReadTransaction(async (readDb) => ({
+        cards: [],
+        total: includeTotal ? 0 : null,
+        complete: true,
+        upstreamTotal: 0,
+        cacheStatus: 'resolved',
+        snapshot: await readCatalogSnapshot(readDb, 'remote', 'empty', expectedSnapshot),
+      }));
     }
-    if (err.response && err.response.status === 400) throw new Error('INVALID_QUERY');
+    if (err.response && (err.response.status === 400 || err.response.status === 422)) {
+      throw new Error('INVALID_QUERY');
+    }
     if (err.response && err.response.status === 429) throw new Error('RATE_LIMIT_EXCEEDED');
     console.error('Scryfall collection query failed:', err.message);
     throw new Error('UPSTREAM_UNAVAILABLE');
   }
-  if (!names.size) return { cards: [], total: 0 };
+  const { entry, fetched, status } = result;
+  const names = entry.names;
+  const membershipVersion = catalogMembershipVersion(entry);
+  if (!names.size) {
+    return db.withDedicatedReadTransaction(async (readDb) => ({
+      cards: [],
+      total: includeTotal ? 0 : null,
+      complete: entry.complete,
+      upstreamTotal: entry.total,
+      cacheStatus: status,
+      snapshot: await readCatalogSnapshot(readDb, 'remote', membershipVersion, expectedSnapshot),
+    }));
+  }
 
-  // Backfill the local card cache EXACTLY once per query, and WITHOUT blocking
-  // the answer — a broad tag resolves thousands of cards, and awaiting those
-  // writes here would add seconds to every request that only needs the
-  // intersect. The writes finish in the background; a cache hit (fetched ===
-  // null) means the cards are already stored, so nothing to do.
+  // Backfill the local card cache from a walk EXACTLY once, WITHOUT blocking
+  // the answer, and BOUNDED: the cards this user owns are already cached
+  // (their owned rows join card_cache), so an unbounded backfill of thousands
+  // of representative printings only adds write load for cards they will
+  // never open. A cap keeps incidental warming for small tags without
+  // turning a tag search into a bulk-import of the catalog.
   if (fetched && fetched.length) {
+    const backfill = fetched.slice(0, 500);
     Promise.resolve()
-      .then(() => fetched.map(c => normalizeCard(c, lang)))
+      .then(() => backfill.map(c => normalizeCard(c, lang)))
       .then(cards => cards.length ? cacheCards(cards) : null)
       .catch(e => console.error('Scryfall collection query caching failed:', e.message));
   }
 
-  const { sql, params } = cardSearchSql.ownedByNames(userId, [...names]);
-  const owned = sql ? await db.all(sql, params) : [];
-  return {
-    // The /api/collection endpoint's row shape, including the resolved
-    // price_trend, so the tiles price identically to a normal collection load.
-    cards: owned.map(row => ({ ...parseCardRow(row), price_trend: resolveCardPrice(row) })),
-    total: owned.length,
-  };
+  const { sql, params, countSql, countParams } = cardSearchSql.ownedByNames(
+    userId, [...names], { limit: rowLimit, offset: rowOffset },
+  );
+  return db.withDedicatedReadTransaction(async (readDb) => {
+    const snapshot = await readCatalogSnapshot(
+      readDb, 'remote', membershipVersion, expectedSnapshot,
+    );
+    const owned = sql ? await readDb.all(sql, params) : [];
+    const count = includeTotal && countSql ? await readDb.get(countSql, countParams) : null;
+    return {
+      // The /api/collection endpoint's row shape, including the resolved
+      // price_trend, so the tiles price identically to a normal collection load.
+      cards: owned.map(row => ({ ...parseCardRow(row), price_trend: resolveCardPrice(row) })),
+      total: includeTotal ? (Number(count && count.n) || 0) : null,
+      complete: entry.complete,
+      upstreamTotal: entry.total,
+      cacheStatus: status,
+      snapshot,
+    };
+  });
 }
 
-// `client` and `fetchWindow` are exported for tests that stub the axios adapter.
-module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow, resolveCollectionQuery };
+// `client` and `fetchWindow` are exported for tests that stub the axios
+// adapter. `collectionQueryCache` is the in-process half of the durable
+// catalog-query cache — exposed so tests can age an entry to drive the
+// stale-while-revalidate paths (production code never reads it directly).
+module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow, resolveCollectionQuery, collectionQueryCache };

@@ -953,6 +953,46 @@ button, input, select, textarea {
   gap: 0.75rem;
 }
 
+/* Collection gallery windowing: this spacer owns the full document height;
+   its translated grid contains only viewport rows plus overscan. Fixed card
+   info geometry keeps row offsets deterministic. The bounded cards must remain
+   fully laid out: deferred content-visibility geometry breaks measured anchor
+   restoration after the destination scrolls onscreen. */
+.collection-virtual-spacer {
+  position: relative;
+  width: 100%;
+  overflow-anchor: none;
+  contain: layout style;
+}
+
+/* React reuses the gallery spacer div as this panel during a view switch.
+   Avoid the global glass-panel `transition: all` interpolating its old
+   border-width (the UA medium 3px) down to 1px: that contracts both the root
+   offset and document scroll range for several painted frames. */
+.collection-virtual-list-panel {
+  transition-property: border-color, background-color, box-shadow;
+}
+
+.collection-virtual-grid .tcg-card-info {
+  height: 41px;
+  overflow: hidden;
+}
+
+.collection-virtual-grid .tcg-card-meta,
+.collection-virtual-grid .tcg-card-meta > span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.collection-virtual-grid .tcg-card-meta > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.collection-virtual-grid .tcg-card-price {
+  flex-shrink: 0;
+}
+
 @media (min-width: 769px) {
   .card-grid {
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -1353,6 +1393,20 @@ button, input, select, textarea {
   font-size: 0.95rem;
 }
 
+.collection-virtual-list-row {
+  height: 82px;
+}
+
+.collection-table .collection-virtual-list-row td {
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+}
+
+.collection-table .collection-virtual-list-spacer td {
+  padding: 0;
+  border: 0;
+}
+
 .collection-table tr:hover td {
   background: rgba(255, 255, 255, 0.01);
 }
@@ -1680,7 +1734,6 @@ button, input, select, textarea {
   position: relative;
   transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
   transform-style: preserve-3d;
-  will-change: transform;
 }
 
 .tilt-card-wrapper:hover {

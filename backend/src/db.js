@@ -112,7 +112,7 @@ async function withTransaction(fn) {
 // unrelated requests can enqueue work into its open transaction. A dedicated
 // connection keeps rollback boundaries honest while BEGIN IMMEDIATE excludes
 // competing writers until commit.
-async function withDedicatedTransaction(fn) {
+async function withDedicatedSqliteTransaction(fn, beginSql) {
   const connection = await new Promise((resolve, reject) => {
     const candidate = new sqlite3.Database(dbPath, (error) => {
       if (error) reject(error);
@@ -143,7 +143,7 @@ async function withDedicatedTransaction(fn) {
   try {
     await client.run('PRAGMA foreign_keys = ON');
     await client.run('PRAGMA busy_timeout = 5000');
-    await client.run('BEGIN IMMEDIATE TRANSACTION');
+    await client.run(beginSql);
     try {
       const result = await fn(client);
       await client.run('COMMIT');
@@ -159,6 +159,17 @@ async function withDedicatedTransaction(fn) {
       connection.close(error => error ? reject(error) : resolve());
     });
   }
+}
+
+async function withDedicatedTransaction(fn) {
+  return withDedicatedSqliteTransaction(fn, 'BEGIN IMMEDIATE TRANSACTION');
+}
+
+// Pin several read statements to one WAL snapshot without taking the writer
+// reservation used by mutation transactions. Coverage-gated local indexes use
+// this so readiness and the reported-complete answer cannot race each other.
+async function withDedicatedReadTransaction(fn) {
+  return withDedicatedSqliteTransaction(fn, 'BEGIN TRANSACTION');
 }
 
 const PBKDF2_ITERATIONS = 210000;
@@ -197,7 +208,9 @@ async function initDb() {
   await run(`
     CREATE TABLE IF NOT EXISTS app_settings (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      public_base_url TEXT DEFAULT ''
+      public_base_url TEXT DEFAULT '',
+      oracle_tags_checked_at INTEGER,
+      oracle_id_backfill_completed_at INTEGER
     )
   `);
   await run(`INSERT OR IGNORE INTO app_settings (id, public_base_url) VALUES (1, '')`);
@@ -219,6 +232,8 @@ async function initDb() {
   await run(`
     CREATE TABLE IF NOT EXISTS card_cache (
       id TEXT PRIMARY KEY,
+      oracle_id TEXT,
+      scryfall_search_eligible INTEGER CHECK(scryfall_search_eligible IN (0, 1)),
       name TEXT NOT NULL,
       supertype TEXT,
       subtypes TEXT,
@@ -343,15 +358,45 @@ async function initDb() {
   // restarts. The intersect against the LIVE collection still runs on every
   // request, so only the (rarely-changing) upstream tag assignments can go
   // stale, up to the TTL.
+  //
+  // Completeness metadata (upstream_total, fetched_count, complete,
+  // resolved_at): a walk that hit its page cap is a PARTIAL answer. Marking
+  // it as such stops a truncated result from being served (and re-served for
+  // a week) as if it were the whole tag — the UI shows "may be incomplete"
+  // and the background revalidation keeps retrying.
   await run(`
     CREATE TABLE IF NOT EXISTS collection_query_cache (
       query TEXT NOT NULL,
       lang TEXT NOT NULL DEFAULT '',
       names TEXT NOT NULL,
+      upstream_total INTEGER,
+      fetched_count INTEGER NOT NULL DEFAULT 0,
+      complete INTEGER NOT NULL DEFAULT 1,
+      resolved_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
       PRIMARY KEY (query, lang)
     )
   `);
+  // v1 of this table (added for the otag: dedup work) had no completeness
+  // columns and a 24h hard TTL. It holds only short-lived cache data — drop
+  // and recreate rather than ALTER; existing rows re-resolve on demand.
+  const cqcCols = await all('PRAGMA table_info(collection_query_cache)');
+  if (cqcCols.length && !cqcCols.some(c => c.name === 'upstream_total')) {
+    await run('DROP TABLE collection_query_cache');
+    await run(`
+      CREATE TABLE IF NOT EXISTS collection_query_cache (
+        query TEXT NOT NULL,
+        lang TEXT NOT NULL DEFAULT '',
+        names TEXT NOT NULL,
+        upstream_total INTEGER,
+        fetched_count INTEGER NOT NULL DEFAULT 0,
+        complete INTEGER NOT NULL DEFAULT 1,
+        resolved_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (query, lang)
+      )
+    `);
+  }
 
   // --- MIGRATIONS ---
   // When the price sweep last ran. Scryfall updates prices once a day, so a
@@ -395,6 +440,12 @@ async function initDb() {
   if (!appSettingsCols.some(c => c.name === 'setup_complete')) {
     await run(`ALTER TABLE app_settings ADD COLUMN setup_complete INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!appSettingsCols.some(c => c.name === 'oracle_tags_checked_at')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN oracle_tags_checked_at INTEGER`);
+  }
+  if (!appSettingsCols.some(c => c.name === 'oracle_id_backfill_completed_at')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN oracle_id_backfill_completed_at INTEGER`);
+  }
 
   // A non-English printing is its own card, not a display variant of the English
   // one: it has its own provider id, its own art and its own name. `language`
@@ -402,6 +453,16 @@ async function initDb() {
   // what the user OWNS), and `printed_name` holds the localized name — `name`
   // stays English so search, deck lists and marketplace links keep working.
   const cardCacheCols = await all(`PRAGMA table_info(card_cache)`);
+  if (!cardCacheCols.some(c => c.name === 'oracle_id')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN oracle_id TEXT`);
+  }
+  if (!cardCacheCols.some(c => c.name === 'scryfall_search_eligible')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN scryfall_search_eligible INTEGER
+      CHECK(scryfall_search_eligible IN (0, 1))`);
+    // Existing rows need their default /cards/search eligibility populated from
+    // Scryfall's card layout alongside Oracle identity.
+    await run(`UPDATE app_settings SET oracle_id_backfill_completed_at = NULL WHERE id = 1`);
+  }
   if (!cardCacheCols.some(c => c.name === 'language')) {
     await run(`ALTER TABLE card_cache ADD COLUMN language TEXT DEFAULT 'English'`);
   }
@@ -461,6 +522,79 @@ async function initDb() {
       );
     }
   }
+
+  // Scryfall's daily Oracle Tags export. A refresh writes a complete inactive
+  // generation, then flips this one-row active pointer in the same dedicated
+  // transaction. Failed/interrupted imports therefore leave the previous
+  // generation queryable.
+  await run(`
+    CREATE TABLE IF NOT EXISTS oracle_tag_generations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_updated_at TEXT NOT NULL,
+      imported_at INTEGER NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0, 1))
+    )
+  `);
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_oracle_tag_one_active
+    ON oracle_tag_generations(active) WHERE active = 1`);
+  await run(`
+    CREATE TABLE IF NOT EXISTS oracle_tags (
+      generation_id INTEGER NOT NULL REFERENCES oracle_tag_generations(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      label TEXT,
+      description TEXT,
+      PRIMARY KEY (generation_id, tag_id)
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS oracle_tag_aliases (
+      generation_id INTEGER NOT NULL,
+      tag_id TEXT NOT NULL,
+      alias TEXT NOT NULL,
+      PRIMARY KEY (generation_id, tag_id, alias),
+      FOREIGN KEY (generation_id, tag_id)
+        REFERENCES oracle_tags(generation_id, tag_id) ON DELETE CASCADE
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_oracle_tag_alias_lookup
+    ON oracle_tag_aliases(generation_id, alias, tag_id)`);
+  await run(`
+    CREATE TABLE IF NOT EXISTS oracle_tag_edges (
+      generation_id INTEGER NOT NULL,
+      parent_tag_id TEXT NOT NULL,
+      child_tag_id TEXT NOT NULL,
+      PRIMARY KEY (generation_id, parent_tag_id, child_tag_id),
+      FOREIGN KEY (generation_id, parent_tag_id)
+        REFERENCES oracle_tags(generation_id, tag_id) ON DELETE CASCADE,
+      FOREIGN KEY (generation_id, child_tag_id)
+        REFERENCES oracle_tags(generation_id, tag_id) ON DELETE CASCADE
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS oracle_tag_assignments (
+      generation_id INTEGER NOT NULL,
+      tag_id TEXT NOT NULL,
+      oracle_id TEXT NOT NULL,
+      PRIMARY KEY (generation_id, tag_id, oracle_id),
+      FOREIGN KEY (generation_id, tag_id)
+        REFERENCES oracle_tags(generation_id, tag_id) ON DELETE CASCADE
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_oracle_tag_assignment_oracle
+    ON oracle_tag_assignments(generation_id, oracle_id, tag_id)`);
+  await run(`
+    CREATE TABLE IF NOT EXISTS oracle_tag_closure (
+      generation_id INTEGER NOT NULL,
+      ancestor_tag_id TEXT NOT NULL,
+      descendant_tag_id TEXT NOT NULL,
+      PRIMARY KEY (generation_id, ancestor_tag_id, descendant_tag_id),
+      FOREIGN KEY (generation_id, ancestor_tag_id)
+        REFERENCES oracle_tags(generation_id, tag_id) ON DELETE CASCADE,
+      FOREIGN KEY (generation_id, descendant_tag_id)
+        REFERENCES oracle_tags(generation_id, tag_id) ON DELETE CASCADE
+    )
+  `);
 
   const collectionCols = await all(`PRAGMA table_info(collection)`);
   if (!collectionCols.some(c => c.name === 'user_id')) {
@@ -910,6 +1044,30 @@ async function initDb() {
     await run(`ALTER TABLE decks ADD COLUMN target_size INTEGER DEFAULT 60`);
   }
 
+  // Monotonic collection snapshot used by progressively paginated catalog
+  // searches. Offset pages are separate HTTP requests, so deterministic order
+  // alone cannot prevent a concurrent collection write from producing a hybrid
+  // result. Triggers make every INSERT/UPDATE/DELETE invalidate the token that
+  // page 1 returned. A single global revision is deliberately conservative:
+  // another user's write may restart hydration, but can never let mixed pages
+  // look complete.
+  await run(`
+    CREATE TABLE IF NOT EXISTS collection_snapshot (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      revision INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  await run(`INSERT OR IGNORE INTO collection_snapshot (id, revision) VALUES (1, 0)`);
+  for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+    await run(`
+      CREATE TRIGGER IF NOT EXISTS collection_snapshot_after_${operation.toLowerCase()}
+      AFTER ${operation} ON collection
+      BEGIN
+        UPDATE collection_snapshot SET revision = revision + 1 WHERE id = 1;
+      END
+    `);
+  }
+
   // --- PERFORMANCE INDEXES ---
   // `user_id` first, because it is the predicate on essentially every read in the
   // app. The collection page also reads newest-first; carrying that order in the
@@ -920,6 +1078,7 @@ async function initDb() {
   await run(`CREATE INDEX IF NOT EXISTS idx_collection_user_added
     ON collection(user_id, added_at DESC, id DESC)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_set_num ON card_cache(set_id, number)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_oracle_id ON card_cache(oracle_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_card_cache_logical_key ON card_cache(LOWER(TRIM(COALESCE(name, ''))))`);
   await run(`DROP INDEX IF EXISTS idx_card_cache_logical_name`);
   await run(`CREATE INDEX IF NOT EXISTS idx_deck_cards_checkout ON deck_cards(deck_id, checked_out)`);
@@ -989,6 +1148,7 @@ module.exports = {
   all,
   withTransaction,
   withDedicatedTransaction,
+  withDedicatedReadTransaction,
   initDb,
   adoptOrphanRows,
   hashPassword,

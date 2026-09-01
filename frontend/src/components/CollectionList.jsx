@@ -1,4 +1,4 @@
-import { startTransition, useState, useEffect, useMemo, useRef } from 'react';
+import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick, Braces } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
@@ -8,9 +8,38 @@ import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '.
 import { sortCardsByOrder } from '../utils/cardSort';
 import { buildCardListText } from '../utils/cardList';
 import { fetchWithRetry } from '../utils/fetchWithRetry';
+import {
+  abortMatchingCollectionHydration,
+  catalogDebounceMs,
+  catalogRowsForQuery,
+  loadCatalogCollection,
+  mapWithConcurrency,
+  reconcileCollectionHydration,
+} from '../utils/collectionCatalogLoading';
+import {
+  collectionSessionCache,
+  makeCollectionSessionQuery,
+  waitForCollectionIdle,
+} from '../utils/collectionSessionCache';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
-import { compileQuery, classifyQuery } from '../../../shared/scryfallQuery.js';
+import {
+  ANCHOR_CONVERGENCE_MAX_FRAMES,
+  INITIAL_RENDER_COUNT,
+  LIST_ROW_HEIGHT,
+  advanceAnchorConvergence,
+  anchorConvergenceFinished,
+  buildVirtualWindow,
+  computeVirtualGeometry,
+  findVisibleCollectionAnchor,
+  measuredAnchorScrollTarget,
+  resolvePendingAnchorIndex,
+  translateAnchorViewportOffset,
+  virtualTableRowCount,
+  virtualTableRowIndex,
+  virtualWindowsMatch,
+} from '../utils/collectionVirtualization';
+import { analyze, compileQuery } from '../../../shared/scryfallQuery.js';
 import { looksLikeSyntax } from '../utils/scryfallSyntax';
 import CardInspectorModal from './CardInspectorModal';
 import AddToDeckSelect from './AddToDeckSelect';
@@ -19,9 +48,8 @@ import CardImage from './CardImage';
 import MultiSelectDropdown from './MultiSelectDropdown';
 
 const labelStyle = { fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' };
-const INITIAL_RENDER_COUNT = 96;
-const LOAD_MORE_RENDER_COUNT = 240;
 const BACKGROUND_PAGE_SIZE = 2000;
+const BACKGROUND_PAGE_CONCURRENCY = 2;
 
 // Maps each Sort By option to sortCardsByOrder criteria so ordering remains
 // consistent (set = chronological via setsList, type = name order — there is no
@@ -53,14 +81,29 @@ function Field({ label, children, style }) {
   );
 }
 
-function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter, setSelectedCardFilter }) {
+function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCardFilter, setSelectedCardFilter }) {
   const { t } = useT();
-  const [collection, setCollection] = useState([]);
-  const [setsList, setSetsList] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [tradeOnly, setTradeOnly] = useState(false);
+  const initialQueryRef = useRef(makeCollectionSessionQuery({
+    authKey: token,
+    revision: statsTrigger,
+    tradeOnly: false,
+  }));
+  const initialCacheRef = useRef(collectionSessionCache.read(initialQueryRef.current));
+  const initialSetsRef = useRef(collectionSessionCache.readSets(initialQueryRef.current));
+  const initialCache = initialCacheRef.current;
+  const [collection, setCollection] = useState(() => initialCache?.rows || []);
+  const [setsList, setSetsList] = useState(() => initialSetsRef.current?.sets || []);
+  const [loading, setLoading] = useState(() => !initialCache);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hydrationStatus, setHydrationStatus] = useState(() => initialCache?.status || 'idle');
+  const [hydrationError, setHydrationError] = useState(() => initialCache?.error || null);
   const fetchGenerationRef = useRef(0);
   const fetchAbortRef = useRef(null);
+  const collectionHydrationRef = useRef({
+    key: initialCache?.queryKey || null,
+    status: initialCache?.status || 'idle',
+  });
 
   useEffect(() => {
     if (selectedCardFilter) {
@@ -84,7 +127,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // contain an operator token, a quote, a paren, or a leading "-", so the
   // detection cannot misfire on a name; a string that LOOKS like syntax but
   // does not parse is shown inline as an error and does not filter.
-  const [searchFilter, setSearchFilter] = useState('');
+  const [searchFilter, setSearchFilter] = useState(() => selectedCardFilter || '');
   const [rarityFilter, setRarityFilter] = useState([]);
   const [conditionFilter, setConditionFilter] = useState([]);
   const [printingFilter, setPrintingFilter] = useState([]);
@@ -96,7 +139,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const [minPriceFilter, setMinPriceFilter] = useState('');
   const [maxPriceFilter, setMaxPriceFilter] = useState('');
   const [sortBy, setSortBy] = useState('added-newest');
-  const [tradeOnly, setTradeOnly] = useState(false);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
 
   // Live-catalog mode: the query contains an operator only Scryfall's
@@ -105,10 +147,17 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // resolves it against Scryfall and returns the user's OWN rows for the
   // matches. Debounced, because a half-typed tag is not a query yet — and
   // every half-typed query would otherwise be a real API call.
-  const [liveCatalog, setLiveCatalog] = useState(null);
-  const [liveLoading, setLiveLoading] = useState(false);
-  const [liveError, setLiveError] = useState(null);
+  const [liveState, setLiveState] = useState({
+    queryKey: null,
+    rows: null,
+    loading: false,
+    error: null,
+    incomplete: false,
+    total: null,
+    cacheStatus: null,
+  });
   const liveFetchRef = useRef(0);
+  const liveAbortRef = useRef(null);
 
   // Stacking state (default to stacked)
   const [stackCards, setStackCards] = useState(true);
@@ -121,37 +170,49 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     pressHandlers, longPressFired, runBulk,
   } = useMultiSelect({ showToast, onChanged: onUpdate });
 
-  useEffect(() => {
-    fetchCollection();
-    return () => {
-      fetchGenerationRef.current += 1;
-      fetchAbortRef.current?.abort();
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statsTrigger, tradeOnly]);
+  const collectionSessionQuery = useMemo(() => makeCollectionSessionQuery({
+    authKey: token,
+    revision: statsTrigger,
+    tradeOnly,
+  }), [token, statsTrigger, tradeOnly]);
 
   useEffect(() => {
-    fetchSets();
+    if (initialSetsRef.current?.setsReady) return undefined;
+    let active = true;
+    fetchSets(initialQueryRef.current, () => active);
+    return () => { active = false; };
   // The set catalog is static collection-view metadata; card mutations should
   // not download it again.
   }, []);
 
-  const fetchCollection = async () => {
+  const fetchCollection = async (sessionQuery) => {
     const generation = ++fetchGenerationRef.current;
     fetchAbortRef.current?.abort();
     const controller = new AbortController();
+    const cacheLease = collectionSessionCache.begin(sessionQuery);
+    const cached = collectionSessionCache.read(sessionQuery);
+    let partialRows = cached?.rows || [];
+    let expectedTotal = cached?.total || partialRows.length;
     fetchAbortRef.current = controller;
+    collectionHydrationRef.current = {
+      key: sessionQuery.queryKey,
+      status: 'loading',
+      generation,
+      controller,
+    };
+    setHydrationStatus('loading');
+    setHydrationError(null);
 
     try {
-      setLoading(true);
-      setLoadingMore(false);
-      setVisibleCount(INITIAL_RENDER_COUNT);
+      setLoading(partialRows.length === 0);
+      setLoadingMore(partialRows.length > 0);
+      if (partialRows.length) setCollection(partialRows);
 
       const params = new URLSearchParams({
         limit: String(INITIAL_RENDER_COUNT),
         offset: '0'
       });
-      if (tradeOnly) params.set('is_trade', '1');
+      if (sessionQuery.tradeOnly) params.set('is_trade', '1');
 
       // Cold path: request only what can be painted immediately. This stays fast
       // even when the physical collection grows to hundreds of thousands of rows.
@@ -162,70 +223,167 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const firstPage = await response.json();
       const total = Math.max(firstPage.length, parseInt(response.headers.get('X-Total-Count'), 10) || 0);
-      if (generation !== fetchGenerationRef.current) return;
+      if (generation !== fetchGenerationRef.current || controller.signal.aborted) return;
+      partialRows = firstPage;
+      expectedTotal = total;
+      const firstStatus = firstPage.length < total ? 'partial' : 'complete';
+      if (!collectionSessionCache.write(cacheLease, {
+        rows: firstPage,
+        total,
+        status: firstStatus,
+      })) return;
+      if (firstStatus === 'complete' && !collectionSessionCache.read(sessionQuery)?.complete) {
+        throw new Error('Incomplete collection hydration: duplicate or missing entry IDs');
+      }
       setCollection(firstPage);
       setLoading(false);
+      setHydrationStatus(firstStatus);
+      collectionHydrationRef.current = {
+        key: sessionQuery.queryKey,
+        status: firstStatus,
+        generation,
+        controller,
+      };
 
       if (firstPage.length < total) {
         setLoadingMore(true);
-        const pageRequests = [];
+
+        // Yield until after the bounded 96-row paint. requestIdleCallback's
+        // timeout prevents starvation; browsers without it use a short timer.
+        if (!await waitForCollectionIdle({ signal: controller.signal })) return;
+        if (generation !== fetchGenerationRef.current || controller.signal.aborted) return;
+
+        const pageOffsets = [];
         for (let offset = firstPage.length; offset < total; offset += BACKGROUND_PAGE_SIZE) {
-          const pageParams = new URLSearchParams({
-            limit: String(BACKGROUND_PAGE_SIZE),
-            offset: String(offset),
-            count: '0'
-          });
-          if (tradeOnly) pageParams.set('is_trade', '1');
-          pageRequests.push(
-            fetchWithRetry(`/api/collection?${pageParams}`, { signal: controller.signal })
-              .then(pageResponse => {
-                if (!pageResponse.ok) throw new Error(`HTTP ${pageResponse.status}`);
-                return pageResponse.json();
-              })
-          );
+          pageOffsets.push(offset);
         }
 
-        // Fetch the remaining slices concurrently, then commit once. The page is
-        // already interactive while this runs, and one transition avoids sorting
-        // and regrouping the growing collection after every network chunk.
+        // Fetch at most two slices concurrently. Large collections can require
+        // dozens of pages; eagerly Promise.all-ing every request competes with
+        // images and interactive API work even though we commit only once.
         let pages;
         try {
-          pages = await Promise.all(pageRequests);
+          pages = await mapWithConcurrency(
+            pageOffsets,
+            BACKGROUND_PAGE_CONCURRENCY,
+            async (offset) => {
+              const pageParams = new URLSearchParams({
+                limit: String(BACKGROUND_PAGE_SIZE),
+                offset: String(offset),
+                count: '0'
+              });
+              if (sessionQuery.tradeOnly) pageParams.set('is_trade', '1');
+              const pageResponse = await fetchWithRetry(
+                `/api/collection?${pageParams}`,
+                { signal: controller.signal }
+              );
+              if (!pageResponse.ok) throw new Error(`HTTP ${pageResponse.status}`);
+              return pageResponse.json();
+            }
+          );
         } catch (backgroundError) {
           if (backgroundError?.name === 'AbortError' || controller.signal.aborted) throw backgroundError;
 
           // Never leave filters, totals, or bulk operations working on a silent
           // 96-row subset. If a page still fails after retries, fall back to the
           // compatible full endpoint; this slower path is only for recovery.
-          const fallbackUrl = tradeOnly ? '/api/collection?is_trade=1' : '/api/collection';
+          const fallbackUrl = sessionQuery.tradeOnly ? '/api/collection?is_trade=1' : '/api/collection';
           const fallbackResponse = await fetchWithRetry(fallbackUrl, { signal: controller.signal });
           if (!fallbackResponse.ok) throw backgroundError;
           const fullCollection = await fallbackResponse.json();
-          if (generation !== fetchGenerationRef.current) return;
-          startTransition(() => setCollection(fullCollection));
+          if (generation !== fetchGenerationRef.current || controller.signal.aborted) return;
+          if (!collectionSessionCache.write(cacheLease, {
+            rows: fullCollection,
+            total: fullCollection.length,
+            status: 'complete',
+          })) return;
+          if (!collectionSessionCache.read(sessionQuery)?.complete) {
+            throw new Error('Incomplete collection hydration: duplicate or missing entry IDs');
+          }
+          collectionHydrationRef.current = {
+            key: sessionQuery.queryKey,
+            status: 'complete',
+            generation,
+            controller,
+          };
+          startTransition(() => {
+            setCollection(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+              ? fullCollection : current);
+            setHydrationStatus(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+              ? 'complete' : current);
+            setHydrationError(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+              ? null : current);
+          });
           return;
         }
-        if (generation !== fetchGenerationRef.current) return;
-        startTransition(() => setCollection(firstPage.concat(...pages)));
+        if (generation !== fetchGenerationRef.current || controller.signal.aborted) return;
+        const fullCollection = firstPage.concat(...pages);
+        partialRows = fullCollection;
+        if (fullCollection.length !== total) {
+          throw new Error(`Incomplete collection hydration: expected ${total}, received ${fullCollection.length}`);
+        }
+        if (!collectionSessionCache.write(cacheLease, {
+          rows: fullCollection,
+          total,
+          status: 'complete',
+        })) return;
+        if (!collectionSessionCache.read(sessionQuery)?.complete) {
+          throw new Error('Incomplete collection hydration: duplicate or missing entry IDs');
+        }
+        collectionHydrationRef.current = {
+          key: sessionQuery.queryKey,
+          status: 'complete',
+          generation,
+          controller,
+        };
+        startTransition(() => {
+          setCollection(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+            ? fullCollection : current);
+          setHydrationStatus(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+            ? 'complete' : current);
+          setHydrationError(current => generation === fetchGenerationRef.current && !controller.signal.aborted
+            ? null : current);
+        });
       }
     } catch (err) {
-      if (err?.name === 'AbortError') return;
+      if (err?.name === 'AbortError' || controller.signal.aborted
+        || generation !== fetchGenerationRef.current) {
+        return;
+      }
+      collectionSessionCache.write(cacheLease, {
+        rows: partialRows,
+        total: expectedTotal,
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      collectionHydrationRef.current = {
+        key: sessionQuery.queryKey,
+        status: 'error',
+        generation,
+        controller,
+      };
+      setHydrationStatus('error');
+      setHydrationError(err instanceof Error ? err.message : String(err));
       console.error(err);
       showToast(t('collection.errLoad'));
     } finally {
-      if (generation === fetchGenerationRef.current) {
+      if (generation === fetchGenerationRef.current && !controller.signal.aborted) {
         setLoading(false);
         setLoadingMore(false);
       }
     }
   };
 
-  const fetchSets = async () => {
+  const fetchSets = async (sessionQuery, isActive = () => true) => {
     try {
       const response = await fetch('/api/sets');
-      if (response.ok) setSetsList(await response.json());
+      if (!response.ok) return;
+      const sets = await response.json();
+      if (!isActive()) return;
+      collectionSessionCache.setSets(sessionQuery, sets);
+      setSetsList(sets);
     } catch (err) {
-      console.error('Error fetching sets:', err);
+      if (isActive()) console.error('Error fetching sets:', err);
     }
   };
 
@@ -341,14 +499,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   const scryfallPredicate = useMemo(() => {
     const text = searchFilter.trim();
     if (!text || !looksLikeSyntax(text)) return { mode: 'off' };
-    let classification;
+    let analysis;
     try {
-      classification = classifyQuery(text);
+      analysis = analyze(text);
     } catch (err) {
       return { mode: 'error', error: err instanceof Error ? err.message : String(err) };
     }
-    if (classification.mode === 'catalog') return { mode: 'catalog' };
-    return { mode: 'local', test: compileQuery(text) };
+    if (analysis.mode === 'catalog') return { mode: 'catalog', operators: analysis.operators };
+    return { mode: 'local', operators: analysis.operators, test: compileQuery(text) };
   }, [searchFilter]);
 
   // No hint copy under the box (it made the panel jumbled on phones), so a
@@ -362,53 +520,181 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
     }
   }, [scryfallPredicate, showToast]);
 
-  // The catalog query is the one that actually reaches Scryfall. Debounced,
-  // because a half-typed tag is not a query yet — and every half-typed query
-  // would otherwise be a real API call. Each new query supersedes in-flight
-  // answers so a slow response can never paint over a newer one.
-  //
-  // The PREVIOUS result stays visible while a new catalog answer is in flight
-  // (see baseCollection + the "updating" pill below): a cold walk can take
-  // seconds, and blanking the whole collection to a spinner for that long is
-  // what made a cached tag feel "slow". The previous list is the honest
-  // fallback — it is the same tag's answer from minutes/hours ago.
+  // Catalog results replace the ordinary collection, so downloading both is
+  // pure waste. Reconcile by data-generation key: catalog mode aborts a
+  // partial ordinary hydration, and returning to any browser-filtered mode
+  // restarts only when that hydration was aborted/partial or the key changed.
+  const collectionHydrationKey = collectionSessionQuery.queryKey;
+  useEffect(() => {
+    if (scryfallPredicate.mode !== 'catalog') {
+      const cached = collectionSessionCache.read(collectionSessionQuery);
+      if (cached?.complete) {
+        if (collectionHydrationRef.current.key !== collectionHydrationKey
+          && ['loading', 'partial'].includes(collectionHydrationRef.current.status)) {
+          fetchGenerationRef.current += 1;
+          fetchAbortRef.current?.abort();
+        }
+        setCollection(cached.rows);
+        if (cached.setsReady) setSetsList(cached.sets);
+        setLoading(false);
+        setLoadingMore(false);
+        setHydrationStatus('complete');
+        setHydrationError(null);
+        collectionHydrationRef.current = { key: collectionHydrationKey, status: 'complete' };
+        return;
+      }
+      if (cached) {
+        setCollection(cached.rows);
+        if (cached.setsReady) setSetsList(cached.sets);
+        setHydrationStatus(cached.status);
+        setHydrationError(cached.error);
+        collectionHydrationRef.current = { key: collectionHydrationKey, status: cached.status };
+      }
+    }
+
+    const decision = reconcileCollectionHydration(
+      scryfallPredicate.mode,
+      collectionHydrationKey,
+      collectionHydrationRef.current,
+    );
+    collectionHydrationRef.current = decision.state;
+    if (scryfallPredicate.mode === 'catalog') {
+      if (decision.action === 'abort') {
+        fetchGenerationRef.current += 1;
+        fetchAbortRef.current?.abort();
+      }
+      setLoading(false);
+      setLoadingMore(false);
+    } else if (decision.action === 'start') {
+      fetchCollection(collectionSessionQuery);
+    }
+  // fetchCollection intentionally keys its lifecycle through refs above.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collectionHydrationKey, scryfallPredicate.mode]);
+
+  // Each catalog generation owns an AbortController as well as a generation
+  // guard. The first 96 rows paint immediately; capped 2000-row pages hydrate
+  // in the background and commit together. Cached rows remain visible only
+  // when their query key exactly matches the query being refreshed.
+  const catalogQueryKey = searchFilter.trim();
   useEffect(() => {
     if (scryfallPredicate.mode !== 'catalog') {
       liveFetchRef.current += 1;
-      setLiveCatalog(null);
-      setLiveLoading(false);
-      setLiveError(null);
+      liveAbortRef.current?.abort();
+      setLiveState({
+        queryKey: null, rows: null, loading: false, error: null,
+        incomplete: false, total: null, cacheStatus: null,
+      });
       return;
     }
+
     const generation = ++liveFetchRef.current;
+    liveAbortRef.current?.abort();
+    const controller = new AbortController();
+    liveAbortRef.current = controller;
+    const isCurrent = () => generation === liveFetchRef.current && !controller.signal.aborted;
+
+    setLiveState(previous => ({
+      queryKey: catalogQueryKey,
+      rows: previous.queryKey === catalogQueryKey ? previous.rows : null,
+      loading: true,
+      error: null,
+      incomplete: previous.queryKey === catalogQueryKey ? previous.incomplete : false,
+      total: previous.queryKey === catalogQueryKey ? previous.total : null,
+      cacheStatus: previous.queryKey === catalogQueryKey ? previous.cacheStatus : null,
+    }));
+
     const timer = setTimeout(async () => {
-      setLiveLoading(true);
-      setLiveError(null);
       try {
-        const params = new URLSearchParams();
-        params.set('scope', 'collection');
-        params.set('q', searchFilter.trim());
-        const response = await fetchWithRetry(`/api/search?${params.toString()}`);
-        if (generation !== liveFetchRef.current) return;
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          setLiveCatalog([]);
-          if (response.status === 400) setLiveError(t('collection.scryfallInvalidQuery'));
-          else if (response.status === 429) setLiveError(t('collection.scryfallRateLimited'));
-          else setLiveError(errData.error || t('collection.scryfallLiveFailed'));
-          return;
-        }
-        setLiveCatalog(await response.json());
+        const result = await loadCatalogCollection({
+          query: catalogQueryKey,
+          signal: controller.signal,
+          isCurrent,
+          onFirstPage: first => {
+            if (!isCurrent()) return;
+            setLiveState({
+              queryKey: catalogQueryKey,
+              rows: first.rows,
+              loading: first.incomplete,
+              error: null,
+              incomplete: first.incomplete,
+              total: first.total,
+              cacheStatus: first.cacheStatus,
+            });
+          },
+          onIncomplete: partial => {
+            if (!isCurrent()) return;
+            setLiveState({
+              queryKey: catalogQueryKey,
+              rows: partial.rows,
+              loading: false,
+              error: t('collection.scryfallLiveFailed'),
+              incomplete: true,
+              total: partial.total,
+              cacheStatus: partial.cacheStatus,
+            });
+            // Promise.all rejects on the failed page; stop any sibling page
+            // requests that are still consuming this generation's capacity.
+            controller.abort();
+          },
+        });
+        if (!isCurrent()) return;
+        startTransition(() => setLiveState(previous => isCurrent() ? {
+            queryKey: catalogQueryKey,
+            rows: result.rows,
+            loading: false,
+            error: null,
+            incomplete: result.incomplete,
+            total: result.total,
+            cacheStatus: result.cacheStatus,
+          } : previous));
       } catch (err) {
-        if (err?.name === 'AbortError' || generation !== liveFetchRef.current) return;
-        setLiveError(t('collection.scryfallLiveFailed'));
-        setLiveCatalog([]);
-      } finally {
-        if (generation === liveFetchRef.current) setLiveLoading(false);
+        if (err?.name === 'AbortError' || !isCurrent()) return;
+        let message = t('collection.scryfallLiveFailed');
+        if (err.status === 400) message = t('collection.scryfallInvalidQuery');
+        else if (err.status === 429) message = t('collection.scryfallRateLimited');
+        else if (err.payload?.error) message = err.payload.error;
+        setLiveState(previous => ({
+          ...previous,
+          queryKey: catalogQueryKey,
+          rows: err.stage === 'background' ? (previous.rows || []) : [],
+          loading: false,
+          error: message,
+          incomplete: err.stage === 'background',
+        }));
       }
-    }, 450);
-    return () => clearTimeout(timer);
-  }, [scryfallPredicate, searchFilter, t]);
+    }, catalogDebounceMs(scryfallPredicate.operators));
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [catalogQueryKey, scryfallPredicate, statsTrigger, t]);
+
+  useEffect(() => () => {
+    const generation = fetchGenerationRef.current;
+    const controller = fetchAbortRef.current;
+    const hydration = collectionHydrationRef.current;
+    const abortedHydration = abortMatchingCollectionHydration(hydration, {
+      key: hydration.key,
+      generation,
+      controller,
+    });
+    if (abortedHydration !== hydration) {
+      collectionHydrationRef.current = abortedHydration;
+      fetchGenerationRef.current += 1;
+      controller.abort();
+    }
+    liveFetchRef.current += 1;
+    liveAbortRef.current?.abort();
+  }, []);
+
+  const liveCatalog = scryfallPredicate.mode === 'catalog'
+    ? catalogRowsForQuery(liveState, catalogQueryKey)
+    : null;
+  const liveLoading = scryfallPredicate.mode === 'catalog'
+    && (liveState.queryKey !== catalogQueryKey || liveState.loading);
+  const liveError = liveState.queryKey === catalogQueryKey ? liveState.error : null;
+  const liveIncomplete = liveState.queryKey === catalogQueryKey ? liveState.incomplete : false;
 
   // In catalog mode the answer only exists on the server: the live result
   // REPLACES the local rows — the binder behind it would read as "the query
@@ -491,39 +777,357 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
   // selectable and bulk actions hit real entry_ids (stacking merges rows).
   const displayCards = selectMode ? filteredCollection : processedCollection;
 
-  // Progressive rendering: a 20,000-card collection would otherwise mount every
-  // tile at once (tens of thousands of DOM nodes + images) and freeze the page
-  // for many seconds. Render a small first batch and extend ahead of the scroll
-  // position. 96 is several desktop/mobile screens without asking the browser
-  // to create and image-track hundreds of off-screen cards up front.
-  const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT);
-  const sentinelRef = useRef(null);
+  // The collection scrolls with the document, so the virtualizer tracks the
+  // viewport against the gallery/table's document offset. The spacer preserves
+  // the full scroll range while only viewport rows plus a small overscan stay
+  // mounted. Fixed row geometry is mirrored in index.css; ResizeObserver keeps
+  // the responsive auto-fill column calculation in step with container width.
+  const virtualRootRef = useRef(null);
+  const virtualFrameRef = useRef(null);
+  const anchorVerificationFrameRef = useRef(null);
+  const anchorIdentityRef = useRef(0);
+  const pendingViewAnchorRef = useRef(null);
+  const displayCardsRef = useRef(displayCards);
+  displayCardsRef.current = displayCards;
+  const [virtualWindow, setVirtualWindow] = useState({
+    startIndex: 0,
+    endIndex: INITIAL_RENDER_COUNT,
+    startRow: 0,
+    endRow: INITIAL_RENDER_COUNT,
+    rowCount: 0,
+    columns: 1,
+    rowStride: LIST_ROW_HEIGHT,
+    gap: 0,
+    totalSize: 0,
+  });
 
-  // Reset to the first batch whenever the visible card set can change (filters,
-  // sort, search, stacking, view mode, selection mode) or after a fresh fetch.
   useEffect(() => {
-    setVisibleCount(INITIAL_RENDER_COUNT);
-  }, [displayCards, viewMode, selectMode, collection]);
+    const root = virtualRootRef.current;
+    if (!root) return undefined;
 
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || visibleCount >= displayCards.length) return;
-    const observer = new IntersectionObserver(entries => {
-      if (entries[0]?.isIntersecting) {
-        setVisibleCount(c => Math.min(c + LOAD_MORE_RENDER_COUNT, displayCards.length));
+    const updateVirtualWindow = () => {
+      virtualFrameRef.current = null;
+      const width = root.clientWidth;
+      const gallery = viewMode === 'gallery';
+      const geometry = computeVirtualGeometry(displayCards.length, width, window.innerWidth, gallery);
+      const rootTop = root.getBoundingClientRect().top + window.scrollY;
+      const localScrollTop = Math.max(0, window.scrollY - rootTop);
+      const next = buildVirtualWindow(
+        displayCards.length,
+        geometry,
+        localScrollTop,
+        window.innerHeight,
+      );
+
+      setVirtualWindow(previous => (
+        previous.startIndex === next.startIndex
+        && previous.endIndex === next.endIndex
+        && previous.columns === next.columns
+        && Math.abs(previous.rowStride - next.rowStride) < 0.5
+        && Math.abs(previous.totalSize - next.totalSize) < 0.5
+          ? previous
+          : next
+      ));
+    };
+
+    const scheduleVirtualUpdate = () => {
+      if (virtualFrameRef.current == null) {
+        virtualFrameRef.current = window.requestAnimationFrame(updateVirtualWindow);
       }
-    }, { rootMargin: '800px' });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [displayCards, visibleCount]);
+    };
 
-  const visibleCards = displayCards.slice(0, visibleCount);
-  const showSentinel = visibleCount < displayCards.length;
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(scheduleVirtualUpdate);
+    resizeObserver?.observe(root);
+    window.addEventListener('scroll', scheduleVirtualUpdate, { passive: true });
+    window.addEventListener('resize', scheduleVirtualUpdate);
+    scheduleVirtualUpdate();
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('scroll', scheduleVirtualUpdate);
+      window.removeEventListener('resize', scheduleVirtualUpdate);
+      if (virtualFrameRef.current != null) {
+        window.cancelAnimationFrame(virtualFrameRef.current);
+        virtualFrameRef.current = null;
+      }
+    };
+  }, [displayCards.length, viewMode, showFilters, selectMode, loadingMore, hydrationError, liveLoading]);
+
+  useEffect(() => () => {
+    if (anchorVerificationFrameRef.current != null) {
+      window.cancelAnimationFrame(anchorVerificationFrameRef.current);
+      anchorVerificationFrameRef.current = null;
+    }
+  }, []);
+
+  // A gallery row and a list row represent very different amounts of the
+  // collection. Keeping window.scrollY unchanged when switching views therefore
+  // jumps to a different card. Capture the first visible card and its viewport
+  // offset, then put that same card back after the new layout mounts. For a row
+  // clipped above the viewport, switchViewMode translates the offset by row
+  // progress so a tall gallery row cannot disappear above a short list row.
+  // Restoration deliberately takes two layout commits: the first remeasures
+  // and commits the destination spacer/range, and only the second scrolls.
+  // Calling setVirtualWindow and scrollTo in one layout effect can still clamp
+  // the scroll against the shorter spacer that is currently in the DOM.
+  useLayoutEffect(() => {
+    const anchor = pendingViewAnchorRef.current;
+    const root = virtualRootRef.current;
+    if (!anchor || anchor.viewMode !== viewMode || !root) return;
+
+    const anchorIndex = resolvePendingAnchorIndex(anchor, displayCards);
+    if (anchorIndex < 0) {
+      if (anchorVerificationFrameRef.current != null) {
+        window.cancelAnimationFrame(anchorVerificationFrameRef.current);
+        anchorVerificationFrameRef.current = null;
+      }
+      if (pendingViewAnchorRef.current === anchor) pendingViewAnchorRef.current = null;
+      return;
+    }
+    const geometry = computeVirtualGeometry(
+      displayCards.length,
+      root.clientWidth,
+      window.innerWidth,
+      viewMode === 'gallery',
+    );
+    const anchorRow = Math.floor(anchorIndex / geometry.columns);
+    const seedViewportOffset = translateAnchorViewportOffset(
+      anchor.sourceViewportOffset,
+      anchor.sourceEntryHeight,
+      Math.max(0, geometry.rowStride - geometry.gap),
+      window.innerHeight,
+      window.devicePixelRatio,
+    );
+    const rootTop = root.getBoundingClientRect().top + window.scrollY;
+    const seedScrollTop = Math.max(
+      0,
+      rootTop + anchorRow * geometry.rowStride - seedViewportOffset,
+    );
+    const destinationWindow = buildVirtualWindow(
+      displayCards.length,
+      geometry,
+      Math.max(0, seedScrollTop - rootTop),
+      window.innerHeight,
+    );
+
+    // State equality here is also a DOM-commit barrier: a layout effect sees
+    // virtualWindow only after React has rendered its full spacer height. Do
+    // not attempt the near-end scroll while the corrected geometry is queued.
+    if (!virtualWindowsMatch(virtualWindow, destinationWindow)) {
+      if (anchorVerificationFrameRef.current != null) {
+        window.cancelAnimationFrame(anchorVerificationFrameRef.current);
+        anchorVerificationFrameRef.current = null;
+      }
+      anchor.convergence = null;
+      setVirtualWindow(destinationWindow);
+      return;
+    }
+
+    const destinationElement = Array.from(
+      root.querySelectorAll('[data-collection-entry-id]'),
+    ).find(element => element.dataset.collectionEntryId === String(anchor.entryId));
+    if (!destinationElement) {
+      if (pendingViewAnchorRef.current === anchor) pendingViewAnchorRef.current = null;
+      return;
+    }
+
+    const destinationRect = destinationElement.getBoundingClientRect();
+    const desiredViewportOffset = translateAnchorViewportOffset(
+      anchor.sourceViewportOffset,
+      anchor.sourceEntryHeight,
+      destinationRect.height,
+      window.innerHeight,
+      window.devicePixelRatio,
+    );
+    const maximumScrollTop = Math.max(
+      0,
+      document.documentElement.scrollHeight - window.innerHeight,
+    );
+    const targetScrollTop = measuredAnchorScrollTarget(
+      window.scrollY,
+      destinationRect.top,
+      desiredViewportOffset,
+      maximumScrollTop,
+    );
+    window.scrollTo(window.scrollX, targetScrollTop);
+
+    // Keep this exact anchor alive beyond the synchronous correction. The
+    // scroll event can commit a recentered virtual window after this layout
+    // effect, and document scroll range changes only become observable after
+    // paint. A bounded, identity-fenced rAF verifier corrects those commits and
+    // clears only after two matching painted measurements.
+    if (anchorVerificationFrameRef.current == null) {
+      const verifyAfterPaint = () => {
+        anchorVerificationFrameRef.current = null;
+        if (pendingViewAnchorRef.current !== anchor
+            || pendingViewAnchorRef.current.identity !== anchor.identity
+            || anchor.viewMode !== viewMode) return;
+        if (anchor.displayCards !== displayCardsRef.current) {
+          pendingViewAnchorRef.current = null;
+          return;
+        }
+
+        const currentRoot = virtualRootRef.current;
+        const currentElement = currentRoot && Array.from(
+          currentRoot.querySelectorAll('[data-collection-entry-id]'),
+        ).find(element => element.dataset.collectionEntryId === String(anchor.entryId));
+        if (!currentRoot || !currentElement) {
+          if (pendingViewAnchorRef.current === anchor) pendingViewAnchorRef.current = null;
+          return;
+        }
+
+        const currentRect = currentElement.getBoundingClientRect();
+        const currentDesiredOffset = translateAnchorViewportOffset(
+          anchor.sourceViewportOffset,
+          anchor.sourceEntryHeight,
+          currentRect.height,
+          window.innerHeight,
+          window.devicePixelRatio,
+        );
+        const currentMaximumScrollTop = Math.max(
+          0,
+          document.documentElement.scrollHeight - window.innerHeight,
+        );
+        const correctedScrollTop = measuredAnchorScrollTarget(
+          window.scrollY,
+          currentRect.top,
+          currentDesiredOffset,
+          currentMaximumScrollTop,
+        );
+        const tolerance = 1 / Math.max(1, window.devicePixelRatio || 1);
+        const corrected = Math.abs(window.scrollY - correctedScrollTop) > tolerance;
+        if (corrected) window.scrollTo(window.scrollX, correctedScrollTop);
+
+        const paintedRect = currentElement.getBoundingClientRect();
+        const rootRect = currentRoot.getBoundingClientRect();
+        const scrollHeight = document.documentElement.scrollHeight;
+        anchor.convergence = advanceAnchorConvergence(anchor.convergence, {
+          scrollHeight,
+          maximumScrollTop: Math.max(0, scrollHeight - window.innerHeight),
+          rootDocumentTop: rootRect.top + window.scrollY,
+          anchorViewportTop: paintedRect.top,
+          scrollTop: window.scrollY,
+          corrected,
+          hasPositiveIntersection: paintedRect.bottom > 0
+            && paintedRect.top < window.innerHeight,
+        }, tolerance);
+
+        if (anchorConvergenceFinished(anchor.convergence)) {
+          pendingViewAnchorRef.current = null;
+          return;
+        }
+        if (anchor.convergence.frameCount < ANCHOR_CONVERGENCE_MAX_FRAMES) {
+          anchorVerificationFrameRef.current = window.requestAnimationFrame(verifyAfterPaint);
+        }
+      };
+      anchorVerificationFrameRef.current = window.requestAnimationFrame(verifyAfterPaint);
+    }
+  }, [displayCards, viewMode, virtualWindow]);
+
+  const switchViewMode = (nextViewMode) => {
+    if (nextViewMode === viewMode) return;
+
+    if (anchorVerificationFrameRef.current != null) {
+      window.cancelAnimationFrame(anchorVerificationFrameRef.current);
+      anchorVerificationFrameRef.current = null;
+    }
+
+    const root = virtualRootRef.current;
+    const scrollTop = window.scrollY;
+    const rootTop = root ? root.getBoundingClientRect().top + scrollTop : 0;
+    const rootBottom = rootTop + virtualWindow.totalSize;
+    const collectionIsVisible = root
+      && displayCards.length > 0
+      && scrollTop < rootBottom
+      && scrollTop + window.innerHeight > rootTop;
+
+    if (collectionIsVisible) {
+      const measuredAnchor = findVisibleCollectionAnchor(root, window.innerHeight);
+      const localScrollTop = Math.max(0, scrollTop - rootTop);
+      const fallbackRow = Math.min(
+        Math.max(0, virtualWindow.rowCount - 1),
+        Math.floor(localScrollTop / virtualWindow.rowStride),
+      );
+      const fallbackIndex = Math.min(
+        displayCards.length - 1,
+        fallbackRow * virtualWindow.columns,
+      );
+      const measuredIndex = measuredAnchor
+        ? displayCards.findIndex(item => String(item.entry_id) === measuredAnchor.entryId)
+        : -1;
+      const anchorIndex = measuredIndex >= 0 ? measuredIndex : fallbackIndex;
+      const nextGeometry = computeVirtualGeometry(
+        displayCards.length,
+        root.clientWidth,
+        window.innerWidth,
+        nextViewMode === 'gallery',
+      );
+      const sourceViewportOffset = measuredAnchor?.viewportOffset
+        ?? rootTop + fallbackRow * virtualWindow.rowStride - scrollTop;
+      const sourceEntryHeight = measuredAnchor?.entryHeight
+        ?? Math.max(0, virtualWindow.rowStride - virtualWindow.gap);
+      const seedViewportOffset = translateAnchorViewportOffset(
+        sourceViewportOffset,
+        sourceEntryHeight,
+        Math.max(0, nextGeometry.rowStride - nextGeometry.gap),
+        window.innerHeight,
+        window.devicePixelRatio,
+      );
+      const nextLocalScrollTop = Math.max(
+        0,
+        Math.floor(anchorIndex / nextGeometry.columns) * nextGeometry.rowStride - seedViewportOffset,
+      );
+
+      pendingViewAnchorRef.current = {
+        identity: ++anchorIdentityRef.current,
+        viewMode: nextViewMode,
+        entryId: displayCards[anchorIndex].entry_id,
+        index: anchorIndex,
+        displayCards,
+        sourceViewportOffset,
+        sourceEntryHeight,
+      };
+      // Render the destination range and full spacer height in the same commit
+      // as the new view so the layout-effect scroll cannot be clamped.
+      setVirtualWindow(buildVirtualWindow(
+        displayCards.length,
+        nextGeometry,
+        nextLocalScrollTop,
+        window.innerHeight,
+      ));
+    } else {
+      pendingViewAnchorRef.current = null;
+    }
+
+    setViewMode(nextViewMode);
+  };
+
+  const virtualCards = displayCards.slice(
+    Math.min(virtualWindow.startIndex, displayCards.length),
+    Math.min(virtualWindow.endIndex, displayCards.length),
+  );
+  const virtualTopSize = virtualWindow.startRow * virtualWindow.rowStride;
+  const virtualBottomSize = Math.max(
+    0,
+    (virtualWindow.rowCount - virtualWindow.endRow) * virtualWindow.rowStride,
+  );
 
   const totalValue = useMemo(
     () => displayCards.reduce((sum, item) => sum + (item.price_trend || 0) * (item.quantity || 1), 0),
     [displayCards]
   );
+  const catalogResultsIncomplete = scryfallPredicate.mode === 'catalog'
+    && (liveLoading || liveIncomplete);
+  const ordinaryResultsIncomplete = scryfallPredicate.mode !== 'catalog'
+    && hydrationStatus !== 'complete';
+  const resultsIncomplete = catalogResultsIncomplete || ordinaryResultsIncomplete;
+  const retryCollectionHydration = () => {
+    collectionSessionCache.invalidate(collectionSessionQuery);
+    collectionHydrationRef.current = { key: collectionHydrationKey, status: 'error' };
+    fetchCollection(collectionSessionQuery);
+  };
 
   return (
     <div>
@@ -549,7 +1153,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <div style={{ display: 'flex', background: 'rgba(0,0,0,0.2)', padding: '2px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
             <button
               className={`btn btn-icon-only ${viewMode === 'gallery' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setViewMode('gallery')}
+              onClick={() => switchViewMode('gallery')}
               style={{ borderRadius: 'var(--radius-sm)', padding: '0.4rem 0.5rem', width: '32px', height: '32px' }}
               title={t('collection.galleryView')}
             >
@@ -557,7 +1161,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
             </button>
             <button
               className={`btn btn-icon-only ${viewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setViewMode('list')}
+              onClick={() => switchViewMode('list')}
               style={{ borderRadius: 'var(--radius-sm)', padding: '0.4rem 0.5rem', width: '32px', height: '32px' }}
               title={t('collection.listView')}
             >
@@ -774,9 +1378,21 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           <span>
             <strong style={{ color: 'var(--text-strong)' }}>{displayCards.length}</strong> {t('collection.cardUnit', { count: displayCards.length })}{loadingMore ? ` · ${t('common.loading')}` : ''}
             {scryfallPredicate.mode === 'catalog' && !liveError ? ` · ${t('collection.scryfallLiveNote')}` : ''}
+            {scryfallPredicate.mode === 'catalog' && liveIncomplete ? ` · ${t('collection.scryfallLiveIncomplete')}` : ''}
             {liveError ? ` · ${liveError}` : ''}
           </span>
-          <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
+          {!resultsIncomplete && (
+            <span>{t('collection.totalValue')} <strong style={{ color: 'var(--accent-yellow)' }}>${formatPrice(totalValue)}</strong></span>
+          )}
+        </div>
+      )}
+
+      {scryfallPredicate.mode !== 'catalog' && hydrationError && (
+        <div className="glass-panel" role="alert" style={{ marginBottom: '0.85rem', padding: '0.75rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+          <span>{t('collection.errLoad')}</span>
+          <button className="btn btn-secondary" onClick={retryCollectionHydration} style={{ fontSize: '0.72rem', padding: '0.3rem 0.7rem' }}>
+            Retry
+          </button>
         </div>
       )}
 
@@ -785,7 +1401,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
           full-screen spinner. */}
       {scryfallPredicate.mode === 'catalog' && liveLoading && displayCards.length > 0 && !liveError && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-          <span>{displayCards.length} {t('collection.cardUnit', { count: displayCards.length })} · {t('collection.scryfallLiveNote')} · {t('collection.scryfallLiveUpdating')}</span>
+          <span>{displayCards.length} {t('collection.cardUnit', { count: displayCards.length })} · {t('collection.scryfallLiveNote')}{liveIncomplete ? ` · ${t('collection.scryfallLiveIncomplete')}` : ''} · {t('collection.scryfallLiveUpdating')}</span>
         </div>
       )}
 
@@ -793,7 +1409,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       {selectMode && (
         <div className="glass-panel" style={{ marginBottom: '1rem', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', position: 'sticky', top: '0.5rem', zIndex: 30 }}>
           <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.85rem' }}>{t('bulk.selected', { count: selectedIds.size })}</span>
-          <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={() => setSelectedIds(new Set(filteredCollection.map(i => i.entry_id)))}>{t('bulk.selectAll', { count: filteredCollection.length })}</button>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }}
+            disabled={resultsIncomplete}
+            onClick={() => setSelectedIds(new Set(filteredCollection.map(i => i.entry_id)))}
+          >
+            {t('bulk.selectAll', { count: filteredCollection.length })}
+          </button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} onClick={clearSelection}>{t('bulk.clear')}</button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => handleExportSelectionList('plain')} title={t('settings.cardlistHint')}>{t('collection.exportListPlain')}</button>
           <button className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }} disabled={!selectedIds.size} onClick={() => handleExportSelectionList('detailed')} title={t('settings.cardlistHint')}>{t('collection.exportListDetailed')}</button>
@@ -835,15 +1458,33 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
       ) : displayCards.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '3rem 1.5rem' }}>
           {scryfallPredicate.mode === 'catalog' ? (
-            <p>{liveError || t('collection.scryfallLiveEmpty')}</p>
+            <p>
+              {liveError || t('collection.scryfallLiveEmpty')}
+              {liveIncomplete && <small style={{ display: 'block', marginTop: '0.5rem', opacity: 0.7 }}>{t('collection.scryfallLiveIncomplete')}</small>}
+            </p>
           ) : (
             <p>{t('collection.noMatches')} {t(activeFilterCount > 0 ? 'collection.noMatchesFiltered' : 'collection.noMatchesEmpty')}</p>
           )}
         </div>
       ) : viewMode === 'gallery' ? (
         /* Visual Cards Grid Gallery View */
-        <div className="card-grid">
-          {visibleCards.map((item) => {
+        <div
+          ref={virtualRootRef}
+          className="collection-virtual-spacer"
+          data-collection-virtual-spacer="gallery"
+          style={{ height: `${virtualWindow.totalSize}px` }}
+        >
+          <div
+            className="card-grid collection-virtual-grid"
+            style={{
+              position: 'absolute',
+              inset: '0 0 auto',
+              transform: `translateY(${virtualTopSize}px)`,
+              gridTemplateColumns: `repeat(${virtualWindow.columns}, minmax(0, 1fr))`,
+              gap: `${virtualWindow.gap}px`,
+            }}
+          >
+          {virtualCards.map((item) => {
             const rarityStyle = getCardRarityBorder(item.rarity);
             const selected = selectedIds.has(item.entry_id);
 
@@ -851,6 +1492,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               <div
                 key={item.entry_id}
                 className="tcg-card tilt-card-wrapper"
+                data-collection-entry-id={item.entry_id}
                 style={{ cursor: 'pointer', touchAction: 'pan-y' }}
                 onClick={(e) => activateCard(item, e)}
                 {...pressHandlers(item.entry_id)}
@@ -935,24 +1577,39 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
               </div>
             );
           })}
-          {showSentinel && <div ref={sentinelRef} style={{ height: 1, clear: 'both' }} aria-hidden="true" />}
+          </div>
         </div>
       ) : (
         /* Traditional List Table View */
-        <div className="glass-panel" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="glass-panel collection-virtual-list-panel" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ overflowY: 'auto' }}>
-            <table className="collection-table" style={{ minWidth: 0 }}>
+            <table
+              className="collection-table"
+              style={{ minWidth: 0 }}
+              aria-rowcount={virtualTableRowCount(displayCards.length)}
+            >
               <thead>
-                <tr>
+                <tr aria-rowindex={1}>
                   <th>{t('collection.colCard')}</th>
                   <th style={{ width: '70px', textAlign: 'right' }}>{t('collection.colQtyValue')}</th>
                 </tr>
               </thead>
-              <tbody>
-                {visibleCards.map((item) => {
+              <tbody ref={virtualRootRef} data-collection-virtual-spacer="list">
+                {virtualTopSize > 0 && (
+                  <tr className="collection-virtual-list-spacer" aria-hidden="true">
+                    <td colSpan={2} style={{ height: `${virtualTopSize}px` }} />
+                  </tr>
+                )}
+                {virtualCards.map((item, virtualIndex) => {
                   const selected = selectedIds.has(item.entry_id);
                   return (
-                  <tr key={item.entry_id} style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}>
+                  <tr
+                    className="collection-virtual-list-row"
+                    data-collection-entry-id={item.entry_id}
+                    aria-rowindex={virtualTableRowIndex(virtualWindow.startIndex, virtualIndex)}
+                    key={item.entry_id}
+                    style={selected ? { background: 'rgba(255,71,71,0.12)' } : undefined}
+                  >
                     <td>
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         {selectMode && (
@@ -1006,8 +1663,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, selectedCardFilter,
                   </tr>
                   );
                 })}
-                {showSentinel && (
-                  <tr><td colSpan={2} style={{ padding: 0 }}><div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" /></td></tr>
+                {virtualBottomSize > 0 && (
+                  <tr className="collection-virtual-list-spacer" aria-hidden="true">
+                    <td colSpan={2} style={{ height: `${virtualBottomSize}px` }} />
+                  </tr>
                 )}
               </tbody>
             </table>

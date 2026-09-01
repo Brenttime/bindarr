@@ -7,7 +7,7 @@
 const db = require('../db');
 
 const COLUMNS = [
-  'id', 'name', 'supertype', 'subtypes', 'types', 'rarity', 'set_id', 'set_name',
+  'id', 'oracle_id', 'scryfall_search_eligible', 'name', 'supertype', 'subtypes', 'types', 'rarity', 'set_id', 'set_name',
   'number', 'image_url', 'price_trend', 'price_normal', 'price_holofoil', 'price_etched',
   'cmc', 'color_identity', 'language', 'printed_name',
   'tcgplayer_url', 'cardmarket_url', 'tcgplayer_product_id',
@@ -26,7 +26,11 @@ const num = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? null : Nu
 // would cost the English name learned below the same way.
 const SET_CLAUSE = COLUMNS
   .filter(c => c !== 'id' && c !== 'name')
-  .map(c => `${c} = excluded.${c}`)
+  // Partial set/catalog rows may not carry identity or layout eligibility.
+  // Never erase durable values learned from a complete Scryfall card response.
+  .map(c => (c === 'oracle_id' || c === 'scryfall_search_eligible')
+    ? `${c} = COALESCE(excluded.${c}, card_cache.${c})`
+    : `${c} = excluded.${c}`)
   .join(', ');
 
 // `name` is the one column an incoming row can be WORSE at. A non-English card
@@ -55,7 +59,9 @@ async function cacheNormalizedCards(cards, opts = {}) {
     const params = [];
     for (const c of chunk) {
       params.push(
-        c.id, c.name || '', c.supertype || '',
+        c.id, c.oracle_id || null,
+        c.scryfall_search_eligible == null ? null : Number(c.scryfall_search_eligible),
+        c.name || '', c.supertype || '',
         JSON.stringify(c.subtypes || []), JSON.stringify(c.types || []),
         c.rarity || 'Common', c.set_id || '', c.set_name || '', c.number || '',
         c.image_url || '', num(c.price_trend), num(c.price_normal),

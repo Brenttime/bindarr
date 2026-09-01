@@ -1,26 +1,53 @@
-import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, AreaChart, Area } from 'recharts';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { TrendingUp, Coins, Library, Trophy, Plus, ArrowUpRight } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
 import { getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
 import { useT } from '../utils/i18n';
-import CardInspectorModal from './CardInspectorModal';
 import CardImage from './CardImage';
 
-const COLORS = [
-  '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
-  '#ec4899', '#14b8a6', '#f43f5e', '#a855f7', '#6366f1'
-];
+const DashboardCharts = lazy(() => import('./DashboardCharts'));
+const CardInspectorModal = lazy(() => import('./CardInspectorModal'));
 
-const TYPE_COLORS = {
-  'White': '#fef08a',
-  'Blue': '#3b82f6',
-  'Black': '#334155',
-  'Red': '#ef4444',
-  'Green': '#10b981',
-  'Land': '#d97706'
-};
+function DashboardChunkFallback({ overlay = false, style }) {
+  const { t } = useT();
+  const status = (
+    <div
+      className="glass-panel"
+      role="status"
+      aria-live="polite"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '0.75rem',
+        color: 'var(--text-secondary)',
+        ...style,
+      }}
+    >
+      <div className="spinner" aria-hidden="true" />
+      <span>{t('common.loading')}</span>
+    </div>
+  );
+
+  if (!overlay) return status;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0, 0, 0, 0.65)',
+        padding: '1rem',
+      }}
+    >
+      {status}
+    </div>
+  );
+}
 
 function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
   const { t, locale } = useT();
@@ -116,17 +143,6 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
   }
 
   const { summary, types, rarities, sets, topValuable, recentAdditions = [], setProgress } = stats;
-
-  // Match type name to its color case-insensitively; fall back to a distinct
-  // palette color by index so slices are never all the same gray.
-  const typeColorLookup = Object.fromEntries(
-    Object.entries(TYPE_COLORS).map(([k, v]) => [k.toLowerCase(), v])
-  );
-  const typeChartData = types.map((t, i) => {
-    const fill = typeColorLookup[String(t.name).toLowerCase()] || COLORS[i % COLORS.length];
-    return { name: t.name, value: t.value, color: fill, fill };
-  });
-  const rarityChartData = rarities.map((r, i) => ({ ...r, fill: COLORS[i % COLORS.length] }));
 
   return (
     <div>
@@ -234,154 +250,29 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
         </div>
       </div>
 
-      {/* Net Worth History Timeline Chart */}
-      <div className="glass-panel" style={{ marginBottom: '1.5rem', padding: '1.5rem 1.75rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 className="chart-title" style={{ margin: 0 }}>{t('dash.timelineTitle')}</h3>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            {t('dash.timelineRange', { range: timePeriod.toUpperCase() })}
-          </span>
-        </div>
-        <div className="chart-container" style={{ height: '240px', position: 'relative' }}>
-          {loadingHistory ? (
-            <div className="spinner" style={{ position: 'absolute', top: '45%', left: '45%' }}></div>
-          ) : historyData.length < 2 ? (
-            <div className="chart-empty">{t('dash.notEnoughHistory')}</div>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={historyData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--success)" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="var(--success)" stopOpacity={0.0}/>
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="date" stroke="var(--text-secondary)" style={{ fontSize: '0.7rem' }} />
-                <YAxis stroke="var(--text-secondary)" style={{ fontSize: '0.7rem' }} tickFormatter={(v) => `$${v}`} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }}
-                  labelStyle={{ color: 'var(--text-primary)' }}
-                  formatter={(v) => [`$${v}`, t('dash.portfolioValue')]}
-                />
-                <Area type="monotone" dataKey="value" stroke="var(--success)" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
+      <Suspense
+        fallback={(
+          <DashboardChunkFallback
+            style={{ marginBottom: '1.5rem', minHeight: '288px', padding: '1.5rem 1.75rem' }}
+          />
+        )}
+      >
+        <DashboardCharts
+          section="timeline"
+          historyData={historyData}
+          loadingHistory={loadingHistory}
+          timePeriod={timePeriod}
+        />
+      </Suspense>
 
       {/* Main Charts & Analytics Details */}
       <div className="dashboard-details">
         {/* Left Column: Charts */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          
-          {/* Card Value by Set Chart */}
-          <div className="glass-panel">
-            <h3 className="chart-title">{t('dash.valueBySet')}</h3>
-            <div className="chart-container">
-              {sets.length === 0 ? (
-                <div className="chart-empty">{t('dash.noSetData')}</div>
-              ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={sets} layout="vertical" margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
-                  <XAxis type="number" stroke="var(--text-secondary)" tickFormatter={(v) => `$${v}`} />
-                  <YAxis dataKey="name" type="category" width={120} stroke="var(--text-secondary)" tickLine={false} axisLine={false} style={{ fontSize: '0.8rem' }} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }}
-                    labelStyle={{ color: 'var(--text-primary)' }}
-                    formatter={(v) => [`$${v}`, t('dash.value')]}
-                  />
-                  <Bar dataKey="value" fill="var(--accent-red)" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              )}
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
-            {/* Type Distribution Donut Chart */}
-            <div className="glass-panel">
-              <h3 className="chart-title">{t('dash.colorDistribution')}</h3>
-              <div className="chart-container" style={{ height: '220px' }}>
-                {typeChartData.length === 0 ? (
-                  <div className="chart-empty">{t('dash.noTypeData')}</div>
-                ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={typeChartData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={80}
-                      paddingAngle={3}
-                      dataKey="value"
-                    >
-                      {typeChartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }}
-                      itemStyle={{ color: 'var(--text-strong)' }}
-                      labelStyle={{ color: 'var(--text-strong)' }}
-                      formatter={(v) => [v, t('dash.cards')]}
-                    />
-                    <Legend 
-                      verticalAlign="bottom" 
-                      height={36} 
-                      iconSize={10} 
-                      style={{ fontSize: '0.75rem' }} 
-                      formatter={(value) => <span style={{ color: 'var(--text-secondary)' }}>{value}</span>}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-                )}
-              </div>
-            </div>
-
-            {/* Rarity Distribution Chart */}
-            <div className="glass-panel">
-              <h3 className="chart-title">{t('dash.rarityDistribution')}</h3>
-              <div className="chart-container" style={{ height: '220px' }}>
-                {rarityChartData.length === 0 ? (
-                  <div className="chart-empty">{t('dash.noRarityData')}</div>
-                ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={rarityChartData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={45}
-                      outerRadius={78}
-                      paddingAngle={3}
-                      dataKey="value"
-                    >
-                      {rarityChartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-glass)' }}
-                      itemStyle={{ color: 'var(--text-strong)' }}
-                      labelStyle={{ color: 'var(--text-strong)' }}
-                      formatter={(v) => [v, t('dash.cards')]}
-                    />
-                    <Legend 
-                      verticalAlign="bottom" 
-                      height={36} 
-                      iconSize={10} 
-                      style={{ fontSize: '0.75rem' }} 
-                      formatter={(value) => <span style={{ color: 'var(--text-secondary)', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        <Suspense
+          fallback={<DashboardChunkFallback style={{ minHeight: '300px', padding: '1.5rem' }} />}
+        >
+          <DashboardCharts section="analytics" sets={sets} types={types} rarities={rarities} />
+        </Suspense>
 
         {/* Right Column: Mini Tables & Lists */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -498,12 +389,16 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
       </div>
 
       {/* Card Inspector Modal Overlay */}
-      <CardInspectorModal
-        card={inspectorCard}
-        onClose={() => setInspectorCard(null)}
-        onUpdate={onUpdate}
-        showToast={showToast}
-      />
+      {inspectorCard && (
+        <Suspense fallback={<DashboardChunkFallback overlay style={{ minWidth: '12rem', padding: '1.5rem' }} />}>
+          <CardInspectorModal
+            card={inspectorCard}
+            onClose={() => setInspectorCard(null)}
+            onUpdate={onUpdate}
+            showToast={showToast}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

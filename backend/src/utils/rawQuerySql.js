@@ -159,6 +159,26 @@ function cmcMatch(p, rawValue) {
   return `cc.cmc IS NOT NULL AND CAST(cc.cmc AS REAL) = ${ph}`;
 }
 
+function oracleTagMatch(p, rawValue) {
+  const alias = push(p, String(rawValue).trim().toLowerCase());
+  // Slugs and aliases resolve to the tag's stable UUID. The precomputed closure
+  // includes the tag itself plus every descendant, matching Scryfall's parent
+  // tag semantics while assignments remain direct-only in storage.
+  return `EXISTS (
+    SELECT 1
+    FROM oracle_tag_generations otg
+    CROSS JOIN oracle_tag_aliases ota
+    CROSS JOIN oracle_tag_closure otc
+    CROSS JOIN oracle_tag_assignments otm
+    WHERE otg.active = 1
+      AND ota.generation_id = otg.id AND ota.alias = ${alias}
+      AND otc.generation_id = otg.id AND otc.ancestor_tag_id = ota.tag_id
+      AND otm.generation_id = otg.id
+      AND otm.tag_id = otc.descendant_tag_id
+      AND otm.oracle_id = cc.oracle_id
+  )`;
+}
+
 function leafToSql(node, p) {
   if (node.kind === 'name') return nameMatch(p, node.value);
   switch (node.op) {
@@ -175,6 +195,7 @@ function leafToSql(node, p) {
     case 'language': return langMatch(p, node.value);
     case 'm':
     case 'cmc': return cmcMatch(p, node.value);
+    case 'otag': return oracleTagMatch(p, node.value);
     default:
       // Unreachable for a local-mode query (analyze() already rejected unknown
       // operators as catalog-mode). Fail loudly if this is ever called with
@@ -231,4 +252,58 @@ function compileRawQuery({ ast, language, limit = 60, offset = 0 }) {
   };
 }
 
-module.exports = { compileRawQuery, compileWhere };
+// Collection-catalog SELECT + COUNT. Unlike the internet cache query above,
+// this returns physical owned rows and therefore orders by the collection's
+// stable newest-first key. EXISTS-based tag matching cannot duplicate a row
+// even when an oracle card is tagged by several descendants.
+function compileCollectionQuery({ ast, userId, limit = 60, offset = 0 }) {
+  const { whereSql, params } = compileWhere(ast);
+  const base = `FROM collection c
+    JOIN card_cache cc ON cc.id = c.card_id
+    WHERE c.user_id = ? AND c.quantity > 0
+      AND cc.scryfall_search_eligible = 1`;
+  const projection = `
+    c.id AS entry_id,
+    c.card_id,
+    c.quantity,
+    c.condition,
+    c.printing,
+    c.language,
+    c.purchase_price,
+    c.added_at,
+    c.is_trade,
+    c.favorite,
+    c.notes,
+    cc.oracle_id,
+    cc.name,
+    cc.printed_name,
+    cc.supertype,
+    cc.subtypes,
+    cc.types,
+    cc.cmc,
+    cc.color_identity,
+    cc.rarity,
+    cc.set_id,
+    cc.set_name,
+    cc.number,
+    cc.image_url,
+    cc.price_trend,
+    cc.price_normal,
+    cc.price_holofoil,
+    cc.price_etched,
+    cc.price_currency,
+    cc.price_source,
+    cc.tcgplayer_url,
+    cc.cardmarket_url,
+    cc.tcgplayer_product_id`;
+  const windowSql = limit == null ? '' : ' LIMIT ? OFFSET ?';
+  return {
+    sql: `SELECT ${projection} ${base} ${whereSql}
+      ORDER BY c.added_at DESC, c.id DESC${windowSql}`,
+    params: limit == null ? [userId, ...params] : [userId, ...params, limit, offset],
+    countSql: `SELECT COUNT(*) AS n ${base} ${whereSql}`,
+    countParams: [userId, ...params],
+  };
+}
+
+module.exports = { compileRawQuery, compileCollectionQuery, compileWhere };

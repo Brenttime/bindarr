@@ -6,6 +6,7 @@
 const assert = require('assert');
 const os = require('os');
 const path = require('path');
+const sqlite3 = require('sqlite3').verbose();
 
 process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-searchsql-${process.pid}.db`);
 const { collectionQuery, localCacheQuery, numberClause, nameClause } = require('../src/utils/cardSearchSql');
@@ -70,12 +71,146 @@ function testCollectionScopeIgnoresLanguage() {
     userId: 7, name: 'Celebi', number: '004', setList: [], limit: 60, offset: 0,
   });
   assert.ok(!/language/i.test(sql), 'collection scope must NOT filter by language');
-  assert.ok(squash(sql).includes('JOIN card_cache cc ON c.card_id = cc.id'));
-  assert.ok(squash(sql).includes('GROUP BY cc.id LIMIT ? OFFSET ?'), 'grouped, so one row per card');
+  assert.strictEqual((sql.match(/\bcollection\b/g) || []).length, 1,
+    'collection search must make one bounded pass over the tenant collection');
+  assert.ok(!squash(sql).includes('logical_owned.card_key = LOWER('),
+    'logical ownership must not be rejoined to targets by expression');
 
   assert.strictEqual(params[0], 7, 'userId first');
   assert.strictEqual(params[params.length - 2], 60, 'limit');
   assert.strictEqual(params[params.length - 1], 0, 'offset');
+}
+
+function legacyCollectionQuery({ userId, name, number, setList = [], limit, offset }) {
+  let sql = `
+    WITH logical_owned AS (
+      SELECT LOWER(TRIM(COALESCE(owned_cc.name, ''))) AS card_key,
+             SUM(owned.quantity) AS owned_qty
+      FROM collection owned
+      JOIN card_cache owned_cc ON owned.card_id = owned_cc.id
+      WHERE owned.user_id = ? AND owned.quantity > 0
+      GROUP BY LOWER(TRIM(COALESCE(owned_cc.name, '')))
+    )
+    SELECT cc.*, logical_owned.owned_qty
+    FROM collection c
+    JOIN card_cache cc ON c.card_id = cc.id
+    JOIN logical_owned
+      ON logical_owned.card_key = LOWER(TRIM(COALESCE(cc.name, '')))
+    WHERE c.user_id = ? AND c.quantity > 0`;
+  const params = [userId, userId];
+  for (const part of [
+    nameClause('cc.', name),
+    numberClause('cc.number', number),
+    require('../src/utils/setQuery').setSqlFilter(setList, 'cc'),
+  ]) {
+    if (!part) continue;
+    sql += ` AND ${part.clause}`;
+    params.push(...part.params);
+  }
+  sql += ' GROUP BY cc.id LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+  return { sql, params };
+}
+
+function openFixture() {
+  const db = new sqlite3.Database(':memory:');
+  const run = (sql, params = []) => new Promise((resolve, reject) => {
+    db.run(sql, params, function (error) {
+      if (error) reject(error);
+      else resolve(this);
+    });
+  });
+  const all = (sql, params = []) => new Promise((resolve, reject) => {
+    db.all(sql, params, (error, rows) => error ? reject(error) : resolve(rows));
+  });
+  const close = () => new Promise((resolve, reject) => db.close(error => error ? reject(error) : resolve()));
+  return { run, all, close };
+}
+
+async function testCollectionResultAndCountParity() {
+  const db = openFixture();
+  await db.run(`CREATE TABLE card_cache (
+    id TEXT PRIMARY KEY, name TEXT, printed_name TEXT, set_id TEXT,
+    set_name TEXT, number TEXT, language TEXT
+  )`);
+  await db.run(`CREATE TABLE collection (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, card_id TEXT, quantity INTEGER
+  )`);
+
+  const cards = [
+    ['bolt-z', 'Lightning Bolt', null, '2xm', 'Double Masters', '117', 'English'],
+    ['bolt-a', 'Lightning Bolt', '稲妻', 'lea', 'Limited Edition Alpha', '161', 'Japanese'],
+    ['custom-z', 'Custom Hero', null, 'custom', 'Custom Cards', 'C-1', 'English'],
+    ['custom-a', 'Custom Hero', null, 'custom', 'Custom Cards', 'C-2', 'English'],
+    ['island-a', 'Island', null, 'lea', 'Limited Edition Alpha', '001', 'English'],
+  ];
+  for (const card of cards) {
+    await db.run(`INSERT INTO card_cache
+      (id, name, printed_name, set_id, set_name, number, language)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`, card);
+  }
+  for (const row of [
+    [1, 'bolt-a', 2], [1, 'bolt-a', 1], [1, 'bolt-z', 4],
+    [1, 'custom-z', 2], [1, 'custom-z', 3], [1, 'custom-a', 1],
+    [1, 'island-a', 1], [1, 'island-a', 0],
+    [2, 'bolt-a', 100],
+  ]) {
+    await db.run('INSERT INTO collection (user_id, card_id, quantity) VALUES (?, ?, ?)', row);
+  }
+
+  const cases = [
+    { name: '', number: '', setList: [] },
+    { name: 'Lightning Bolt', number: '', setList: [] },
+    { name: '稲妻', number: '', setList: [] },
+    { name: '', number: '161', setList: ['lea'] },
+    { name: 'Custom Hero', number: '', setList: [] },
+  ];
+  for (const filters of cases) {
+    const args = { userId: 1, ...filters, limit: 100, offset: 0 };
+    const before = legacyCollectionQuery(args);
+    const after = collectionQuery(args);
+    const expected = await db.all(before.sql, before.params);
+    const actual = await db.all(after.sql, after.params);
+    assert.deepStrictEqual(actual, expected, `result/count parity for ${JSON.stringify(filters)}`);
+    assert.strictEqual(actual.length, expected.length, `count parity for ${JSON.stringify(filters)}`);
+  }
+
+  const allOwnedQuery = collectionQuery({
+    userId: 1, name: '', number: '', setList: [], limit: 100, offset: 0,
+  });
+  const allOwned = await db.all(allOwnedQuery.sql, allOwnedQuery.params);
+  assert.deepStrictEqual(allOwned.map(row => row.id),
+    ['bolt-a', 'bolt-z', 'custom-a', 'custom-z', 'island-a'],
+    'ordering is stable by printing id, including the final tie-breaker');
+  assert.strictEqual(allOwned.filter(row => row.name === 'Lightning Bolt').length, 2,
+    'logical cards retain every owned printing rather than picking one preferred printing');
+  assert.strictEqual(allOwned.find(row => row.name === 'Lightning Bolt').id, 'bolt-a',
+    'stable printing order preserves the deck picker preferred-printing choice');
+  assert.ok(allOwned.filter(row => row.name === 'Lightning Bolt').every(row => row.owned_qty === 7),
+    'each printing reports the logical total across duplicate entries and printings');
+
+  const narrowedArgs = {
+    userId: 1, name: '', number: '161', setList: ['lea'], limit: 100, offset: 0,
+  };
+  const narrowedQuery = collectionQuery(narrowedArgs);
+  const narrowed = await db.all(narrowedQuery.sql, narrowedQuery.params);
+  assert.deepStrictEqual(narrowed.map(row => [row.id, row.owned_qty]), [['bolt-a', 7]],
+    'set/number narrow the returned printing without narrowing logical ownership');
+
+  const custom = allOwned.filter(row => row.name === 'Custom Hero');
+  assert.deepStrictEqual(custom.map(row => [row.id, row.owned_qty]),
+    [['custom-a', 6], ['custom-z', 6]],
+    'custom cards and duplicate collection rows preserve exact-printing results and logical totals');
+
+  const paged = [];
+  for (let offset = 0; offset < allOwned.length; offset += 2) {
+    const query = collectionQuery({
+      userId: 1, name: '', number: '', setList: [], limit: 2, offset,
+    });
+    paged.push(...await db.all(query.sql, query.params));
+  }
+  assert.deepStrictEqual(paged, allOwned, 'stable ordering keeps pagination complete and duplicate-free');
+  await db.close();
 }
 
 function testLocalCacheKeepsLanguage() {
@@ -101,14 +236,14 @@ function testParamOrderMatchesClauseOrder() {
   assert.deepStrictEqual(params, ['English', '%Bolt%', '%Bolt%', '007', '7', '007', 5, 10]);
 }
 
-function main() {
+async function main() {
   testNumberMatching();
   testNameMatching();
   testCollectionScopeIgnoresLanguage();
   testLocalCacheKeepsLanguage();
   testParamOrderMatchesClauseOrder();
+  await testCollectionResultAndCountParity();
   console.log('cardsearchsql.test.js: all assertions passed');
 }
 
-try { main(); process.exit(0); }
-catch (err) { console.error(err); process.exit(1); }
+main().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
