@@ -25,7 +25,9 @@ router.get('/stats', async (req, res) => {
                CASE WHEN c.quantity IS NULL OR c.quantity = 0 THEN 1 ELSE c.quantity END AS qty,
                COALESCE(c.purchase_price, 0) AS purchase_price,
                c.condition, c.added_at, c.printing,
-               cc.types, cc.subtypes, cc.supertype, cc.rarity, cc.set_name, cc.set_id,
+               COALESCE(NULLIF(cc.types, ''), '[]') AS types,
+               COALESCE(NULLIF(cc.subtypes, ''), '[]') AS subtypes,
+               cc.supertype, cc.rarity, cc.set_name, cc.set_id,
                CASE
                  WHEN c.printing = 'Holofoil' AND cc.price_holofoil IS NOT NULL AND cc.price_holofoil > 0 THEN cc.price_holofoil
                  WHEN c.printing = 'Normal' AND cc.price_normal IS NOT NULL AND cc.price_normal > 0 THEN cc.price_normal
@@ -48,15 +50,21 @@ router.get('/stats', async (req, res) => {
         FROM card_stats
         GROUP BY COALESCE(NULLIF(rarity, ''), 'Unknown')
       ),
-      set_stats AS (
-        SELECT COALESCE(CAST(cs.set_id AS TEXT), 'null') AS id,
-               COALESCE(NULLIF(MAX(cs.set_name), ''), 'Other') AS name,
-               SUM(cs.qty) AS count, SUM(cs.current_value) AS value,
-               COUNT(*) AS owned_unique,
-               MAX(COALESCE(NULLIF(s.printed_total, 0), NULLIF(s.total, 0))) AS size
+      set_cards AS MATERIALIZED (
+        SELECT cs.*,
+               ROW_NUMBER() OVER (PARTITION BY set_id ORDER BY first_order) AS set_order
         FROM card_stats cs
-        LEFT JOIN sets s ON s.id = cs.set_id
-        GROUP BY cs.set_id
+      ),
+      set_stats AS (
+        SELECT COALESCE(CAST(sc.set_id AS TEXT), 'null') AS id,
+               COALESCE(NULLIF(MAX(CASE WHEN sc.set_order = 1 THEN sc.set_name END), ''), 'Other') AS name,
+               SUM(sc.qty) AS count, SUM(sc.current_value) AS value,
+               COUNT(*) AS owned_unique,
+               MAX(COALESCE(NULLIF(s.printed_total, 0), NULLIF(s.total, 0))) AS size,
+               MIN(sc.first_order) AS first_order
+        FROM set_cards sc
+        LEFT JOIN sets s ON s.id = sc.set_id
+        GROUP BY sc.set_id
       ),
       typed_cards AS MATERIALIZED (
         SELECT cs.*,
@@ -117,7 +125,8 @@ router.get('/stats', async (req, res) => {
                 FROM (SELECT name, value FROM rarity_stats ORDER BY first_order)) AS rarities,
              (SELECT json_group_array(json_object('id', id, 'name', name, 'count', count,
                                                    'value', value, 'ownedUnique', owned_unique, 'size', size))
-                FROM set_stats) AS sets,
+                FROM (SELECT id, name, count, value, owned_unique, size
+                      FROM set_stats ORDER BY first_order)) AS sets,
              (SELECT json_group_array(json_object('name', name, 'value', value))
                 FROM (SELECT name, value FROM type_stats ORDER BY first_position)) AS types,
              (SELECT COALESCE(SUM(CASE WHEN qty7 <> 0 AND history7 IS NOT NULL AND current_history IS NOT NULL
@@ -190,8 +199,13 @@ router.get('/stats', async (req, res) => {
       percent: Math.min(Math.round((set.ownedUnique / set.size) * 100), 100)
     }));
 
-    // Sort set progress by completion percentage descending
-    setProgress.sort((a, b) => b.percent - a.percent);
+    // GROUP BY set_id produced SQLite's binary set-id order in the legacy
+    // progress query. Keep that as the stable tie-breaker after percentage.
+    setProgress.sort((a, b) => {
+      const byPercent = b.percent - a.percent;
+      if (byPercent) return byPercent;
+      return a.setId < b.setId ? -1 : (a.setId > b.setId ? 1 : 0);
+    });
 
     const mintRate = totalCards > 0 ? parseFloat(((nearMintCount / totalCards) * 100).toFixed(1)) : 0.0;
     const vintageRatio = totalCards > 0 ? parseFloat(((vintageCount / totalCards) * 100).toFixed(1)) : 0.0;

@@ -14,6 +14,13 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-08-31T12:00:00.000Z');
 const stamp = daysAgo => new Date(NOW - daysAgo * DAY).toISOString();
 
+function expectedLabels(count, stepDays, options) {
+  return Array.from({ length: count }, (_, index) => {
+    const daysAgo = (count - 1 - index) * stepDays;
+    return new Date(NOW - daysAgo * DAY).toLocaleDateString(undefined, options);
+  });
+}
+
 function handlerFor(routePath) {
   const layer = statsRouter.stack.find(candidate => candidate.route && candidate.route.path === routePath);
   assert.ok(layer, `missing ${routePath} route`);
@@ -69,10 +76,15 @@ async function main() {
       INSERT INTO users (username, password_hash, role, share_token)
       VALUES ('stats-large', 'x', 'member', 'stats-large-token')
     `)).lastID;
+    const edgeUser = (await db.run(`
+      INSERT INTO users (username, password_hash, role, share_token)
+      VALUES ('stats-edge', 'x', 'member', 'stats-edge-token')
+    `)).lastID;
 
     await db.run(`INSERT INTO sets (id, name, printed_total, total) VALUES
       ('lea', 'Alpha', 295, 295), ('mrd', 'Mirrodin', 306, 306),
-      ('xyz', 'Example', 1, 1), ('abc', 'Artifacts', 10, 10)`);
+      ('xyz', 'Example', 1, 1), ('abc', 'Artifacts', 10, 10),
+      ('zset', 'Zed', 10, 10), ('aset', 'Aye', 10, 10), ('same', 'Shared', 10, 10)`);
     await addCard('multi', 'Many Finishes', 'lea', 'Alpha', 'Rare', ['Creature'], ['Wizard'],
       { trend: 11, normal: 10, holo: 20 });
     await addCard('fallback', 'No History Land', 'mrd', 'Mirrodin', 'Common', [], ['Island'],
@@ -102,6 +114,31 @@ async function main() {
     await history('boundary', 7, 2);      // exact cutoff is inclusive
     await history('boundary', 0, 3);
 
+    // Exercise every timestamp form accepted by parseSqliteUtc. The legacy route
+    // orders stored strings and then compares their parsed instants, so these are
+    // deliberately equivalent replacements rather than invented extra points.
+    await db.run(`UPDATE price_history SET recorded_at = '2026-08-01 12:00:00'
+                  WHERE card_id = 'multi' AND price = 5`);
+    await db.run(`UPDATE price_history SET recorded_at = '2026-08-30T08:00:00-04:00'
+                  WHERE card_id = 'multi' AND price = 9`);
+    await db.run(`UPDATE price_history SET recorded_at = '2026-08-24 12:00:00'
+                  WHERE card_id = 'boundary' AND price = 2`);
+    await db.run(`UPDATE collection SET added_at = '2026-08-21 12:00:00'
+                  WHERE user_id = ? AND card_id = 'fallback'`, [smallUser]);
+
+    // Independent-review regressions: equal-value sets keep first-seen order,
+    // a set keeps the name from its first encountered card, and legacy empty
+    // JSON text is treated exactly like a missing [] field.
+    await addCard('order-z', 'Order Z', 'zset', 'Zed', 'Common', [], [], { trend: 1 });
+    await addCard('order-a', 'Order A', 'aset', 'Aye', 'Common', [], [], { trend: 1 });
+    await addCard('same-first', 'Same First', 'same', 'Aardvark', 'Common', [], [], { trend: 1 });
+    await addCard('same-later', 'Same Later', 'same', 'Zulu', 'Common', [], [], { trend: 1 });
+    await db.run(`UPDATE card_cache SET types = '', subtypes = '' WHERE id = 'order-z'`);
+    await own(edgeUser, 'order-z', 1, 'Normal', 1);
+    await own(edgeUser, 'order-a', 1, 'Normal', 2);
+    await own(edgeUser, 'same-first', 1, 'Normal', 3);
+    await own(edgeUser, 'same-later', 1, 'Normal', 4);
+
     const stats = await request('/stats', smallUser);
     assert.strictEqual(stats.status, 200);
     assert.deepStrictEqual(stats.body.summary, {
@@ -119,22 +156,73 @@ async function main() {
       change1y: { available: false, abs: null, pct: null },
       change5y: { available: false, abs: null, pct: null }
     });
-    assert.deepStrictEqual(Object.fromEntries(stats.body.types.map(x => [x.name, x.value])),
-      { Creature: 16, Land: 3, Colorless: 1, Artifact: 2 });
-    assert.deepStrictEqual(Object.fromEntries(stats.body.rarities.map(x => [x.name, x.value])),
-      { Rare: 14, Common: 3, Mythic: 1, Uncommon: 2 });
-    assert.deepStrictEqual(Object.fromEntries(stats.body.sets.map(x => [x.id, [x.count, x.value]])),
-      { lea: [14, 210], mrd: [3, 10], xyz: [1, 100], abc: [2, 6] });
+    assert.deepStrictEqual(stats.body.types, [
+      { name: 'Creature', value: 16 },
+      { name: 'Artifact', value: 2 },
+      { name: 'Land', value: 3 },
+      { name: 'Colorless', value: 1 }
+    ]);
+    assert.deepStrictEqual(stats.body.rarities, [
+      { name: 'Rare', value: 14 },
+      { name: 'Uncommon', value: 2 },
+      { name: 'Common', value: 3 },
+      { name: 'Mythic', value: 1 }
+    ]);
+    assert.deepStrictEqual(stats.body.sets, [
+      { id: 'lea', name: 'Alpha', count: 14, value: 210 },
+      { id: 'xyz', name: 'Example', count: 1, value: 100 },
+      { id: 'mrd', name: 'Mirrodin', count: 3, value: 10 },
+      { id: 'abc', name: 'Artifacts', count: 2, value: 6 }
+    ]);
     assert.strictEqual(stats.body.topValuable[0].card_id, 'late-history');
     assert.strictEqual(stats.body.topValuable[0].price_trend, 100);
     assert.strictEqual(stats.body.topValuable.filter(x => x.card_id === 'multi' && x.printing === 'Holofoil')[0].price_trend, 20);
-    assert.deepStrictEqual(Object.fromEntries(stats.body.setProgress.map(x => [x.setId, x.ownedUnique])),
-      { xyz: 1, abc: 1, lea: 1, mrd: 1 });
+    assert.deepStrictEqual(stats.body.setProgress, [
+      { setId: 'xyz', setName: 'Example', ownedUnique: 1, totalCards: 1, percent: 100 },
+      { setId: 'abc', setName: 'Artifacts', ownedUnique: 1, totalCards: 10, percent: 10 },
+      { setId: 'lea', setName: 'Alpha', ownedUnique: 1, totalCards: 295, percent: 0 },
+      { setId: 'mrd', setName: 'Mirrodin', ownedUnique: 1, totalCards: 306, percent: 0 }
+    ]);
+
+    const edgeStats = await request('/stats', edgeUser);
+    assert.strictEqual(edgeStats.status, 200, JSON.stringify(edgeStats.body));
+    assert.deepStrictEqual(edgeStats.body.types, [{ name: 'Colorless', value: 4 }]);
+    assert.deepStrictEqual(edgeStats.body.rarities, [{ name: 'Common', value: 4 }]);
+    assert.deepStrictEqual(edgeStats.body.sets, [
+      { id: 'same', name: 'Aardvark', count: 2, value: 2 },
+      { id: 'zset', name: 'Zed', count: 1, value: 1 },
+      { id: 'aset', name: 'Aye', count: 1, value: 1 }
+    ]);
+    assert.strictEqual(edgeStats.body.setProgress.find(set => set.setId === 'same').setName, 'Aardvark');
 
     const sevenDays = await request('/stats/history', smallUser, { period: '7d' });
     assert.strictEqual(sevenDays.status, 200);
-    assert.deepStrictEqual(sevenDays.body.map(point => point.value), [134, 134, 134, 162, 162, 190, 192],
-      'timeline must preserve earliest-point carryback, finish fallback, additions, and inclusive cutoffs');
+    assert.deepStrictEqual(sevenDays.body, expectedLabels(7, 1, { weekday: 'short' }).map((date, index) => ({
+      date,
+      value: [134, 134, 134, 162, 162, 190, 192][index]
+    })), '7d timeline must preserve labels, carryback, finish fallback, additions, and inclusive cutoffs');
+
+    const thirtyDays = await request('/stats/history', smallUser, { period: '30d' });
+    const thirtyDayValues = [
+      ...Array(9).fill(75), ...Array(10).fill(100), ...Array(3).fill(110),
+      ...Array(4).fill(134), ...Array(2).fill(162), 190, 192
+    ];
+    assert.deepStrictEqual(thirtyDays.body,
+      expectedLabels(30, 1, { month: 'short', day: 'numeric' }).map((date, index) => ({
+        date, value: thirtyDayValues[index]
+      })), '30d timeline must preserve every label and value');
+
+    const oneYear = await request('/stats/history', smallUser, { period: '1y' });
+    assert.deepStrictEqual(oneYear.body,
+      expectedLabels(12, 30, { month: 'short', year: '2-digit' }).map((date, index) => ({
+        date, value: [...Array(8).fill(0), 50, 58, 75, 192][index]
+      })), '1y timeline must preserve 30-day bucket labels and values');
+
+    const fiveYears = await request('/stats/history', smallUser, { period: '5y' });
+    assert.deepStrictEqual(fiveYears.body,
+      expectedLabels(20, 91, { month: 'short', year: 'numeric' }).map((date, index) => ({
+        date, value: [...Array(18).fill(0), 50, 192][index]
+      })), '5y timeline must preserve 91-day bucket labels and values');
 
     // More than SQLite's common 32,766 variable ceiling: neither dashboard route
     // may turn owned IDs into one generated placeholder list.
