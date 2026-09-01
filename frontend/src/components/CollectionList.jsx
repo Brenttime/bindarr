@@ -1,4 +1,4 @@
-import { startTransition, useState, useEffect, useMemo, useRef } from 'react';
+import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Search, Trash2, Edit2, LayoutGrid, List, SlidersHorizontal, X, MousePointerClick, Braces } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
@@ -57,6 +57,37 @@ function computeVirtualRange(itemCount, columns, rowStride, scrollTop, viewportH
     endRow,
     rowCount,
   };
+}
+
+function computeVirtualGeometry(itemCount, width, viewportWidth, gallery) {
+  const gap = gallery ? (viewportWidth >= 769 ? 20 : 12) : 0;
+  const minCardWidth = viewportWidth >= 769 ? 180 : 130;
+  const columns = gallery
+    ? Math.max(1, Math.floor((width + gap) / (minCardWidth + gap)))
+    : 1;
+  const cardWidth = gallery ? (width - gap * (columns - 1)) / columns : width;
+  const rowHeight = gallery ? (cardWidth / 0.718) + GALLERY_CARD_INFO_HEIGHT : LIST_ROW_HEIGHT;
+  const rowStride = rowHeight + gap;
+  const rowCount = Math.ceil(itemCount / columns);
+
+  return {
+    columns,
+    rowStride,
+    gap,
+    rowCount,
+    totalSize: Math.max(0, rowCount * rowStride - gap),
+  };
+}
+
+function buildVirtualWindow(itemCount, geometry, scrollTop, viewportHeight) {
+  const range = computeVirtualRange(
+    itemCount,
+    geometry.columns,
+    geometry.rowStride,
+    scrollTop,
+    viewportHeight,
+  );
+  return { ...range, ...geometry };
 }
 
 // Maps each Sort By option to sortCardsByOrder criteria so ordering remains
@@ -756,6 +787,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
   // the responsive auto-fill column calculation in step with container width.
   const virtualRootRef = useRef(null);
   const virtualFrameRef = useRef(null);
+  const pendingViewAnchorRef = useRef(null);
   const [virtualWindow, setVirtualWindow] = useState({
     startIndex: 0,
     endIndex: INITIAL_RENDER_COUNT,
@@ -776,25 +808,15 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       virtualFrameRef.current = null;
       const width = root.clientWidth;
       const gallery = viewMode === 'gallery';
-      const gap = gallery ? (window.innerWidth >= 769 ? 20 : 12) : 0;
-      const minCardWidth = window.innerWidth >= 769 ? 180 : 130;
-      const columns = gallery
-        ? Math.max(1, Math.floor((width + gap) / (minCardWidth + gap)))
-        : 1;
-      const cardWidth = gallery ? (width - gap * (columns - 1)) / columns : width;
-      const rowHeight = gallery ? (cardWidth / 0.718) + GALLERY_CARD_INFO_HEIGHT : LIST_ROW_HEIGHT;
-      const rowStride = rowHeight + gap;
+      const geometry = computeVirtualGeometry(displayCards.length, width, window.innerWidth, gallery);
       const rootTop = root.getBoundingClientRect().top + window.scrollY;
       const localScrollTop = Math.max(0, window.scrollY - rootTop);
-      const range = computeVirtualRange(
+      const next = buildVirtualWindow(
         displayCards.length,
-        columns,
-        rowStride,
+        geometry,
         localScrollTop,
         window.innerHeight,
       );
-      const totalSize = Math.max(0, range.rowCount * rowStride - gap);
-      const next = { ...range, columns, rowStride, gap, totalSize };
 
       setVirtualWindow(previous => (
         previous.startIndex === next.startIndex
@@ -831,6 +853,102 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       }
     };
   }, [displayCards.length, viewMode, showFilters, selectMode, loadingMore, hydrationError, liveLoading]);
+
+  // A gallery row and a list row represent very different amounts of the
+  // collection. Keeping window.scrollY unchanged when switching views therefore
+  // jumps to a different card. Capture the first visible card and its exact
+  // viewport offset, then put that same card back at that offset after the new
+  // layout mounts. useLayoutEffect performs the correction before paint.
+  useLayoutEffect(() => {
+    const anchor = pendingViewAnchorRef.current;
+    const root = virtualRootRef.current;
+    if (!anchor || anchor.viewMode !== viewMode || !root) return;
+    pendingViewAnchorRef.current = null;
+
+    const matchedIndex = displayCards.findIndex(item => item.entry_id === anchor.entryId);
+    const anchorIndex = matchedIndex >= 0
+      ? matchedIndex
+      : Math.min(anchor.index, Math.max(0, displayCards.length - 1));
+    const geometry = computeVirtualGeometry(
+      displayCards.length,
+      root.clientWidth,
+      window.innerWidth,
+      viewMode === 'gallery',
+    );
+    const anchorRow = Math.floor(anchorIndex / geometry.columns);
+    const rootTop = root.getBoundingClientRect().top + window.scrollY;
+    const targetScrollTop = Math.max(
+      0,
+      rootTop + anchorRow * geometry.rowStride - anchor.viewportOffset,
+    );
+
+    // Keep the mounted range in step with the destination immediately. This is
+    // especially important when switching to the taller layout near the end of
+    // a large collection, where the browser would otherwise clamp scrollTop to
+    // the stale spacer height.
+    setVirtualWindow(buildVirtualWindow(
+      displayCards.length,
+      geometry,
+      Math.max(0, targetScrollTop - rootTop),
+      window.innerHeight,
+    ));
+    window.scrollTo(window.scrollX, targetScrollTop);
+  }, [displayCards, viewMode]);
+
+  const switchViewMode = (nextViewMode) => {
+    if (nextViewMode === viewMode) return;
+
+    const root = virtualRootRef.current;
+    const scrollTop = window.scrollY;
+    const rootTop = root ? root.getBoundingClientRect().top + scrollTop : 0;
+    const rootBottom = rootTop + virtualWindow.totalSize;
+    const collectionIsVisible = root
+      && displayCards.length > 0
+      && scrollTop < rootBottom
+      && scrollTop + window.innerHeight > rootTop;
+
+    if (collectionIsVisible) {
+      const localScrollTop = Math.max(0, scrollTop - rootTop);
+      const visibleRow = Math.min(
+        Math.max(0, virtualWindow.rowCount - 1),
+        Math.floor(localScrollTop / virtualWindow.rowStride),
+      );
+      const anchorIndex = Math.min(
+        displayCards.length - 1,
+        visibleRow * virtualWindow.columns,
+      );
+      const nextGeometry = computeVirtualGeometry(
+        displayCards.length,
+        root.clientWidth,
+        window.innerWidth,
+        nextViewMode === 'gallery',
+      );
+      const viewportOffset = rootTop + visibleRow * virtualWindow.rowStride - scrollTop;
+      const nextLocalScrollTop = Math.max(
+        0,
+        Math.floor(anchorIndex / nextGeometry.columns) * nextGeometry.rowStride - viewportOffset,
+      );
+
+      pendingViewAnchorRef.current = {
+        viewMode: nextViewMode,
+        entryId: displayCards[anchorIndex].entry_id,
+        index: anchorIndex,
+        viewportOffset,
+      };
+      // Render the destination range and full spacer height in the same commit
+      // as the new view so the layout-effect scroll cannot be clamped.
+      setVirtualWindow(buildVirtualWindow(
+        displayCards.length,
+        nextGeometry,
+        nextLocalScrollTop,
+        window.innerHeight,
+      ));
+    } else {
+      pendingViewAnchorRef.current = null;
+    }
+
+    setViewMode(nextViewMode);
+  };
 
   const virtualCards = displayCards.slice(
     Math.min(virtualWindow.startIndex, displayCards.length),
@@ -881,7 +999,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
           <div style={{ display: 'flex', background: 'rgba(0,0,0,0.2)', padding: '2px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
             <button
               className={`btn btn-icon-only ${viewMode === 'gallery' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setViewMode('gallery')}
+              onClick={() => switchViewMode('gallery')}
               style={{ borderRadius: 'var(--radius-sm)', padding: '0.4rem 0.5rem', width: '32px', height: '32px' }}
               title={t('collection.galleryView')}
             >
@@ -889,7 +1007,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
             </button>
             <button
               className={`btn btn-icon-only ${viewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setViewMode('list')}
+              onClick={() => switchViewMode('list')}
               style={{ borderRadius: 'var(--radius-sm)', padding: '0.4rem 0.5rem', width: '32px', height: '32px' }}
               title={t('collection.listView')}
             >
