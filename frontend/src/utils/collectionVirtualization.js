@@ -123,6 +123,19 @@ export function advanceAnchorConvergence(previous, sample, tolerance = 1) {
   };
 }
 
+// Pending anchors are valid only for the exact derived dataset captured by the
+// view switch. A filter, sort, hydration commit, or selection-mode change can
+// replace the rows while keeping the same length; object identity makes that
+// replacement explicit and prevents a removed card from resurrecting later.
+export function resolvePendingAnchorIndex(anchor, displayCards) {
+  if (!anchor || anchor.displayCards !== displayCards) return -1;
+  return displayCards.findIndex(item => String(item?.entry_id) === String(anchor.entryId));
+}
+
+export function anchorConvergenceFinished(convergence) {
+  return Boolean(convergence?.settled || convergence?.exhausted);
+}
+
 export function virtualWindowsMatch(current, expected) {
   return current.startIndex === expected.startIndex
     && current.endIndex === expected.endIndex

@@ -5,10 +5,12 @@ import {
   ANCHOR_CONVERGENCE_MAX_FRAMES,
   ANCHOR_CONVERGENCE_STABLE_FRAMES,
   advanceAnchorConvergence,
+  anchorConvergenceFinished,
   buildVirtualWindow,
   computeVirtualGeometry,
   findVisibleCollectionAnchor,
   measuredAnchorScrollTarget,
+  resolvePendingAnchorIndex,
   translateAnchorViewportOffset,
   virtualTableRowCount,
   virtualTableRowIndex,
@@ -262,6 +264,44 @@ test('anchor convergence survives delayed scroll-range contraction after synchro
     'pending verification frames must be cancelled on replacement and unmount');
   assert.match(collectionCss, /\.collection-virtual-list-panel[\s\S]*?transition-property:/,
     'the gallery spacer must not animate layout-affecting border width when reused as a panel');
+});
+
+test('pending anchors fail closed when their display dataset is replaced or identity disappears', () => {
+  const original = [{ entry_id: '04999' }, { entry_id: '05000' }, { entry_id: '05001' }];
+  const anchor = { entryId: '05000', index: 1, displayCards: original };
+  assert.equal(resolvePendingAnchorIndex(anchor, original), 1);
+
+  const sameLengthReplacement = original.map(item => ({ ...item }));
+  assert.equal(resolvePendingAnchorIndex(anchor, sameLengthReplacement), -1,
+    'a replacement generation invalidates the anchor even when its rows and length match');
+
+  original.splice(1, 1);
+  assert.equal(resolvePendingAnchorIndex(anchor, original), -1,
+    'a removed card cannot fall back to a position and resurrect later');
+});
+
+test('anchor convergence exhaustion is terminal rather than latent pending state', () => {
+  const unstable = {
+    scrollHeight: 10_000,
+    maximumScrollTop: 9_000,
+    rootDocumentTop: 100,
+    anchorViewportTop: 10,
+    scrollTop: 5_000,
+    corrected: true,
+    hasPositiveIntersection: true,
+  };
+  let convergence = null;
+  for (let frame = 0; frame < ANCHOR_CONVERGENCE_MAX_FRAMES; frame += 1) {
+    convergence = advanceAnchorConvergence(convergence, {
+      ...unstable,
+      scrollHeight: unstable.scrollHeight - frame,
+    });
+  }
+  assert.equal(convergence.settled, false);
+  assert.equal(convergence.exhausted, true);
+  assert.equal(anchorConvergenceFinished(convergence), true,
+    'an exhausted verifier must clear instead of leaving a future scroll trigger');
+  assert.equal(anchorConvergenceFinished({ ...convergence, settled: true, exhausted: false }), true);
 });
 
 test('virtual table metadata describes filtered logical rows, not mounted spacers', () => {

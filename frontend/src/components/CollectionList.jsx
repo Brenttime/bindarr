@@ -28,10 +28,12 @@ import {
   INITIAL_RENDER_COUNT,
   LIST_ROW_HEIGHT,
   advanceAnchorConvergence,
+  anchorConvergenceFinished,
   buildVirtualWindow,
   computeVirtualGeometry,
   findVisibleCollectionAnchor,
   measuredAnchorScrollTarget,
+  resolvePendingAnchorIndex,
   translateAnchorViewportOffset,
   virtualTableRowCount,
   virtualTableRowIndex,
@@ -785,6 +787,8 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
   const anchorVerificationFrameRef = useRef(null);
   const anchorIdentityRef = useRef(0);
   const pendingViewAnchorRef = useRef(null);
+  const displayCardsRef = useRef(displayCards);
+  displayCardsRef.current = displayCards;
   const [virtualWindow, setVirtualWindow] = useState({
     startIndex: 0,
     endIndex: INITIAL_RENDER_COUNT,
@@ -873,10 +877,15 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     const root = virtualRootRef.current;
     if (!anchor || anchor.viewMode !== viewMode || !root) return;
 
-    const matchedIndex = displayCards.findIndex(item => item.entry_id === anchor.entryId);
-    const anchorIndex = matchedIndex >= 0
-      ? matchedIndex
-      : Math.min(anchor.index, Math.max(0, displayCards.length - 1));
+    const anchorIndex = resolvePendingAnchorIndex(anchor, displayCards);
+    if (anchorIndex < 0) {
+      if (anchorVerificationFrameRef.current != null) {
+        window.cancelAnimationFrame(anchorVerificationFrameRef.current);
+        anchorVerificationFrameRef.current = null;
+      }
+      if (pendingViewAnchorRef.current === anchor) pendingViewAnchorRef.current = null;
+      return;
+    }
     const geometry = computeVirtualGeometry(
       displayCards.length,
       root.clientWidth,
@@ -919,7 +928,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     const destinationElement = Array.from(
       root.querySelectorAll('[data-collection-entry-id]'),
     ).find(element => element.dataset.collectionEntryId === String(anchor.entryId));
-    if (!destinationElement) return;
+    if (!destinationElement) {
+      if (pendingViewAnchorRef.current === anchor) pendingViewAnchorRef.current = null;
+      return;
+    }
 
     const destinationRect = destinationElement.getBoundingClientRect();
     const desiredViewportOffset = translateAnchorViewportOffset(
@@ -952,12 +964,19 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
         if (pendingViewAnchorRef.current !== anchor
             || pendingViewAnchorRef.current.identity !== anchor.identity
             || anchor.viewMode !== viewMode) return;
+        if (anchor.displayCards !== displayCardsRef.current) {
+          pendingViewAnchorRef.current = null;
+          return;
+        }
 
         const currentRoot = virtualRootRef.current;
         const currentElement = currentRoot && Array.from(
           currentRoot.querySelectorAll('[data-collection-entry-id]'),
         ).find(element => element.dataset.collectionEntryId === String(anchor.entryId));
-        if (!currentRoot || !currentElement) return;
+        if (!currentRoot || !currentElement) {
+          if (pendingViewAnchorRef.current === anchor) pendingViewAnchorRef.current = null;
+          return;
+        }
 
         const currentRect = currentElement.getBoundingClientRect();
         const currentDesiredOffset = translateAnchorViewportOffset(
@@ -995,12 +1014,11 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
             && paintedRect.top < window.innerHeight,
         }, tolerance);
 
-        if (anchor.convergence.settled) {
+        if (anchorConvergenceFinished(anchor.convergence)) {
           pendingViewAnchorRef.current = null;
           return;
         }
-        if (!anchor.convergence.exhausted
-            && anchor.convergence.frameCount < ANCHOR_CONVERGENCE_MAX_FRAMES) {
+        if (anchor.convergence.frameCount < ANCHOR_CONVERGENCE_MAX_FRAMES) {
           anchorVerificationFrameRef.current = window.requestAnimationFrame(verifyAfterPaint);
         }
       };
@@ -1067,6 +1085,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
         viewMode: nextViewMode,
         entryId: displayCards[anchorIndex].entry_id,
         index: anchorIndex,
+        displayCards,
         sourceViewportOffset,
         sourceEntryHeight,
       };
