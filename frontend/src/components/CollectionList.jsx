@@ -79,6 +79,19 @@ function computeVirtualGeometry(itemCount, width, viewportWidth, gallery) {
   };
 }
 
+// A negative viewport offset means the anchor row is clipped above the
+// viewport. Reusing that pixel offset in a shorter layout can hide the anchor
+// row completely. Preserve the progress through the row instead; this keeps
+// the same card partially visible and makes a gallery -> list -> gallery round
+// trip reversible. Positive offsets describe space above an unclipped row and
+// remain exact pixel offsets.
+function translateAnchorViewportOffset(viewportOffset, sourceRowStride, targetRowStride) {
+  if (viewportOffset >= 0 || sourceRowStride <= 0 || targetRowStride <= 0) {
+    return viewportOffset;
+  }
+  return (viewportOffset / sourceRowStride) * targetRowStride;
+}
+
 function buildVirtualWindow(itemCount, geometry, scrollTop, viewportHeight) {
   const range = computeVirtualRange(
     itemCount,
@@ -856,9 +869,11 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
 
   // A gallery row and a list row represent very different amounts of the
   // collection. Keeping window.scrollY unchanged when switching views therefore
-  // jumps to a different card. Capture the first visible card and its exact
-  // viewport offset, then put that same card back at that offset after the new
-  // layout mounts. useLayoutEffect performs the correction before paint.
+  // jumps to a different card. Capture the first visible card and its viewport
+  // offset, then put that same card back after the new layout mounts. For a row
+  // clipped above the viewport, switchViewMode translates the offset by row
+  // progress so a tall gallery row cannot disappear above a short list row.
+  // useLayoutEffect performs the correction before paint.
   useLayoutEffect(() => {
     const anchor = pendingViewAnchorRef.current;
     const root = virtualRootRef.current;
@@ -923,7 +938,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
         window.innerWidth,
         nextViewMode === 'gallery',
       );
-      const viewportOffset = rootTop + visibleRow * virtualWindow.rowStride - scrollTop;
+      const sourceViewportOffset = rootTop + visibleRow * virtualWindow.rowStride - scrollTop;
+      const viewportOffset = translateAnchorViewportOffset(
+        sourceViewportOffset,
+        virtualWindow.rowStride,
+        nextGeometry.rowStride,
+      );
       const nextLocalScrollTop = Math.max(
         0,
         Math.floor(anchorIndex / nextGeometry.columns) * nextGeometry.rowStride - viewportOffset,
