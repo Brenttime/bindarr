@@ -31,6 +31,7 @@ function AdminPanel({ showToast }) {
 
   // Instance Settings States
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
+  const [priceRefreshDays, setPriceRefreshDays] = useState(1);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const mountedRef = useRef(true);
 
@@ -159,6 +160,7 @@ function AdminPanel({ showToast }) {
         const data = await response.json();
         if (!mountedRef.current) return;
         setPublicBaseUrl(data.public_base_url || '');
+        setPriceRefreshDays(data.price_refresh_days ?? 1);
       }
     } catch (err) {
       console.error(err);
@@ -172,12 +174,16 @@ function AdminPanel({ showToast }) {
       const response = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ public_base_url: publicBaseUrl })
+        body: JSON.stringify({
+          public_base_url: publicBaseUrl,
+          price_refresh_days: Number(priceRefreshDays),
+        })
       });
 
       if (response.ok) {
         const data = await response.json();
         setPublicBaseUrl(data.public_base_url || '');
+        setPriceRefreshDays(data.price_refresh_days ?? 1);
         showToast(t('admin.settingsUpdated'));
       } else {
         const data = await response.json();
@@ -423,6 +429,31 @@ function AdminPanel({ showToast }) {
                 onChange={(e) => setPublicBaseUrl(e.target.value)}
                 disabled={settingsLoading}
               />
+            </div>
+            {/* How often owned and decked cards get re-priced. Upstream added this
+                because one of the providers it can point at bills per card fetched;
+                in this install every source is Scryfall and free, so the reason that
+                survives is load on the database and on Scryfall's rate limits. Daily
+                is the default -- what every install did before this existed. 0 is
+                never: the sweep then runs only when someone presses Refresh prices. */}
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label htmlFor="admin-price-refresh">{t('admin.priceRefresh')}</label>
+              <select
+                id="admin-price-refresh"
+                className="select-control"
+                value={priceRefreshDays}
+                onChange={(e) => setPriceRefreshDays(Number(e.target.value))}
+                disabled={settingsLoading}
+              >
+                <option value={1}>{t('admin.priceRefreshDaily')}</option>
+                <option value={3}>{t('admin.priceRefresh3')}</option>
+                <option value={7}>{t('admin.priceRefreshWeekly')}</option>
+                <option value={30}>{t('admin.priceRefreshMonthly')}</option>
+                <option value={0}>{t('admin.priceRefreshOff')}</option>
+              </select>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                {t('admin.priceRefreshHint')}
+              </p>
             </div>
             <button type="submit" className="btn btn-primary" style={{ padding: '0.6rem', fontWeight: 700, alignSelf: 'flex-start' }} disabled={settingsLoading}>
               {settingsLoading ? <div className="spinner" style={{ width: '14px', height: '14px', margin: 0, borderWidth: '2px' }}></div> : t('admin.saveSettings')}

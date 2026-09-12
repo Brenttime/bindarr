@@ -100,6 +100,9 @@
   "login.errServerFirst": "Enter your server URL first.",
   "login.errPasswordMismatch": "Passwords do not match.",
   "login.errFailed": "Authentication failed",
+  "login.oidcLogin": "Log in with {provider}",
+  "login.orDivider": "or continue with username",
+  "login.errOidcFailed": "Single Sign-On authentication failed.",
   "priceHistory.title": "Price History",
   "priceHistory.range.30d.label": "30D",
   "priceHistory.range.30d.name": "30 Days",
@@ -744,7 +747,6 @@
   "theme.dark": "Dark",
   "theme.light": "Light",
   "theme.lcars": "LCARS",
-  "scan.fetchingCandidates": "Fetching candidate cards...",
   "scan.autoAddingIn": "Auto-adding to collection in {seconds}s...",
   "scan.notThisOne": "Not this one?",
   "scan.seeAllMatches": "See all {n} matches",
@@ -1049,5 +1051,12 @@
   "deck.basicLandsCount.one": "{count} basic land",
   "deck.basicLandsCount.other": "{count} basic lands",
   "bulk.selectedCount.one": "{count} selected",
-  "bulk.selectedCount.other": "{count} selected"
+  "bulk.selectedCount.other": "{count} selected",
+  "admin.priceRefresh": "Refresh prices",
+  "admin.priceRefreshDaily": "Every day",
+  "admin.priceRefresh3": "Every 3 days",
+  "admin.priceRefreshWeekly": "Every week",
+  "admin.priceRefreshMonthly": "Every 30 days",
+  "admin.priceRefreshOff": "Never — do not refresh automatically",
+  "admin.priceRefreshHint": "How often owned and decked cards have their prices re-fetched. Daily is what the free providers publish, so leave it there unless you have a reason. It is worth turning down if you use a provider that charges per card refreshed, or if you have a very large collection and only look at its value occasionally — a sweep only ever touches cards whose prices have gone stale, but the bigger the collection the more that is. Turning it off entirely stops all automatic refreshes; prices already stored stay as they are."
 }
