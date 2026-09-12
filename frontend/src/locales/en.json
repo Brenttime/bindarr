@@ -100,6 +100,9 @@
   "login.errServerFirst": "Enter your server URL first.",
   "login.errPasswordMismatch": "Passwords do not match.",
   "login.errFailed": "Authentication failed",
+  "login.oidcLogin": "Log in with {provider}",
+  "login.orDivider": "or continue with username",
+  "login.errOidcFailed": "Single Sign-On authentication failed.",
   "priceHistory.title": "Price History",
   "priceHistory.range.30d.label": "30D",
   "priceHistory.range.30d.name": "30 Days",
@@ -378,6 +381,7 @@
   "admin.instanceHint": "If this app runs behind a reverse proxy, the browser's own address may not be the one others should use to reach a collection share link. Set the public URL here to override it. Leave blank to use the browser's address (or the {envVar} environment variable, if set).",
   "admin.publicBaseUrl": "Public Base URL",
   "admin.saveSettings": "Save Settings",
+
   "admin.setIndexTitle": "Set Scan Indexes",
   "admin.setCode": "Set code / id",
   "admin.preview": "Preview",
@@ -675,6 +679,7 @@
   "settings.saveKeys": "Save Keys",
   "settings.keysUpdated": "Keys saved.",
   "settings.errKeys": "Could not save the keys.",
+
   "settings.accessTitle": "API Access",
   "settings.accessIntro": "A read-only key for scripts and dashboards. It never expires and cannot change anything — any request other than a read is refused. Send it as a Bearer token:",
   "settings.accessNetWorth": "Net worth lives at /api/stats/networth; the full dashboard payload is at /api/stats.",

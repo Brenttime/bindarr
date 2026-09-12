@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const { authenticateToken, authLimiter } = require('../middleware/auth');
 const { verifyPassword, generateSession } = require('../utils/authHelpers');
+const oidc = require('../utils/oidc');
 
 const router = express.Router();
 
@@ -12,8 +13,8 @@ const router = express.Router();
 const REGISTRATION_ENABLED = process.env.ALLOW_REGISTRATION === 'true';
 
 // Public config the login screen reads to decide whether to show the Sign Up
-// option, and whether this install still has no accounts at all. No auth — must
-// be reachable before login.
+// option, whether OIDC / SSO is enabled, and whether this install still has no accounts.
+// No auth — must be reachable before login.
 router.get('/config', async (req, res) => {
   let setupRequired = false;
   try {
@@ -22,7 +23,145 @@ router.get('/config', async (req, res) => {
   } catch (error) {
     console.error(error);
   }
-  res.json({ registrationEnabled: REGISTRATION_ENABLED, setupRequired });
+  res.json({
+    registrationEnabled: REGISTRATION_ENABLED,
+    setupRequired,
+    oidcEnabled: oidc.isOidcEnabled(),
+    oidcProviderName: oidc.getProviderName()
+  });
+});
+
+// Initiate OIDC / SSO authorization code flow
+router.get('/oidc/login', authLimiter, async (req, res) => {
+  if (!oidc.isOidcEnabled()) {
+    return res.status(404).json({ error: 'OIDC authentication is not enabled.' });
+  }
+
+  try {
+    const authUrl = await oidc.buildAuthorizationUrl(req);
+    res.redirect(302, authUrl);
+  } catch (error) {
+    console.error('OIDC login initiation failed:', error.message);
+    res.status(500).json({ error: 'Failed to initiate OIDC login', message: error.message });
+  }
+});
+
+// Handle OIDC / SSO callback from identity provider
+router.get('/oidc/callback', authLimiter, async (req, res) => {
+  if (!oidc.isOidcEnabled()) {
+    return res.status(404).json({ error: 'OIDC authentication is not enabled.' });
+  }
+
+  const { code, state, error, error_description } = req.query;
+
+  const frontendRedirect = (params) => {
+    const baseUrl = process.env.PUBLIC_BASE_URL ? process.env.PUBLIC_BASE_URL.replace(/\/+$/, '') : '';
+    const qs = new URLSearchParams(params).toString();
+    res.redirect(302, `${baseUrl}/?${qs}`);
+  };
+
+  if (error) {
+    console.error(`OIDC IdP error: ${error} - ${error_description || ''}`);
+    return frontendRedirect({ oidc_error: error_description || error });
+  }
+
+  if (!code || !state) {
+    return frontendRedirect({ oidc_error: 'Missing authorization code or state from identity provider.' });
+  }
+
+  try {
+    const { extracted } = await oidc.exchangeCode({ code, stateToken: state, req });
+    const { sub, username } = extracted;
+
+    // 1. Match by existing oidc_sub
+    let user = await db.get(`SELECT * FROM users WHERE oidc_sub = ?`, [sub]);
+
+    // 2. Fallback: attach this identity to an existing account with the same
+    //    username — only when the operator has said their IdP's usernames can be
+    //    trusted for it. See isUsernameLinkEnabled: with it on by default, anyone
+    //    who could set their own preferred_username to "admin" at the IdP could
+    //    take the Bindarr owner account by signing in once.
+    if (!user) {
+      const existingUser = await db.get(`SELECT * FROM users WHERE username = ?`, [username]);
+      // Linking off and the name is taken: say so, rather than falling through to
+      // auto-provisioning, which would quietly hand them a brand new "<name>-1"
+      // account with an empty collection and leave them convinced the upgrade ate
+      // their cards.
+      if (existingUser && !oidc.isUsernameLinkEnabled()) {
+        console.warn(`OIDC: "${username}" already exists locally and OIDC_ALLOW_USERNAME_LINK is off — not linking.`);
+        return frontendRedirect({
+          oidc_error: 'A Bindarr account with this username already exists. An administrator must set OIDC_ALLOW_USERNAME_LINK=true to attach single sign-on to it.'
+        });
+      }
+      if (existingUser) {
+        // An account already bound to a DIFFERENT IdP identity is never re-bound.
+        // Two subjects claiming one username is the collision this whole flag is
+        // about, and silently moving the account to whoever logged in last is the
+        // worst of the available answers.
+        if (existingUser.oidc_sub && existingUser.oidc_sub !== sub) {
+          console.warn(`OIDC: refusing to relink "${username}" — already bound to another identity.`);
+          return frontendRedirect({
+            oidc_error: 'That username is already linked to a different single sign-on identity. Ask an administrator.'
+          });
+        }
+        await db.run(`UPDATE users SET oidc_sub = ? WHERE id = ?`, [sub, existingUser.id]);
+        console.log(`OIDC: linked identity to existing account "${username}" (OIDC_ALLOW_USERNAME_LINK).`);
+        user = await db.get(`SELECT * FROM users WHERE id = ?`, [existingUser.id]);
+      }
+    }
+
+    // 3. User does not exist: first-run bootstrap or auto-provisioning
+    if (!user) {
+      const userCountRow = await db.get(`SELECT COUNT(*) as count FROM users`);
+      const isFirstUser = userCountRow.count === 0;
+
+      if (isFirstUser) {
+        // Bootstrap instance owner via OIDC
+        const shareToken = crypto.randomBytes(16).toString('hex');
+        const lockedHash = `oidc_locked:${crypto.randomBytes(16).toString('hex')}`;
+        const result = await db.run(`
+          INSERT INTO users (username, password_hash, role, share_token, share_enabled, oidc_sub)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [OWNER_USERNAME, lockedHash, 'admin', shareToken, 0, sub]);
+
+        await db.adoptOrphanRows(result.lastID);
+        // seedStarterLocations went away with the Storage feature (d2fab84);
+        // this fork has no starter locations to seed. Upstream's OIDC path still
+        // calls it, because that code was written against the multi-game tree.
+        user = await db.get(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
+      } else if (oidc.isAutoProvisionEnabled() || REGISTRATION_ENABLED) {
+        // Auto-provision new member
+        const shareToken = crypto.randomBytes(16).toString('hex');
+        const lockedHash = `oidc_locked:${crypto.randomBytes(16).toString('hex')}`;
+        const role = oidc.getDefaultRole();
+
+        // Ensure clean, unique username in case of collisions
+        let finalUsername = username;
+        let suffix = 1;
+        while (await db.get(`SELECT id FROM users WHERE username = ?`, [finalUsername])) {
+          finalUsername = `${username}-${suffix++}`;
+        }
+
+        const result = await db.run(`
+          INSERT INTO users (username, password_hash, role, share_token, share_enabled, oidc_sub)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [finalUsername, lockedHash, role, shareToken, 0, sub]);
+
+        // No seedStarterLocations here either -- see the owner branch above.
+        user = await db.get(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
+      } else {
+        return frontendRedirect({
+          oidc_error: 'No matching Bindarr account found. Auto-provisioning is disabled; ask an administrator to create your account.'
+        });
+      }
+    }
+
+    const token = await generateSession(user.id);
+    return frontendRedirect({ oidc_token: token });
+  } catch (err) {
+    console.error('OIDC callback processing failed:', err.message);
+    return frontendRedirect({ oidc_error: err.message });
+  }
 });
 
 // First run: create the owner account. Open without auth by necessity, and safe

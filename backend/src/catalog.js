@@ -63,6 +63,11 @@ function stop() {
 // Scryfall code ("fdn"). Comparing them raw reports every set as new; the first
 // version of this function did exactly that and claimed 1047 of 1047.
 async function newSetCount(game, lang = 'English') {
+  // This install is MTG-only: the game column went away with the other games, so
+  // every table this reads is MTG by definition. Asking for another game has no
+  // rows to count -- return 0 rather than fall through and report MTG's gaps
+  // under someone else's name.
+  if (game !== 'mtg') return 0;
   try {
     // Sets a build already found to have no usable data upstream. Counting them as
     // "not built yet" told the user to build sets that cannot be built, so the
@@ -75,22 +80,24 @@ async function newSetCount(game, lang = 'English') {
     // Scoped to the language, or a Spanish catalog would be measured against the
     // ENGLISH cache and report whatever English happens to be missing: measured
     // 98 for both mtg/English and mtg/Spanish while the Spanish cache held 1,205
-    // cards against English's 103,656. Invisible today only because no local MTG
-    // catalog exists to ask, which is exactly how it would have shipped.
-    const row = await db.get(
-      `SELECT COUNT(*) n FROM sets s
-        WHERE COALESCE(s.total, 0) > 0
-          AND LOWER(CASE WHEN s.id LIKE 'mtg-%' THEN SUBSTR(s.id, 5) ELSE s.id END) NOT IN (
-            SELECT set_id FROM set_data_gaps WHERE language = ?
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM card_cache c
-             WHERE c.language = ?
-               AND LOWER(c.set_id) = LOWER(CASE WHEN s.id LIKE 'mtg-%' THEN SUBSTR(s.id, 5) ELSE s.id END)
-          )`,
-      [lang, lang]
-    );
-    return row ? row.n : null;
+    // cards against English's 103,656.
+    //
+    // One pass over each table rather than a correlated NOT EXISTS per set: the id
+    // namespaces differ (the sets table prefixes 'mtg-', card_cache holds the bare
+    // Scryfall code), so neither side can use idx_card_cache_set_num and the old
+    // form re-scanned the WHOLE of card_cache once per set -- 9.6s measured against
+    // 1,047 sets and 126k rows, on the single sqlite3 connection every other
+    // request queues behind. Same answer, one indexed read.
+    const cached = new Set((await db.all(
+      `SELECT DISTINCT LOWER(set_id) sid FROM card_cache WHERE language = ?`,
+      [lang]
+    ).catch(() => [])).map((r) => r.sid));
+    const rows = await db.all(`SELECT id FROM sets WHERE COALESCE(total, 0) > 0`);
+    const bare = (id) => String(id).toLowerCase().replace(/^mtg-/, '');
+    return rows.filter((r) =>
+      !gaps.has(bare(r.id))
+      && !cached.has(String(r.id).toLowerCase())
+      && !cached.has(bare(r.id))).length;
   } catch {
     return null;
   }
@@ -467,4 +474,4 @@ function start(game, lang = 'English', opts = {}) {
 let last = null;
 const lastResult = () => last;
 
-module.exports = { list, setCounts, keptFromPrev, start, stop, state, lastResult, listLanguages, binPath, metaPath };
+module.exports = { list, setCounts, keptFromPrev, start, stop, state, lastResult, listLanguages, binPath, metaPath, newSetCount };

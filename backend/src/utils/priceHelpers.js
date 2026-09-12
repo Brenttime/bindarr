@@ -91,15 +91,53 @@ const SWEEP_COLUMN = {
   mtg: 'mtg_prices_swept_at',
 };
 
+// How often the automatic sweep is allowed to run, as configured. 0 turns it off.
+//
+// Upstream added this because one of the providers it can be pointed at bills per
+// card refreshed, so a daily sweep of a large collection was a recurring charge.
+// Nothing here costs money -- Scryfall is free -- but the setting still earns its
+// keep: a collector who looks at their portfolio once a month should not pay for
+// thirty sweeps, and a very large collection makes each sweep real work. Kept
+// behaviourally identical to upstream so the next sync does not re-conflict.
+//
+// Unreadable or missing settings fall back to daily, which is what every install
+// did before this existed.
+const DEFAULT_PRICE_REFRESH_DAYS = 1;
+
+async function priceRefreshDays() {
+  const db = require('../db');
+  try {
+    const row = await db.get(`SELECT price_refresh_days FROM app_settings WHERE id = 1`);
+    const n = Number(row && row.price_refresh_days);
+    return Number.isInteger(n) && n >= 0 ? n : DEFAULT_PRICE_REFRESH_DAYS;
+  } catch {
+    return DEFAULT_PRICE_REFRESH_DAYS;
+  }
+}
+
 // Has this game's price sweep gone stale enough to be worth running again?
+//
+// This is now the ONLY thing deciding when an automatic sweep runs. server.js
+// used to pass force: true from its daily timer, on the reasoning that the timer
+// was itself the right cadence — which meant this function's answer was ignored
+// in the only case that mattered, and that a provider missing from SWEEP_COLUMN
+// looked fine because the forced path never asked. The timer now ticks hourly and
+// unforced, and this decides.
+//
+// Hourly rather than daily on purpose: with a daily tick and a daily interval,
+// any drift at all leaves "23h 59m elapsed" at the moment of the tick, which
+// skips and turns a daily refresh into an every-other-day one. Checking often
+// and refusing cheaply has no such edge.
 async function shouldSweepPrices(game) {
   const col = SWEEP_COLUMN[game];
   if (!col) return false;
+  const days = await priceRefreshDays();
+  if (days === 0) return false;            // automatic refresh switched off
   const db = require('../db');
   try {
     const row = await db.get(`SELECT ${col} AS sweptAt FROM app_settings WHERE id = 1`);
     if (!row || !row.sweptAt) return true;
-    return Date.now() - parseSqliteUtc(row.sweptAt).getTime() >= PRICE_SWEEP_INTERVAL_MS;
+    return Date.now() - parseSqliteUtc(row.sweptAt).getTime() >= days * PRICE_SWEEP_INTERVAL_MS;
   } catch {
     return true; // never block the sweep on a bookkeeping failure
   }
@@ -120,6 +158,8 @@ module.exports = {
   parseSqliteUtc,
   shouldSweepPrices,
   markPricesSwept,
+  priceRefreshDays,
+  DEFAULT_PRICE_REFRESH_DAYS,
   PRICE_SWEEP_INTERVAL_MS,
   resolveCardPrice,
   parseCardRow,
