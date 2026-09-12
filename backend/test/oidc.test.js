@@ -120,11 +120,16 @@ function testIdTokenValidation() {
   // aud: a token minted for another client of the same IdP must not be replayable
   // here, even though it is perfectly valid and correctly signed.
   assert.throws(() => check({ ...ok(), aud: 'some-other-app' }), /not issued for this client/);
-  assert.doesNotThrow(() => check({ ...ok(), aud: ['some-other-app', CID] }),
-    'an array audience containing us is fine');
+  assert.doesNotThrow(() => check({ ...ok(), aud: ['some-other-app', CID], azp: CID }),
+    'an array audience containing us is fine once azp names us');
   // Several audiences: azp says which one it was actually authorized for.
   assert.throws(() => check({ ...ok(), aud: [CID, 'other'], azp: 'other' }), /different client/);
   assert.doesNotThrow(() => check({ ...ok(), aud: [CID, 'other'], azp: CID }));
+  // A multi-audience token with NO azp cannot be tied to one client, so it is not
+  // ours. This assertion used to be doesNotThrow, which was the vulnerability: any
+  // other client of the same IdP could mint `aud: [<us>, <them>]` with azp omitted
+  // and be accepted here. OIDC Core 3.1.3.7 requires azp when aud has >1 value.
+  assert.throws(() => check({ ...ok(), aud: ['some-other-app', CID] }), /no azp/);
 
   // exp
   assert.throws(() => check({ ...ok(), exp: undefined }), /no expiry/);

@@ -124,9 +124,17 @@ function validateIdTokenClaims(claims, { issuer, clientId, nonce, now = Date.now
   if (clientId && !audiences.includes(clientId)) {
     throw new Error('OIDC ID token was not issued for this client.');
   }
-  // With more than one audience the spec requires azp, and requires it to be us.
-  if (audiences.length > 1 && claims.azp && String(claims.azp) !== clientId) {
-    throw new Error('OIDC ID token was authorized for a different client.');
+  // With more than one audience the spec (OIDC Core 3.1.3.7) requires azp, and
+  // requires it to name us. Requiring it only when present was the bug: a token
+  // minted for several clients of this IdP with azp omitted entirely satisfied
+  // the old guard and logged in, because `aud` containing us was enough.
+  if (clientId && audiences.length > 1) {
+    if (claims.azp === undefined || claims.azp === null || claims.azp === '') {
+      throw new Error('OIDC ID token has multiple audiences but no azp claim, so it cannot be tied to a single client.');
+    }
+    if (String(claims.azp) !== clientId) {
+      throw new Error('OIDC ID token was authorized for a different client.');
+    }
   }
 
   const exp = Number(claims.exp);
