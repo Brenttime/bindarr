@@ -713,22 +713,10 @@ function DeckBuilder({ showToast, onNavigate }) {
   // scheduler), so an opened deck can deep-link back to the same page on
   // moxfield.com — the exact href the Moxfield sync panel uses. Hand-made and
   // precon decks have no public id, so this renders nothing for them.
-  const renderMoxfieldLink = (deck) => {
-    if (!deck || deck.source !== 'moxfield' || !deck.moxfield_public_id) return null;
-    return (
-      <a
-        href={`https://moxfield.com/decks/${encodeURIComponent(deck.moxfield_public_id)}`}
-        target="_blank"
-        rel="noreferrer"
-        onClick={(e) => e.stopPropagation()}
-        title={t('mfx.openOnMoxfield')}
-        aria-label={t('mfx.openOnMoxfield')}
-        style={{ color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}
-      >
-        <ExternalLink size={13} />
-      </a>
-    );
-  };
+  const moxfieldDeckUrl = (deck) =>
+    deck && deck.source === 'moxfield' && deck.moxfield_public_id
+      ? `https://moxfield.com/decks/${encodeURIComponent(deck.moxfield_public_id)}`
+      : null;
 
   // --- SELECTION MENU METRICS & FILTERING ---
   const filteredDecks = decks.filter(deck => {
@@ -1013,7 +1001,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                               </span>
                             )}
                             {renderSourceBadge(deck.source)}
-                            {renderMoxfieldLink(deck)}
                           </div>
                         </div>
 
@@ -1171,7 +1158,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                             <span style={{ fontWeight: 700, color: 'var(--text-strong)' }}>{deck.name}</span>
                             {renderSourceBadge(deck.source)}
-                            {renderMoxfieldLink(deck)}
                             {deck.category && (
                               <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
                                 {deck.category}
@@ -1277,7 +1263,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                 <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   {activeDeck.name}
                   {renderSourceBadge(activeDeck.source)}
-                  {renderMoxfieldLink(activeDeck)}
                   <span style={{ fontSize: '0.8rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--accent-yellow)', fontWeight: 600 }}>
                     ({totalDeckCardsCount}/{targetDeckCardsCount} cards)
                   </span>
@@ -1614,6 +1599,22 @@ function DeckBuilder({ showToast, onNavigate }) {
                       </strong>
                     </div>
                   </div>
+
+                  {/* Synced decks get one clear exit to the Moxfield listing
+                      the mirror came from. A real button under the stats, not
+                      an icon on the title: it stays out of the deck-name row
+                      and reads as an action instead of decoration. */}
+                  {moxfieldDeckUrl(activeDeck) && (
+                    <a
+                      className="btn btn-secondary"
+                      href={moxfieldDeckUrl(activeDeck)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ justifyContent: 'center', fontSize: '0.8rem', padding: '0.5rem 0.9rem' }}
+                    >
+                      <ExternalLink size={13} /> {t('mfx.openOnMoxfield')}
+                    </a>
+                  )}
                 </div>
 
                 {/* Bar Chart: Mana Cost Curve */}
