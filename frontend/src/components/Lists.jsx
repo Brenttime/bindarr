@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Trash2, X, ChevronLeft, Search, ListChecks, Copy, Pencil,
-  Layers, Minus,
+  Layers, Minus, ShoppingBag,
 } from 'lucide-react';
 import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
@@ -302,6 +302,39 @@ function Lists({ showToast }) {
     }
   };
 
+  // "Buy these on ManaPool": copy the list in the plain `N Card Name` shape
+  // ManaPool's mass-entry box expects, then open their import page (manapool.com
+  // /add-deck, verified live) in a new tab. There is no URL prefill to ride —
+  // the decklist textarea is the only door and the site's own docs describe a
+  // clipboard-paste flow — so we stage the text and let the user paste once.
+  // Saves retyping the list and any format wrangling; the plain shape is what
+  // the box parses best (it also takes TCG-style lines, but those drag set
+  // info Bindarr's own export keeps for MMArena).
+  const handleBuyOnManapool = async () => {
+    try {
+      const res = await fetch(`/api/lists/${activeList.id}/cardlist?style=plain`);
+      if (!res.ok) throw new Error('export failed');
+      const text = await res.text();
+      if (!text) { showToast(t('lists.exportEmpty')); return; }
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // Older browsers / non-secure contexts: legacy path.
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      window.open('https://manapool.com/add-deck', '_blank', 'noopener,noreferrer');
+      showToast(t('lists.buyOnManapoolCopied'));
+    } catch (err) {
+      console.error(err);
+      showToast(t('lists.errExport'));
+    }
+  };
+
   // --- Derived data ---
   const filteredLists = lists.filter(l => {
     if (searchTerm && !l.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
@@ -459,6 +492,10 @@ function Lists({ showToast }) {
           <button className="btn btn-secondary" onClick={() => handleExport('detailed')}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Copy size={14} /> {t('lists.exportDetailed')}
+          </button>
+          <button className="btn btn-secondary" onClick={handleBuyOnManapool}
+            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <ShoppingBag size={14} /> {t('lists.buyOnManapool')}
           </button>
           <button className="btn btn-secondary" onClick={openEdit}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
