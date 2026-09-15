@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen, DollarSign } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -95,7 +95,21 @@ function DeckBuilder({ showToast, onNavigate }) {
 
   useBackGuard(showCreateModal, () => setShowCreateModal(false));
   useBackGuard(showSimulator, () => setShowSimulator(false));
-  useBackGuard(!!activeDeck, () => setActiveDeck(null));
+
+  // Leaving the detail view has to clear BOTH halves of the view state. The two
+  // render blocks are gated independently (`viewMode === 'list'` for the deck
+  // list, `viewMode === 'detail' && activeDeck` for the editor), so clearing
+  // only one of them shows neither: with activeDeck nulled but viewMode still
+  // 'detail' the list is suppressed by viewMode and the editor is suppressed by
+  // the empty deck, leaving a blank pane. That is exactly what browser Back did,
+  // because the guard below only reset activeDeck. One helper, always both.
+  const closeDeck = () => {
+    setActiveDeck(null);
+    setViewMode('list');
+    fetchDecks();
+  };
+
+  useBackGuard(!!activeDeck, closeDeck);
 
   useEffect(() => {
     fetchDecks();
@@ -672,6 +686,15 @@ function DeckBuilder({ showToast, onNavigate }) {
   } = deckDerived;
   const targetDeckCardsCount = activeDeck?.target_size || 60;
 
+  // One source of truth for which half of the component paints. Deriving it
+  // from BOTH pieces of view state (instead of gating the two blocks on
+  // independent conditions) makes the desync that blanked the pane unrepresentable:
+  // with no deck loaded there is nothing to edit, so the list always shows, and
+  // 'detail' without an active deck -- a failed fetch, a 422 unresolved-cards
+  // deck, the pre-import hop from the precon modal -- can never render an empty
+  // editor while the list is suppressed.
+  const detailOpen = viewMode === 'detail' && !!activeDeck;
+
   const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
   const renderSourceBadge = (source) => {
@@ -683,6 +706,27 @@ function DeckBuilder({ showToast, onNavigate }) {
         <Icon size={10} />
         {t(isPrecon ? 'deck.sourcePrecon' : 'deck.sourceMoxfield')}
       </span>
+    );
+  };
+
+  // A Moxfield-mirrored deck keeps its remote public id (set by the sync
+  // scheduler), so an opened deck can deep-link back to the same page on
+  // moxfield.com — the exact href the Moxfield sync panel uses. Hand-made and
+  // precon decks have no public id, so this renders nothing for them.
+  const renderMoxfieldLink = (deck) => {
+    if (!deck || deck.source !== 'moxfield' || !deck.moxfield_public_id) return null;
+    return (
+      <a
+        href={`https://moxfield.com/decks/${encodeURIComponent(deck.moxfield_public_id)}`}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        title={t('mfx.openOnMoxfield')}
+        aria-label={t('mfx.openOnMoxfield')}
+        style={{ color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}
+      >
+        <ExternalLink size={13} />
+      </a>
     );
   };
 
@@ -710,7 +754,7 @@ function DeckBuilder({ showToast, onNavigate }) {
     <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       
       {/* 1. SELECTION MENU VIEW OF ALL DECKS */}
-      {viewMode === 'list' && (
+      {!detailOpen && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           
           {/* Top Banner Header & Primary Action */}
@@ -969,6 +1013,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                               </span>
                             )}
                             {renderSourceBadge(deck.source)}
+                            {renderMoxfieldLink(deck)}
                           </div>
                         </div>
 
@@ -1126,6 +1171,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                             <span style={{ fontWeight: 700, color: 'var(--text-strong)' }}>{deck.name}</span>
                             {renderSourceBadge(deck.source)}
+                            {renderMoxfieldLink(deck)}
                             {deck.category && (
                               <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
                                 {deck.category}
@@ -1224,13 +1270,14 @@ function DeckBuilder({ showToast, onNavigate }) {
             ) : null}
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <button className="btn btn-secondary btn-icon-only" onClick={() => { setViewMode('list'); fetchDecks(); }} style={{ borderRadius: '50%' }}>
+              <button className="btn btn-secondary btn-icon-only" onClick={closeDeck} style={{ borderRadius: '50%' }}>
                 <ChevronLeft size={16} />
               </button>
               <div>
                 <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   {activeDeck.name}
                   {renderSourceBadge(activeDeck.source)}
+                  {renderMoxfieldLink(activeDeck)}
                   <span style={{ fontSize: '0.8rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--accent-yellow)', fontWeight: 600 }}>
                     ({totalDeckCardsCount}/{targetDeckCardsCount} cards)
                   </span>
