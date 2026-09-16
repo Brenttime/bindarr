@@ -1835,6 +1835,25 @@ button, input, select, textarea {
   box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
+/* Mode picker on Add Cards. The shared track above is full-bleed, which suits the
+   pages whose content runs page-width; here the pane it controls is a centred
+   ~720px card, so a full-width bar floats unanchored above it and reads as page
+   furniture rather than the card's own control. Match the card's measure and
+   centre it, so the toggle sits directly over the thing it switches. */
+.sl-mode-tabs {
+  max-width: 720px;
+  margin: 0 auto 1.1rem;
+}
+
+@media (max-width: 560px) {
+  /* Two labels side by side stop fitting at a phone's width, and a segmented
+     control that overflows its track is worse than a stacked one. */
+  .sl-mode-tabs {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+}
+
 @media (max-width: 768px) {
   .locations-wrapper {
     flex-direction: column !important;
