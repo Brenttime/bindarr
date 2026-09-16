@@ -1057,6 +1057,7 @@
   "bulk.selectedCount.other": "{count} selected",
   "addcards.tabScan": "Scan a card",
   "addcards.tabSecretLair": "Secret Lair drop",
+  "addcards.modePickerAria": "Choose how to add cards",
   "secretlair.title": "Add a Secret Lair Drop",
   "secretlair.subtitle": "Search a Secret Lair product and add its whole card list to your collection at once — foil or non-foil, with the copy counts the real drop ships.",
   "secretlair.searchPlaceholder": "Search by product name… e.g. A Box of Rocks, Deck Builder's Toolkit",

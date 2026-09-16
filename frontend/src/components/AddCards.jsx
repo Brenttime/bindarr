@@ -38,23 +38,34 @@ export default function AddCards({ onAddSuccess, showToast, setActiveTab }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1rem' }}>
-        {MODES.map(({ key, icon: Icon, label }) => (
+      {/* Segmented control: the house `.sub-nav-tabs` treatment, as in the public
+          collection page. Reusing it rather than hand-rolling a button row is what
+          keeps this on-theme for free — the glass pill container, the gradient-filled
+          active state and the (hover:hover) touch guard all come from index.css. */}
+      <div className="sub-nav-tabs" role="tablist" aria-label={t('addcards.modePickerAria')} style={{ marginBottom: '1rem' }}>
+        {MODES.map(({ key, icon: Icon, label }, i) => (
           <button
             key={key}
-            className='glass-btn'
+            type="button"
+            role="tab"
+            aria-selected={mode === key}
+            tabIndex={mode === key ? 0 : -1}
+            className={`sub-nav-tab ${mode === key ? 'active' : ''}`}
             onClick={() => setMode(key)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem',
-              fontWeight: mode === key ? 700 : 400,
-              color: mode === key ? 'var(--accent-yellow)' : 'var(--text-secondary)',
-              border: `1px solid ${mode === key ? 'var(--accent-yellow)' : 'var(--border)'}`,
+            onKeyDown={(e) => {
+              const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : null;
+              if (step === null) return;
+              e.preventDefault();
+              const nextIdx = (i + step + MODES.length) % MODES.length;
+              setMode(MODES[nextIdx].key);
+              e.currentTarget.parentElement?.querySelectorAll('[role="tab"]')[nextIdx]?.focus();
             }}
           >
-            <Icon size={14} /> {label}
+            <Icon size={16} aria-hidden="true" /> {label}
           </button>
         ))}
       </div>
+
       {mode === 'scan'
         ? <CameraScanner onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />
         : <SecretLairPanel onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
