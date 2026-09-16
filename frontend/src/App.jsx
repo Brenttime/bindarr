@@ -102,6 +102,7 @@ function App() {
   // (e.g. the deck list's "Moxfield Sync" button). Consumed on the next
   // Settings mount. Navigating anywhere else clears it.
   const [settingsTarget, setSettingsTarget] = useState(null);
+  const [listsHandoff, setListsHandoff] = useState(null);
 
   const tabGuardRef = useRef(null);
 
@@ -120,6 +121,7 @@ function App() {
     });
     setActiveTab(tab);
     setSettingsTarget(tab === 'settings' ? target : null);
+    if (tab === 'lists') setListsHandoff(target || null);
   };
 
   // Detect public share route on load
@@ -256,7 +258,7 @@ function App() {
       case 'deckbuilder':
         return <DeckBuilder showToast={showToast} onNavigate={goTab} />;
       case 'lists':
-        return <Lists showToast={showToast} />;
+        return <Lists showToast={showToast} handoff={listsHandoff} onHandoffDone={() => setListsHandoff(null)} />;
       case 'settings':
         return <Settings user={user} onUpdateUser={handleUpdateUser} showToast={showToast} target={settingsTarget} />;
       default:

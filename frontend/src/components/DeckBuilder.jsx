@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -7,7 +7,7 @@ import CheckoutWizardModal from './CheckoutWizardModal';
 import AddDeckChoiceModal from './AddDeckChoiceModal';
 import PreconSearchModal from './PreconSearchModal';
 import { useBackGuard } from '../utils/useBackGuard';
-import { buildDeckExport, parseDeckLine } from '../utils/deckText';
+import { buildDeckExport, parseDeckLine, missingEntries } from '../utils/deckText';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 import { canRegisterDeckInCollection, deckRegistrationCardCount } from '../utils/deckCollectionRegistration';
@@ -68,6 +68,9 @@ function DeckBuilder({ showToast, onNavigate }) {
 
   // Draw Simulator States
   const [showSimulator, setShowSimulator] = useState(false);
+  const [missingOpen, setMissingOpen] = useState(false);
+
+  const [missingListName, setMissingListName] = useState('');
   const [simulatorDeck, setSimulatorDeck] = useState([]);
   const [hand, setHand] = useState([]);
   const [mulliganCount, setMulliganCount] = useState(0);
@@ -95,6 +98,7 @@ function DeckBuilder({ showToast, onNavigate }) {
 
   useBackGuard(showCreateModal, () => setShowCreateModal(false));
   useBackGuard(showSimulator, () => setShowSimulator(false));
+  useBackGuard(missingOpen, () => setMissingOpen(false));
 
   // Leaving the detail view has to clear BOTH halves of the view state. The two
   // render blocks are gated independently (`viewMode === 'list'` for the deck
@@ -104,6 +108,7 @@ function DeckBuilder({ showToast, onNavigate }) {
   // the empty deck, leaving a blank pane. That is exactly what browser Back did,
   // because the guard below only reset activeDeck. One helper, always both.
   const closeDeck = () => {
+    setMissingOpen(false);
     setActiveDeck(null);
     setViewMode('list');
     fetchDecks();
@@ -544,15 +549,37 @@ function DeckBuilder({ showToast, onNavigate }) {
       .catch(() => showToast(t('deck.errCopy')));
   };
 
-  // Copy just the cards this deck needs beyond what the collection owns — the
-  // "what am I missing for this deck?" list. Same math as the buylist format,
-  // so it stays consistent with the TCGplayer Mass Entry path.
-  const handleCopyMissing = () => {
-    const text = buildDeckExport(activeDeck?.cards, 'buylist');
-    if (!text) { showToast(t('deck.nothingToBuy')); return; }
-    navigator.clipboard.writeText(text)
+  // "What's missing" compares the deck against the owned collection (shared
+  // missingEntries math) and opens a panel listing the shortfall. From there
+  // the user can copy the list or hand it to the Lists tab as a prefilled
+  // create form — one click from "missing" to a shopping list.
+  const missingRows = () => missingEntries(activeDeck?.cards || []);
+
+  const openMissing = () => {
+    if (!activeDeck) return;
+    setMissingListName(t('deck.missingListDefault', { name: activeDeck.name || t('deck.untitled') }));
+    setMissingOpen(true);
+  };
+
+  const closeMissing = () => setMissingOpen(false);
+
+  const missingLines = (rows) => rows.map((r) => `${r.need - r.have} ${r.name}`).join('\n');
+
+  const copyMissing = () => {
+    const rows = missingRows();
+    if (!rows.length) { showToast(t('deck.nothingToBuy')); return; }
+    navigator.clipboard.writeText(missingLines(rows))
       .then(() => showToast(t('deck.missingCopied')))
       .catch(() => showToast(t('deck.errCopy')));
+  };
+
+  const saveMissingAsList = () => {
+    const rows = missingRows();
+    if (!rows.length) { showToast(t('deck.nothingToBuy')); return; }
+    if (!onNavigate) return;
+    const name = missingListName.trim() || t('deck.missingListDefault', { name: activeDeck?.name || '' });
+    onNavigate('lists', { createMissing: { name, text: missingLines(rows) } });
+    setMissingOpen(false);
   };
 
   // Copy the buylist and open TCGplayer Mass Entry — user pastes (their mass
@@ -1321,7 +1348,7 @@ function DeckBuilder({ showToast, onNavigate }) {
               {/* The deck action that's actually used: what's still missing from the collection */}
               <button
                 className="btn btn-primary"
-                onClick={handleCopyMissing}
+                onClick={openMissing}
                 title={t('deck.missingHint')}
                 style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
               >
@@ -2001,6 +2028,50 @@ function DeckBuilder({ showToast, onNavigate }) {
       )}
 
       {/* C. Export Modal */}
+      {/* What's missing: deck requirement vs owned collection, with copy and
+          create-list-from-shortfall exits riding the shared deficit math. */}
+      {missingOpen && (
+        <div className="modal-overlay" onClick={closeMissing}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '560px', width: '100%', maxHeight: '80vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.6rem', position: 'relative' }}>
+            <button className="btn btn-secondary btn-icon-only" onClick={closeMissing} title={t('common.close')}
+              style={{ position: 'absolute', top: '1rem', right: '1rem', borderRadius: '50%' }}>
+              <X size={16} />
+            </button>
+            <h3 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.4rem' }}>{t('deck.exportMissing')}</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>{t('deck.missingHint')}</p>
+            {missingRows().length === 0 ? (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', padding: '1rem 0' }}>{t('deck.nothingToBuy')}</p>
+            ) : (
+              <>
+                <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '0.3rem 0.7rem', marginBottom: '1rem', maxHeight: '40vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                  {missingRows().map((r, i) => (
+                    <div key={`${r.name}-${r.card_id ?? r.scryfall_id ?? 'x'}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent)', minWidth: '3rem' }}>+{r.need - r.have}</span>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-strong)', flex: 1 }}>{r.name}</span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{r.have}/{r.need}</span>
+                    </div>
+                  ))}
+                </div>
+                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>{t('lists.name')}</label>
+                <input className="input-control" value={missingListName} onChange={(e) => setMissingListName(e.target.value)}
+                  style={{ width: '100%', fontSize: '0.85rem', marginBottom: '1rem' }} />
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-secondary" onClick={closeMissing}>{t('common.close')}</button>
+                  <button className="btn btn-secondary" onClick={copyMissing} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <Copy size={14} /> {t('deck.copyClipboard')}
+                  </button>
+                  <button className="btn btn-primary" onClick={saveMissingAsList} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <ListChecks size={14} /> {t('deck.createMissing')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {showExportModal && (
         <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
           <div className="glass-panel" style={{ maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.75rem', position: 'relative' }}>

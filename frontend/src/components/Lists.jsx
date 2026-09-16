@@ -20,7 +20,7 @@ const ACCENTS = [
   { name: 'Orange', hex: '#f97316' },
 ];
 
-function Lists({ showToast }) {
+function Lists({ showToast, handoff, onHandoffDone }) {
   const { t } = useT();
 
   // View state: 'list' (all lists) or 'detail' (one list's cards)
@@ -199,6 +199,22 @@ function Lists({ showToast }) {
     setSearchResults([]);
     await loadList(list.id);
   };
+
+  // Handoff from the deck builder's "what's missing" panel: prefill the
+  // create form with the shortfall instead of firing a blind create; the
+  // create modal's own save path stays the single owner of list creation.
+  useEffect(() => {
+    if (!handoff) return;
+    if (handoff.createMissing) {
+      setNewName(handoff.createMissing.name || '');
+      setNewDesc('');
+      setNewAccent('#10b981');
+      setImportText(handoff.createMissing.text || '');
+      setShowCreate(true);
+    }
+    onHandoffDone?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handoff]);
 
   // --- Card search (debounced as the user types) ---
   const doSearch = async (query) => {
