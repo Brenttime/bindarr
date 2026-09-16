@@ -1835,13 +1835,13 @@ button, input, select, textarea {
   box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
-/* Mode picker on Add Cards. The shared track above is full-bleed, which suits the
-   pages whose content runs page width; Add Cards is not one of them — each pane
-   centres itself at its own measure (600px scanner, 720px drop search), so a
-   full-width bar floats unanchored above a narrower card and reads as page
-   furniture. The width comes from AddCards per mode (it knows which pane is up);
-   this only centres it and drops it onto the card. */
+/* Mode picker on Add Cards. The shared track above runs full-bleed, which suits
+   pages whose content is page width; Add Cards is not one of them -- both of its
+   panes centre themselves in the app's 600px scanner column, so a full-width bar
+   hangs 60px past the card on each side and reads as page furniture instead of
+   the card's own control. Match that column, so toggle and card share an edge. */
 .sl-mode-tabs {
+  max-width: 600px;
   margin: 0 auto 1.1rem;
 }
 
