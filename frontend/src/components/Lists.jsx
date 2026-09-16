@@ -8,6 +8,7 @@ import { useBackGuard } from '../utils/useBackGuard';
 import { displayName, setReference } from '../utils/languages';
 import { useT } from '../utils/i18n';
 import { cardKey, findSameCard } from '../utils/cardIdentity';
+import { buildManapoolUrl } from '../utils/manapoolUrl';
 
 const ACCENTS = [
   { name: 'Emerald', hex: '#10b981' },
@@ -318,20 +319,24 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     }
   };
 
-  // "Buy these on ManaPool": copy the list in the plain `N Card Name` shape
-  // ManaPool's mass-entry box expects, then open their import page (manapool.com
-  // /add-deck, verified live) in a new tab. There is no URL prefill to ride —
-  // the decklist textarea is the only door and the site's own docs describe a
-  // clipboard-paste flow — so we stage the text and let the user paste once.
-  // Saves retyping the list and any format wrangling; the plain shape is what
-  // the box parses best (it also takes TCG-style lines, but those drag set
-  // info Bindarr's own export keeps for MMArena).
+  // "Buy these on ManaPool": hand the list to ManaPool's Mass Entry page as a
+  // prefilled deep link. /add-deck reads a base64 `deck` query param and drops
+  // it straight into its paste box (verified against the live site), so the
+  // user lands on a ready-to-submit list rather than an empty box they have to
+  // paste into. The plain "N Card Name" shape is what that box parses, which is
+  // exactly what the shared card-list formatter emits for style=plain.
+  //
+  // The clipboard copy is kept as a convenience (their cart flow can still take
+  // a paste) but is deliberately non-fatal: a denied or unavailable clipboard
+  // in an insecure context must not sink a link that already works.
   const handleBuyOnManapool = async () => {
     try {
       const res = await fetch(`/api/lists/${activeList.id}/cardlist?style=plain`);
       if (!res.ok) throw new Error('export failed');
       const text = await res.text();
       if (!text) { showToast(t('lists.exportEmpty')); return; }
+      const url = buildManapoolUrl(text.split('\n'));
+      if (!url) { showToast(t('lists.exportEmpty')); return; }
       try {
         await navigator.clipboard.writeText(text);
       } catch {
@@ -343,8 +348,8 @@ function Lists({ showToast, handoff, onHandoffDone }) {
         document.execCommand('copy');
         ta.remove();
       }
-      window.open('https://manapool.com/add-deck', '_blank', 'noopener,noreferrer');
-      showToast(t('lists.buyOnManapoolCopied'));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      showToast(t('lists.buyOnManapoolDone'));
     } catch (err) {
       console.error(err);
       showToast(t('lists.errExport'));

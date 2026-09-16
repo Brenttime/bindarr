@@ -991,7 +991,7 @@
   "lists.exportDetailed": "Copy (detailed)",
   "lists.exportCopied": "List copied to clipboard.",
   "lists.buyOnManapool": "Buy on ManaPool",
-  "lists.buyOnManapoolCopied": "List copied — paste it into ManaPool's deck import box.",
+  "lists.buyOnManapoolDone": "Opening ManaPool with your list ready to submit.",
   "lists.exportEmpty": "This list has no cards yet.",
   "lists.errExport": "Could not export the list.",
   "lists.errCard": "Could not add the card.",
