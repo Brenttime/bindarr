@@ -153,7 +153,7 @@ export default function SecretLairPanel({ onAddSuccess, setActiveTab }) {
     : '';
 
   return (
-    <div className="glass-panel" style={{ maxWidth: '720px', margin: '0 auto', padding: '1.25rem 1.4rem' }}>
+    <div className="glass-panel" style={{ maxWidth: '600px', margin: '0 auto', padding: '1.25rem 1.4rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.25rem' }}>
         <Sparkles size={20} style={{ color: 'var(--accent-yellow)' }} />
         <h2 style={{ fontSize: '1.15rem', color: 'var(--text-strong)' }}>{t('secretlair.title')}</h2>

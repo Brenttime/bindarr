@@ -1836,12 +1836,12 @@ button, input, select, textarea {
 }
 
 /* Mode picker on Add Cards. The shared track above is full-bleed, which suits the
-   pages whose content runs page-width; here the pane it controls is a centred
-   ~720px card, so a full-width bar floats unanchored above it and reads as page
-   furniture rather than the card's own control. Match the card's measure and
-   centre it, so the toggle sits directly over the thing it switches. */
+   pages whose content runs page width; Add Cards is not one of them — each pane
+   centres itself at its own measure (600px scanner, 720px drop search), so a
+   full-width bar floats unanchored above a narrower card and reads as page
+   furniture. The width comes from AddCards per mode (it knows which pane is up);
+   this only centres it and drops it onto the card. */
 .sl-mode-tabs {
-  max-width: 720px;
   margin: 0 auto 1.1rem;
 }
 

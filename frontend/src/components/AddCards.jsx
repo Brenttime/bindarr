@@ -42,8 +42,13 @@ export default function AddCards({ onAddSuccess, showToast, setActiveTab }) {
           as on the public collection page. Reusing it rather than hand-rolling
           keeps it on-theme for free — the glass pill track, the gradient-filled
           active state, and the (hover:hover) touch guard all come from there.
-          `.sl-mode-tabs` narrows it to the card's own measure below. */}
-      <div className="sub-nav-tabs sl-mode-tabs" role="tablist" aria-label={t('addcards.modePickerAria')}>
+          `.sl-mode-tabs` centres it; the width is set per mode so it matches the
+          pane underneath it (each pane centres itself at its own measure). */}
+      <div
+        className="sub-nav-tabs sl-mode-tabs"
+        role="tablist"
+        aria-label={t('addcards.modePickerAria')}
+      >
         {MODES.map(({ key, icon: Icon, label }, i) => (
           <button
             key={key}
