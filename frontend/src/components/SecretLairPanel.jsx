@@ -168,7 +168,7 @@ export default function SecretLairPanel({ onAddSuccess, setActiveTab }) {
               <input
                 autoFocus
                 className="input-control"
-                style={{ paddingLeft: '2rem' }}
+                style={{ paddingLeft: '2rem', width: '100%' }}
                 placeholder={t('secretlair.searchPlaceholder')}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -179,6 +179,16 @@ export default function SecretLairPanel({ onAddSuccess, setActiveTab }) {
               {t('precon.search')}
             </button>
           </div>
+
+          {/* The examples sit under the field, not in the placeholder: a
+              placeholder vanishes the moment you start typing, which is exactly
+              when a hint is least wanted, and the full string did not fit the
+              box anyway. Hidden once a query is on the page. */}
+          {!query && (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: '0.45rem 0 0' }}>
+              {t('secretlair.examples')}
+            </p>
+          )}
 
           {stale && <p style={{ color: 'var(--accent-yellow)', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>{t('secretlair.stale')}</p>}
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '0.8rem', margin: '0 0 0.5rem' }}>{error}</p>}
