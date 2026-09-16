@@ -227,7 +227,7 @@ export default function SecretLairPanel({ onAddSuccess, setActiveTab }) {
 
       {view === 'preview' && selected && (
         <>
-          <button type="button" className="btn btn-ghost" style={{ marginBottom: '0.6rem', padding: '0.2rem 0' }} onClick={reset}>‹ {t('secretlair.back')}</button>
+          <button type="button" className="btn btn-secondary" style={{ marginBottom: '0.6rem', padding: '0.2rem 0.6rem', fontSize: '0.82rem' }} onClick={reset}>‹ {t('secretlair.back')}</button>
           <div style={{ marginBottom: '0.4rem' }}>
             <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-strong)' }}>{chosenName}</span>
             {selected.code && <span style={{ marginLeft: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>({selected.code})</span>}
@@ -238,12 +238,12 @@ export default function SecretLairPanel({ onAddSuccess, setActiveTab }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0.6rem 0 0.4rem' }}>
             <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{t('card.printing')}</span>
             <div style={{ display: 'flex', gap: '0.35rem' }}>
-              <button type="button" className="btn" onClick={() => choosePrinting('nonfoil')} disabled={selected.foilOnly}
+              <button type="button" className="btn btn-secondary" onClick={() => choosePrinting('nonfoil')} disabled={selected.foilOnly}
                 style={{ fontWeight: printing === 'nonfoil' ? 700 : 400, opacity: selected.foilOnly ? 0.4 : 1,
                   border: `1px solid ${printing === 'nonfoil' ? 'var(--accent-yellow)' : 'var(--border)'}` }}>
                 {t('secretlair.nonfoil')}
               </button>
-              <button type="button" className="btn" onClick={() => choosePrinting('foil')} disabled={!selected.hasFoil}
+              <button type="button" className="btn btn-secondary" onClick={() => choosePrinting('foil')} disabled={!selected.hasFoil}
                 style={{ fontWeight: printing === 'foil' ? 700 : 400, opacity: selected.hasFoil ? 1 : 0.4,
                   border: `1px solid ${printing === 'foil' ? 'var(--accent-yellow)' : 'var(--border)'}` }}>
                 {t('secretlair.foil')}
