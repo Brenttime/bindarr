@@ -38,6 +38,19 @@ const crypto = require('crypto');
 // --- endpoints (pinned; never user-supplied, so the saved credential can only
 // ever be sent where the user themselves chose to send it) ---
 const MANAPOOL_BASE = process.env.MANAPOOL_API_BASE || 'https://manapool.com/api/v1';
+// Candidate buyer-list routes for the recent-order picker.
+// ManaPool's official examples document only a BY-NUMBER buyer detail route
+// (plus a seller list). These buyer-list shapes are plausible guesses; each is
+// tried in order and only a recognisable order list is accepted. If none
+// answer, the picker fails with an honest message and manual order numbers
+// keep working. Only the FIRST that returns a list is used.
+const MANAPOOL_LIST_PATHS = [
+  '/orders/buyer?page=1&per_page=3',
+  '/buyer/orders?page=1&per_page=3',
+  '/buyer/orders/recent?page=1&per_page=3',
+];
+const RECENT_LIMIT = 3;
+
 const TCG_GATEWAY_BASES = [
   process.env.TCG_ORDER_BASE, // single-base override for testing
 ].filter(Boolean).length ? [process.env.TCG_ORDER_BASE] : [
@@ -221,10 +234,13 @@ function merge(preferred, fallback) {
   return preferred && preferred.status ? preferred : fallback;
 }
 
-async function fetchTcgOrder({ cookies, customerId, orderNumber, httpGet: http = httpGet }) {
+async function fetchTcgOrder({ cookies, customerId, orderNumber, httpGet: http = httpGet, requireMatch = true }) {
   if (!cookies) throw Object.assign(new Error('TCGplayer session cookie is not configured'), { status: 400 });
   const num = String(orderNumber || '').trim();
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(num)) throw Object.assign(new Error('Order number is not valid'), { status: 400 });
+  // requireMatch=false is the recent-list path: the caller wants the LIST,
+  // not a specific order, so a 404 on every probe path means "no list",
+  // not "unknown number" - keep the status honest for that caller.
   const headers = { Cookie: cookies, Referer: TCG_REFERER };
   const ids = [customerId, ...customerIdHints(cookies)].filter(Boolean);
   const seen = new Set();
@@ -285,6 +301,60 @@ function orderArray(body) {
     }
   }
   return [];
+}
+
+// --- the recent-order list ("most recent 3") ---------------------------------
+// Both providers answer the same question with a LIST call; only ManaPool needs
+// one extra attempt, because its documented buyer route is a BY-NUMBER detail
+// route — there is no buyer list route in the official examples (only a seller
+// one). We try the plausible buyer-list shapes first and fail with an honest
+// "not available" rather than a crash if none of them speak.
+async function fetchManapoolRecentOrders({ email, token, httpGet: http = httpGet } = {}) {
+  if (!email || !token) throw Object.assign(new Error('ManaPool credentials are not configured'), { status: 400 });
+  const headers = { 'X-ManaPool-Email': email, 'X-ManaPool-Access-Token': token, Referer: 'https://manapool.com/account/orders' };
+  let last = null;
+  for (const p of MANAPOOL_LIST_PATHS) {
+    const r = await http(`${MANAPOOL_BASE}${p}`, headers);
+    last = r;
+    if (r.status === 401 || r.status === 403) {
+      throw Object.assign(new Error('ManaPool rejected the saved credentials. Check the account email and the access token under ManaPool → account → Integration settings, then save them again.'), { status: 401 });
+    }
+    if (r.status >= 200 && r.status < 300 && looksLikeOrderList(r.body)) return r;
+  }
+  throw Object.assign(new Error(`ManaPool did not return a recent-order list (last status ${last ? last.status : 'none'}). The order-number field still works.`), { status: 502, listUnavailable: true });
+}
+
+async function fetchTcgRecentOrders({ cookies, customerId, httpGet: http = httpGet } = {}) {
+  // The recent-list IS what fetchTcgOrder's path-probing already retrieves
+  // (per_page=200, page 1); reuse it without requiring an order number by
+  // passing a sentinel the matcher ignores.
+  return fetchTcgOrder({ cookies, customerId, orderNumber: '0', httpGet: http, requireMatch: false });
+}
+
+// Normalise a provider list response into the small header-only shape the
+// picker UI needs. Deliberately NO addresses/emails/payment data.
+function recentOrderSummaries(body, limit = RECENT_LIMIT) {
+  const list = orderArray(body);
+  const rows = list.map((o) => {
+    const lines = orderLines(o, { includeExtras: false });
+    const number = pick(o, ['number', 'orderNumber', 'order_number', 'friendly_id', 'friendlyId', 'id', 'orderId', 'order_id']);
+    const placed = pick(o, ['created', 'createdAt', 'created_at', 'date', 'placedAt', 'orderDate']);
+    return {
+      number: number != null ? String(number) : null,
+      placedAt: placed || null,
+      status: pick(o, ['status', 'orderStatus', 'fulfillmentStatus', 'fulfillment_status']) || null,
+      cardCount: lines.__cardCopies || 0,
+      lineCount: lines.length,
+      total_cents: pick(o, ['total_cents', 'totalCents', 'total', 'orderTotal']) ?? null,
+    };
+  }).filter((r) => r.number);
+  // Newest first on whatever timestamp the provider gave; providers that sort
+  // already are left untouched.
+  const withDates = rows.filter((r) => r.placedAt);
+  if (withDates.length === rows.length && rows.length > 1) {
+    rows.sort((a, b) => String(b.placedAt).localeCompare(String(a.placedAt)));
+  }
+  return rows.slice(0, limit);
 }
 
 // --- normalising one order's lines ---------------------------------------------
@@ -642,12 +712,16 @@ async function previewOrder({ lines, userId, includeExtras = false }, deps = {})
 
 module.exports = {
   MANAPOOL_BASE,
+  RECENT_LIMIT,
   normalizeCookies,
   cookieCount,
   maskSecret,
   maskEmail,
   customerIdHints,
   fetchManapoolOrder,
+  fetchManapoolRecentOrders,
+  fetchTcgRecentOrders,
+  recentOrderSummaries,
   fetchTcgOrder,
   parseOrderPayload,
   orderLines,

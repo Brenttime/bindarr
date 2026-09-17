@@ -60,6 +60,31 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
   const readyFor = (src) => !!status && !!(status[src] && status[src].configured);
   const needsSetup = status && !readyFor(source);
 
+  // Recent-order picker: fetch the source's list when the form opens (and when
+  // the source tab changes). It is a convenience, never a blocker: any failure
+  // just hides the list and the manual number field stays the path.
+  const [recent, setRecent] = useState({ loading: false, orders: null, error: '' });
+  const recentSeq = useRef(0);
+  const loadRecent = async (src) => {
+    if (!readyFor(src)) return;
+    const seq = ++recentSeq.current;
+    setRecent((r) => ({ ...r, loading: true }));
+    try {
+      const res = await fetch(`/api/marketplace/recent/${src}`);
+      const data = await res.json().catch(() => ({}));
+      if (seq !== recentSeq.current) return;
+      if (!res.ok) { setRecent({ loading: false, orders: null, error: data.list_unavailable ? 'list' : 'error' }); return; }
+      setRecent({ loading: false, orders: data.orders || [], error: '' });
+    } catch {
+      if (seq === recentSeq.current) setRecent({ loading: false, orders: null, error: 'error' });
+    }
+  };
+
+  useEffect(() => {
+    if (status && readyFor(source)) loadRecent(source);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, source]);
+
   const doPreview = async () => {
     const num = orderNumber.trim();
     if (!num) return;
@@ -151,6 +176,31 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
                      <KeyRound size={12} /> {t('orderimport.goToSettings')}
                    </button></>}
           </div>
+        )}
+
+        {/* Recent orders: a quick-pick list when the provider exposes one. */}
+        {readyFor(source) && recent.loading && (
+          <div style={{ fontSize: '.78rem', color: 'var(--text-secondary)' }}>{t('orderimport.recentLoading')}</div>
+        )}
+        {readyFor(source) && !recent.loading && Array.isArray(recent.orders) && recent.orders.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '.35rem' }}>
+            <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--text-secondary)' }}>{t('orderimport.recentTitle')}</div>
+            {recent.orders.map((o) => (
+              <button key={o.number} type="button"
+                className={`btn btn-small ${orderNumber.trim() === o.number ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ justifyContent: 'flex-start', textAlign: 'left', whiteSpace: 'normal' }}
+                disabled={busy}
+                onClick={() => { setOrderNumber(o.number); setError(''); }}>
+                <span style={{ fontWeight: 700 }}>#{o.number}</span>
+                <span style={{ opacity: .75, marginLeft: '.5rem' }}>{String(o.placedAt || '').slice(0, 10)}</span>
+                {o.status && <span style={{ opacity: .6, marginLeft: '.5rem' }}>{o.status}</span>}
+                <span style={{ marginLeft: 'auto', opacity: .8 }}>{t('orderimport.recentCopies', { count: o.cardCount })}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {readyFor(source) && !recent.loading && recent.error === 'list' && (
+          <div style={{ fontSize: '.72rem', color: 'var(--text-secondary)' }}>{t('orderimport.recentUnavailable')}</div>
         )}
 
         <div className="form-group" style={{ marginBottom: 0 }}>

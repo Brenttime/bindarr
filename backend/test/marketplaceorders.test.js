@@ -426,3 +426,62 @@ Promise.resolve()
     if (err && err.stack) console.error(err.stack.split('\n').slice(0, 4).join('\n'));
     process.exitCode = 1;
   });
+
+
+// --- recent-order summaries -------------------------------------------------
+const { fetchManapoolRecentOrders, fetchTcgRecentOrders, recentOrderSummaries, RECENT_LIMIT } =
+  require('../src/utils/marketplaceOrders');
+
+assert.strictEqual(RECENT_LIMIT, 3, 'the picker promises three');
+
+// summaries: header-only fields, newest-first, capped, no PII keys.
+{  const list = [
+    { orderNumber: 'A1', created: '2026-09-01T10:00:00Z', status: 'SHIPPED', totalCents: 1250,
+      customer: { email: 'me@x.com', address: '1 Main' },
+      items: [{ product: { single: { name: 'Tarmogoyf', set: 'FUT', number: '147' } }, quantity: 2, unitPriceCents: 500 }] },
+    { orderNumber: 'B2', created: '2026-09-10T10:00:00Z', status: 'NEW', totalCents: 999,
+      items: [{ product: { single: { name: 'Lion' + 's Eye', kind: 'sealed' } }, quantity: 1 }] },
+    { orderNumber: 'C3', created: '2026-08-01T10:00:00Z', status: 'SHIPPED', totalCents: 10,
+      items: [{ card: { name: 'Forest' }, quantity: 4 }] },
+    { orderNumber: 'D4', created: '2026-07-01T10:00:00Z', items: [] },
+  ];
+  const rows = recentOrderSummaries(list);
+  assert.strictEqual(rows.length, 3, 'capped at RECENT_LIMIT');
+  assert.deepStrictEqual(rows.map((r) => r.number), ['B2', 'A1', 'C3'], 'newest first');
+  assert.strictEqual(rows[1].cardCount, 2, 'copies counted');
+  assert.strictEqual(rows[0].cardCount, 0, 'a sealed-only order has no card copies');
+  const blob = JSON.stringify(rows);
+  assert.ok(!blob.includes('me@x.com') && !blob.includes('Main'), 'no PII rides along');
+}
+
+// fetchManapoolRecentOrders: first list-shaped candidate wins; auth short-circuits.
+{
+  const seen = [];
+  const mk = (status, body) => async (url) => { seen.push(url); return { status, body }; };
+  (async () => {
+    const calls = [];
+    const http = async (url) => {
+      calls.push(url);
+      if (calls.length === 1) return { status: 404, body: 'nope' };
+      if (calls.length === 2) return { status: 200, body: { data: [{ number: 'X9', items: [] }] } };
+      throw new Error('should stop at the first list');
+    };
+    const r = await fetchManapoolRecentOrders({ email: 'a@b.co', token: 't', httpGet: http });
+    assert.strictEqual(calls.length, 2, 'stopped at the first route that answered with a list');
+    assert.ok(calls[0].includes('per_page=3'), 'requests only what the picker shows');
+    const rows = recentOrderSummaries(r.body);
+    assert.strictEqual(rows[0].number, 'X9');
+    // none speak -> honest listUnavailable error
+    const dead = async () => ({ status: 404, body: {} });
+    await assert.rejects(
+      fetchManapoolRecentOrders({ email: 'a@b.co', token: 't', httpGet: dead }),
+      (e) => e.listUnavailable === true && e.status === 502,
+      'unhelpful upstream -> listUnavailable, not a crash');
+    // 401 -> auth error, not listUnavailable
+    const denied = async () => ({ status: 401, body: {} });
+    await assert.rejects(
+      fetchManapoolRecentOrders({ email: 'a@b.co', token: 't', httpGet: denied }),
+      (e) => e.status === 401 && !e.listUnavailable);
+    console.log('recent-order util tests passed');
+  })().catch((e) => { console.error('recent-order util tests FAILED:', e.message); process.exit(1); });
+}

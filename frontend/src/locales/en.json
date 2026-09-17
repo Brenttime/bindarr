@@ -1156,5 +1156,9 @@
   "marketplace.errPopupClosed": "The sign-in popup was closed before a credential came back.",
   "marketplace.errNoToken": "You are signed in, but no API token was found on the ManaPool settings page. Generate one there first, then click Connect again.",
   "marketplace.errNoCookies": "No readable TCGplayer cookies came back. TCGplayer marks session cookies HttpOnly in many setups — those are invisible to scripts by design, so use the manual paste from developer tools instead.",
-  "marketplace.errRelay": "The sign-in relay did not return a credential. Try again, or use the manual fields."
+  "marketplace.errRelay": "The sign-in relay did not return a credential. Try again, or use the manual fields.",
+  "orderimport.recentLoading": "Checking your recent orders...",
+  "orderimport.recentTitle": "RECENT ORDERS - TAP TO PICK",
+  "orderimport.recentCopies": "{count} cards",
+  "orderimport.recentUnavailable": "This source does not share a recent-order list - type the order number instead."
 }

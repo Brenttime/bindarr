@@ -18,6 +18,7 @@ const { authenticateToken } = require('../middleware/auth');
 const {
   normalizeCookies, cookieCount, maskSecret, maskEmail, customerIdHints,
   fetchManapoolOrder, fetchTcgOrder, parseOrderPayload, addOrderToCollection, previewOrder,
+  fetchManapoolRecentOrders, fetchTcgRecentOrders, recentOrderSummaries, RECENT_LIMIT,
 } = require('../utils/marketplaceOrders');
 
 const router = express.Router();
@@ -163,7 +164,41 @@ async function orderFromRequest(req, res) {
   }
 }
 
+// The most recent orders for one source, for the picker list. Same credential
+// and enabled gates as the fetch path (a disabled source stays silent here
+// too), and the same no-secret-echo rule on errors. ManaPool's buyer-list
+// route is a guess (its docs only show by-number detail), so an unhelpful
+// upstream answers as list_unavailable and the UI keeps the manual field.
+router.get('/recent/:source', async (req, res) => {
+  const source = String(req.params.source || '').toLowerCase();
+  if (!SOURCES.includes(source)) return res.status(400).json({ error: 'unknown source' });
+  const row = await loadRow(req.user.id);
+  if (!row) return res.status(404).json({ error: 'User not found' });
+  try {
+    let body;
+    if (source === 'manapool') {
+      if (!row.manapool_email || !row.manapool_token || !row.manapool_enabled) {
+        return res.status(400).json({ error: 'ManaPool is not configured or is turned off' });
+      }
+      body = (await fetchManapoolRecentOrders({ email: row.manapool_email, token: row.manapool_token })).body;
+    } else {
+      if (!row.tcgplayer_cookies || !row.tcgplayer_enabled) {
+        return res.status(400).json({ error: 'TCGplayer is not configured or is turned off' });
+      }
+      body = (await fetchTcgRecentOrders({ cookies: row.tcgplayer_cookies, customerId: req.query.customer_id || null })).body;
+    }
+    res.json({ source, orders: recentOrderSummaries(body, RECENT_LIMIT) });
+  } catch (err) {
+    const status = err && err.status ? err.status : 502;
+    res.status(status).json({
+      error: err.message || 'Recent orders could not be read',
+      list_unavailable: err.listUnavailable === true || status === 502,
+    });
+  }
+});
+
 router.post('/preview', async (req, res) => {
+
   const out = await orderFromRequest(req, res);
   if (!out) return;
   try {
