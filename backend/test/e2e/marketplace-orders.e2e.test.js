@@ -19,8 +19,10 @@ const tmpDb = path.join(os.tmpdir(), `bindarr-mkt-e2e-${process.pid}.db`);
 const projectRoot = path.join(__dirname, '../../..');
 
 // --- the fake markets ------------------------------------------------------
-// Shapes are the captured real ones: ManaPool's documented buyer detail
-// (`items[].product.single`) and the gateway's `{ data: [...] }` order list.
+// MP_ORDER is the documented shape and stays a deliberate synthetic: it proves
+// the top-level-items reader still works. The BUYER_LIST / BUYER_DETAILS below
+// are the captured LIVE shapes, because that is what the real ManaPool sends
+// for the buyer routes and the picker test has to face reality, not the docs.
 const MP_ORDER = {
   id: 4402,
   number: '90001',
@@ -39,6 +41,14 @@ const TCG_ORDER = {
     items: [{ productName: 'Lightning Bolt', set: 'm10', number: '146', quantity: 3, pricePaid: 1.25 }],
   }],
 };
+
+// The buyer routes answer in the captured live contract (same files the unit
+// test asserts against), so the picker is exercised against what ManaPool
+// actually sends: a list whose rows carry NO items, plus per-order details that
+// hang their cards off order_seller_details[].items. Serving the doc shape here
+// would let the 0-card bug sail straight through again.
+const BUYER_LIST = require('../fixtures/manapool/buyer-orders.json');
+const BUYER_DETAILS = require('../fixtures/manapool/buyer-order-details-by-uuid.json');
 
 function fakeMarkets() {
   const hits = [];
@@ -59,6 +69,11 @@ function fakeMarkets() {
       if (url.includes('/orders/not-a-list')) return send(200, { nothing: 'matched' });
       if (url.includes('/orders/wrong-number')) return send(200, { data: [{ number: '111', items: [] }] });
       if (url.includes('/orders/90001')) return send(200, MP_ORDER);
+      // The live buyer routes, ahead of the doc-shape cases so those keep their
+      // own coverage: the list (rows with no items) and the uuid-keyed details.
+      if (url.split('?')[0].endsWith('/buyer/orders')) return send(200, BUYER_LIST);
+      const buyer = url.split('?')[0].match(/\/buyer\/orders\/([0-9a-f-]{36})/i);
+      if (buyer && BUYER_DETAILS[buyer[1]]) return send(200, BUYER_DETAILS[buyer[1]]);
       return send(404, { message: 'not found' });
     }
     if (url.includes('/customers/') && url.includes('/orders')) return send(200, TCG_ORDER);
@@ -280,7 +295,49 @@ async function runTests() {
     assert.strictEqual(noProvider.status, 400, 'an empty credential save must be refused');
     console.log('PASS: F9-TC10');
 
-    // F9-TC11: clearing a provider's credentials works and empties the status.
+    // F9-TC11b: the recent-orders picker route. This is the endpoint that
+    // shipped listing every ManaPool order as 0 cards, and it had NO coverage
+    // until the fix - which is precisely how the bug got out. The fake answers
+    // in the live contract shape ({ order: {...} }, cards under
+    // order_seller_details[].items, list rows with no items at all), so this
+    // fails if the reader ever slides back to the doc shape.
+    const getRecent = async (source, headers = H) => {
+      const r = await fetch(`${base}/api/marketplace/recent/${source}`, { headers });
+      return { status: r.status, body: await r.json().catch(() => ({})) };
+    };
+    const recMp = await getRecent('manapool');
+    assert.strictEqual(recMp.status, 200, `the ManaPool picker must answer, got ${recMp.status}: ${JSON.stringify(recMp.body)}`);
+    assert.ok(Array.isArray(recMp.body.orders) && recMp.body.orders.length === 3, 'the picker promises three');
+    assert.ok(recMp.body.orders.every((o) => o.cardCount > 0),
+      `no picker row may read 0 cards when the order has cards, got ${JSON.stringify(recMp.body.orders.map((o) => [o.number, o.cardCount]))}`);
+    // 517062 claims one item on the list row and really is two lines / three copies.
+    const canary = recMp.body.orders.find((o) => o.number === '517062');
+    assert.ok(canary, 'the newest three lead the list (rows arrive oldest-first upstream)');
+    assert.strictEqual(canary.cardCount, 3, 'the count comes from the detail, not the list item_count of 1');
+    assert.strictEqual(canary.lineCount, 2);
+    assert.deepStrictEqual(recMp.body.orders.map((o) => o.number), ['527407', '524055', '517062'],
+      'newest first, capped at three');
+    assert.ok(!JSON.stringify(recMp.body).match(/seller_username|buyer_email/), 'no seller or buyer identity crosses to the browser');
+    const recBad = await getRecent('ebay');
+    assert.strictEqual(recBad.status, 400, 'an unknown picker source is rejected');
+    const recNoAuth = await fetch(`${base}/api/marketplace/recent/manapool`);
+    assert.ok(recNoAuth.status === 401 || recNoAuth.status === 403, 'the picker demands authentication');
+    // A provider that is turned off stays silent here too, rather than leaking a
+    // half-list or an upstream call.
+    await put({ manapool: { ...MP_CRED, enabled: false } });
+    const recOff = await getRecent('manapool');
+    assert.strictEqual(recOff.status, 400, 'a disabled source must refuse the picker call');
+    assert.ok(/not configured|turned off/i.test(recOff.body.error), `it should say so, got ${recOff.body.error}`);
+    await put({ manapool: { ...MP_CRED, enabled: true } });
+    // A dead token on the list call is auth, not an empty list.
+    await put({ manapool: { email: MP_CRED.email, token: '401' } });
+    const recDead = await getRecent('manapool');
+    assert.strictEqual(recDead.status, 401, `a dead token must read as auth, got ${recDead.status}`);
+    assert.ok(recDead.body.list_unavailable !== true, 'an auth failure is not reported as an unavailable list');
+    await put({ manapool: MP_CRED });
+    console.log('PASS: F9-TC11b (recent-orders picker)');
+
+    // F9-TC12: clearing a provider's credentials works and empties the status.
     const cleared = await put({ tcgplayer: { clear: true } });
     assert.strictEqual(cleared.status, 200);
     const afterClear = await getAccounts();
