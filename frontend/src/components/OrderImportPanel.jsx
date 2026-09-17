@@ -42,7 +42,6 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
   const [result, setResult] = useState(null);
   const [language, setLanguage] = useState('English');
   const [printingMode, setPrintingMode] = useState('auto');
-  const [includeExtras, setIncludeExtras] = useState(false);
   const previewSeq = useRef(0);
 
   // Which sources are usable right now. A missing credential is not an error —
@@ -96,7 +95,7 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
       const res = await fetch('/api/marketplace/preview', {
         method: 'POST',
         headers: JSON_HEADERS,
-        body: JSON.stringify({ source, order_number: num, include_extras: includeExtras }),
+        body: JSON.stringify({ source, order_number: num }),
       });
       const data = await res.json();
       if (seq !== previewSeq.current) return;            // a newer preview has landed
@@ -121,7 +120,6 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
         body: JSON.stringify({
           source,
           order_number: preview.number || orderNumber.trim(),
-          include_extras: includeExtras,
           printing_mode: printingMode,
           language,
         }),
@@ -210,13 +208,6 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
             onChange={(e) => setOrderNumber(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') doPreview(); }} />
         </div>
-
-        <label style={{ display: 'flex', alignItems: 'center', gap: '.5rem', fontSize: '.8rem', color: 'var(--text-secondary)' }}>
-          <input type="checkbox" checked={includeExtras} disabled={busy || needsSetup}
-            onChange={(e) => setIncludeExtras(e.target.checked)} />
-          {t('orderimport.includeExtras')}
-          <span title={t('orderimport.extrasHelp')} style={{ borderBottom: '1px dotted var(--border-glass)', cursor: 'help' }}>?</span>
-        </label>
 
         {error && <div style={{ background: 'rgba(239,68,68,.1)', border: '1px solid var(--accent-red)', borderRadius: 'var(--radius-sm)', padding: '.5rem .75rem', color: 'var(--accent-red)', fontSize: '.82rem' }}>{error}</div>}
 
@@ -317,9 +308,7 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
         <p style={{ color: 'var(--text-secondary)', fontSize: '.78rem', margin: 0 }}>
           {preview.unresolved > 0 && <span>{t('orderimport.unresolvedNote', { count: preview.unresolved })} </span>}
           {preview.extras > 0 && (
-            <span>{preview.extrasIncluded
-              ? t('orderimport.extrasIncludedNote', { count: preview.extras })
-              : t('orderimport.extrasNote', { count: preview.extras })}</span>
+            <span>{t('orderimport.extrasNote', { count: preview.extras })}</span>
           )}
         </p>
       )}
