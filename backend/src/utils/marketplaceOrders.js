@@ -9,13 +9,31 @@
 //
 //   ManaPool — has a real buyer-facing REST API. base https://manapool.com/api/v1,
 //     auth is `X-ManaPool-Email` + `X-ManaPool-Access-Token` (a token generated
-//     in the user's dashboard Integration settings). `GET /orders/{number}`
-//     answers the order with `items[]` whose `product.single` carries
-//     name/set/number/finish and `price_cents` + `quantity`. Unknown routes
-//     under that base 404 with an HTML body; a bad token 401s with a JSON
-//     {"status":401,"message":"User not found..."} — so the two failure
-//     classes are tellable apart, which is what makes a server-side "Test"
-//     button honest here.
+//     in the user's dashboard Integration settings). THE PUBLISHED EXAMPLES ARE
+//     WRONG ABOUT THE BUYER ROUTES, so the shapes below come from probes against
+//     a live buyer account (2026-09-17), not from the docs:
+//       - the buyer list is `GET /buyer/orders`, which IGNORES page/per_page
+//         and returns the whole set OLDEST first.
+//       - the detail is `GET /buyer/orders/{uuid}` keyed by the row's `id`, NOT
+//         the six-digit `order_number` a human reads; ask it for a number and
+//         it 400s with "Invalid path parameters: id: Invalid UUID". The doc's
+//         `GET /orders/{number}` answers 400 the same way, so a human number
+//         must be resolved through the list first (see fetchManapoolOrder).
+//       - the detail body is `{ order: {...} }`, and it has NO top-level
+//         `items`: the cards hang off `order_seller_details[].items`. Reading a
+//         top-level `items[]` — which is what the doc shape implied — finds
+//         nothing and every order looks like 0 cards.
+//       - per line, identity is `product.single` {name, set, number,
+//         scryfall_id} and the print/grade are IDS: `finish_id` FO|NF and
+//         `condition_id` NM|LP|MP|HP|DAM, with `price_cents` + `quantity`.
+//         `product.product_type` is 'mtg_single' for cards and something else
+//         for sealed. Σ(price_cents × quantity) equals the list's
+//         `subtotal_cents` for every order probed, which is what makes the
+//         detail trustworthy; the list's own `item_count` does NOT agree with
+//         the real line rows (27 vs 35 on one order), so counts come from here.
+//     Unknown routes under that base 404 with an HTML body; a bad token 401s
+//     with a JSON {"status":401,...} — so the two failure classes are tellable
+//     apart, which is what makes a server-side "Test" button honest here.
 //
 //   TCGplayer — its public API is closed to new keys and every documented
 //     order endpoint is `Stores_*` (seller-side, needs the store's own
@@ -38,18 +56,16 @@ const crypto = require('crypto');
 // --- endpoints (pinned; never user-supplied, so the saved credential can only
 // ever be sent where the user themselves chose to send it) ---
 const MANAPOOL_BASE = process.env.MANAPOOL_API_BASE || 'https://manapool.com/api/v1';
-// Candidate buyer-list routes for the recent-order picker.
-// ManaPool's official examples document only a BY-NUMBER buyer detail route
-// (plus a seller list). These buyer-list shapes are plausible guesses; each is
-// tried in order and only a recognisable order list is accepted. If none
-// answer, the picker fails with an honest message and manual order numbers
-// keep working. Only the FIRST that returns a list is used.
-const MANAPOOL_LIST_PATHS = [
-  '/orders/buyer?page=1&per_page=3',
-  '/buyer/orders?page=1&per_page=3',
-  '/buyer/orders/recent?page=1&per_page=3',
-];
+// Live-verified 2026-09-17 against a real buyer account (responses captured to
+// test fixtures). Two things the published examples do not tell you: the buyer
+// list is GET /buyer/orders (page/per_page are IGNORED — it answers the whole
+// set, oldest first), and the detail is GET /buyer/orders/{uuid}, where the id
+// is the row's `id`, NOT the six-digit order_number a human reads. Asking the
+// doc route for a number 400s with "Invalid path parameters: id: Invalid UUID",
+// so a human number has to be resolved through the list first.
+const MANAPOOL_LIST_PATH = '/buyer/orders';
 const RECENT_LIMIT = 3;
+const MANAPOOL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const TCG_GATEWAY_BASES = [
   process.env.TCG_ORDER_BASE, // single-base override for testing
@@ -85,6 +101,11 @@ function mapCondition(raw, fallback = 'Near Mint') {
 function isFoilish(item) {
   const flag = item.isFoil ?? item.foil ?? item.is_foil;
   if (flag === true || flag === 1 || flag === '1') return true;
+  // ManaPool's live rows carry no foil word at all: the print is a two-letter
+  // id on the product's `single` object, FO for foil and NF for normal. Matched
+  // exactly rather than as a substring, so no other code can read as foil.
+  const fid = String(item.finish_id ?? item.finishId ?? '').trim().toUpperCase();
+  if (fid === 'FO' || fid === 'FOIL') return true;
   const finish = String(item.finish || item.printing || item.edge || '').toLowerCase();
   const name = String(item.name || item.productName || '').toLowerCase();
   if (/holofoil|etched|showcase|textless|overlay|borderless/.test(`${finish} ${name}`)) return true;
@@ -199,39 +220,154 @@ async function httpGet(url, headers = {}) {
   }
 }
 
+// ManaPool hangs its line items one level deeper than the docs imply: the buyer
+// detail nests them per seller under order_seller_details[].items, and the list
+// rows carry no items at all. Reading only the top level (what LINE_KEYS
+// covers) silently yields zero lines, which is how the recent-orders picker
+// came to list every order as 0 cards. These readers flatten that nesting, and
+// they are additive: a body that already exposes top-level items (TCGplayer)
+// never reaches them.
+function unwrapManapoolOrder(body) {
+  if (!body || typeof body !== 'object') return null;
+  if (body.order && typeof body.order === 'object') return body.order;
+  return body;
+}
+function manapoolNestedItems(order) {
+  const sellers = order && order.order_seller_details;
+  if (!Array.isArray(sellers)) return [];
+  const out = [];
+  for (const s of sellers) {
+    if (s && Array.isArray(s.items) && s.items.length) out.push(...s.items);
+  }
+  return out;
+}
+// The live rows encode print and grade as ids, not words: finish_id FO/NF and
+// condition_id NM/LP/MP/HP/DAM, on the product's `single` object.
+function isManapoolSealed(product) {
+  if (!product || typeof product !== 'object') return false;
+  const type = String(product.product_type || '').toLowerCase();
+  if (type && !/^mtg_single$/.test(type)) return true;
+  return Boolean(product.sealed) && !product.single;
+}
+
+function mpHeaders(email, token) {
+  return { 'X-ManaPool-Email': email, 'X-ManaPool-Access-Token': token };
+}
+// One auth/rate guard for every ManaPool call. An auth rejection is an auth
+// problem, not an empty order: saying "we could not find order X" when the
+// token is dead sends the user hunting for a typo in the wrong field.
+function mpGuard(r, what) {
+  if (r.status === 401 || r.status === 403) {
+    throw Object.assign(new Error('ManaPool rejected the saved credentials. Check the account email and the access token under ManaPool → account → Integration settings, then save them again.'), { status: 401 });
+  }
+  if (r.status === 429) {
+    throw Object.assign(new Error('ManaPool is rate-limiting this account right now (too many requests or too much traffic). Wait a minute and try again.'), { status: 429 });
+  }
+  return r.status >= 200 && r.status < 300;
+}
+function hasOrderShape(body) {
+  if (!body || typeof body !== 'object') return false;
+  if (body.order && typeof body.order === 'object') return true;
+  if (Array.isArray(body.orders)) return true;
+  return LINE_KEYS.some((k) => Array.isArray(body[k]) && body[k].length);
+}
+function sumItemCounts(order) {
+  const sellers = order && order.order_seller_details;
+  if (!Array.isArray(sellers)) return 0;
+  return sellers.reduce((n, s) => n + (Number(s && s.item_count) || 0), 0);
+}
+
+// The buyer list. `page`/`per_page` are accepted by the route but IGNORED by
+// the live API (it answers the whole set) and the rows come back oldest first,
+// so anything that shows "most recent" has to sort them itself.
+async function fetchManapoolOrderList({ email, token, httpGet: http = httpGet } = {}) {
+  if (!email || !token) throw Object.assign(new Error('ManaPool credentials are not configured'), { status: 400 });
+  const r = await http(`${MANAPOOL_BASE}${MANAPOOL_LIST_PATH}`, mpHeaders(email, token));
+  if (!mpGuard(r, 'list')) {
+    throw Object.assign(new Error(`ManaPool did not return an order list (status ${r.status}).`), { status: 502, listUnavailable: true });
+  }
+  return orderArray(r.body);
+}
+
+// One order's detail. The live detail route is keyed by the row's UUID `id`,
+// NOT the six-digit order_number a human reads off the site, so a human number
+// is resolved through the list first. Asking the detail route for a number
+// 400s with "Invalid path parameters: id: Invalid UUID", which is why this
+// indirection is not optional. A number absent from the list still gets one
+// direct attempt, so a provider that does speak by-number keeps working.
 async function fetchManapoolOrder({ email, token, orderNumber, httpGet: http = httpGet }) {
   if (!email || !token) throw Object.assign(new Error('ManaPool credentials are not configured'), { status: 400 });
   const num = String(orderNumber || '').trim();
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(num)) throw Object.assign(new Error('Order number is not valid'), { status: 400 });
-  const headers = { 'X-ManaPool-Email': email, 'X-ManaPool-Access-Token': token };
-  const first = await http(`${MANAPOOL_BASE}/orders/${encodeURIComponent(num)}`, headers);
-  // An auth rejection is an auth problem, not an empty order: saying "we could
-  // not find order X" when the token is dead sends the user hunting for a typo
-  // in the wrong field. Short-circuit here so the message names the credential.
-  if (first.status === 401 || first.status === 403) {
-    throw Object.assign(new Error('ManaPool rejected the saved credentials. Check the account email and the access token under ManaPool → account → Integration settings, then save them again.'), { status: 401 });
+  const headers = mpHeaders(email, token);
+
+  let id = num;
+  if (!MANAPOOL_UUID.test(num)) {
+    let rows = [];
+    try { rows = await fetchManapoolOrderList({ email, token, httpGet: http }); } catch { rows = []; }
+    const hit = rows.find((o) => orderNumberMatches(o, num));
+    const cand = hit ? pick(hit, ['id', 'order_id', 'orderId', 'uuid']) : null;
+    if (cand != null) id = String(cand);
   }
-  if (first.status === 429) {
-    throw Object.assign(new Error('ManaPool is rate-limiting this account right now (too many requests or too much traffic). Wait a minute and try again.'), { status: 429 });
+
+  const r = await http(`${MANAPOOL_BASE}/buyer/orders/${encodeURIComponent(id)}`, headers);
+  const is2xx = mpGuard(r, 'detail');
+  if (!is2xx) {
+    const err = new Error(`ManaPool has no order ${num} for this account. Check the number on ManaPool → account → Orders.`);
+    // The route answering "not found", and the uuid-keyed route refusing a
+    // human number as malformed (which is what happens when the number is not
+    // in the list either), are both "that order is not yours". Only a genuinely
+    // unhappy upstream counts as 502.
+    err.status = (r.status === 404 || r.status === 400) ? 404 : 502;
+    err.observedKeys = bodyKeys(r && r.body);
+    throw err;
   }
-  // The buyer-list route is the documented one; the bare detail route answers
-  // 404 HTML there while the number-shaped detail route is the live one — try
-  // the buyer form second so either dialect works, and only after BOTH miss is
-  // it an unknown number. (401/403 short-circuits first: those are auth.)
-  if (first.status === 404) {
-    const second = await http(
-      `${MANAPOOL_BASE}/orders/buyer/${encodeURIComponent(num)}`,
-      { ...headers, Referer: 'https://manapool.com/account/orders' },
-    );
-    return merge(first, second);
-  }
-  return merge(first, first);
+  // A 2xx is handed to parseOrderPayload even when it is not order-shaped: that
+  // is the reader that reports the observed keys of an unrecognisable body
+  // (422), which is how private-contract drift stays visible instead of
+  // collapsing into a bare "not found".
+  return r;
 }
-function merge(preferred, fallback) {
-  const ok = (r) => r && r.status >= 200 && r.status < 300 && r.body && typeof r.body === 'object';
-  if (ok(preferred)) return preferred;
-  if (ok(fallback) && fallback !== preferred) return fallback;
-  return preferred && preferred.status ? preferred : fallback;
+
+// The picker's data. The card count CANNOT come from the list rows: they carry
+// no items at all (reading a top-level `items` there is exactly the bug that
+// showed every order as 0 cards), and the list's own `item_count` disagrees
+// with the real line rows on orders with refunds/replacements. The
+// authoritative count is the detail's nested per-seller items, so the handful
+// of shown rows are fetched. One detail failing degrades to the list number
+// rather than failing the picker.
+async function manapoolRecentOrderSummaries({ email, token, limit = RECENT_LIMIT, httpGet: http = httpGet } = {}) {
+  const rows = await fetchManapoolOrderList({ email, token, httpGet: http });
+  const stampOf = (o) => String(pick(o, ['created_at', 'createdAt', 'created', 'date', 'placedAt', 'orderDate']) || '');
+  const dated = [...rows].sort((a, b) => stampOf(b).localeCompare(stampOf(a)));
+  const out = [];
+  for (const row of dated) {
+    if (out.length >= limit) break;
+    const number = pick(row, ['order_number', 'orderNumber', 'number', 'id']);
+    if (number == null) continue;
+    const summary = {
+      number: String(number),
+      placedAt: stampOf(row) || null,
+      status: pick(row, ['status', 'orderStatus', 'fulfillmentStatus', 'fulfillment_status']) || null,
+      cardCount: sumItemCounts(row),
+      lineCount: 0,
+      total_cents: pick(row, ['total_cents', 'totalCents', 'total', 'orderTotal']) ?? null,
+    };
+    const id = pick(row, ['id', 'order_id', 'orderId', 'uuid']);
+    if (id != null && MANAPOOL_UUID.test(String(id))) {
+      try {
+        const detail = await fetchManapoolOrder({ email, token, orderNumber: String(id), httpGet: http });
+        const order = unwrapManapoolOrder(detail.body);
+        if (order) {
+          const lines = orderLines(order, { includeExtras: false });
+          summary.cardCount = lines.__cardCopies;
+          summary.lineCount = lines.__cardLines;
+        }
+      } catch { /* keep the list's own count */ }
+    }
+    out.push(summary);
+  }
+  return out;
 }
 
 async function fetchTcgOrder({ cookies, customerId, orderNumber, httpGet: http = httpGet, requireMatch = true }) {
@@ -304,25 +440,9 @@ function orderArray(body) {
 }
 
 // --- the recent-order list ("most recent 3") ---------------------------------
-// Both providers answer the same question with a LIST call; only ManaPool needs
-// one extra attempt, because its documented buyer route is a BY-NUMBER detail
-// route — there is no buyer list route in the official examples (only a seller
-// one). We try the plausible buyer-list shapes first and fail with an honest
-// "not available" rather than a crash if none of them speak.
-async function fetchManapoolRecentOrders({ email, token, httpGet: http = httpGet } = {}) {
-  if (!email || !token) throw Object.assign(new Error('ManaPool credentials are not configured'), { status: 400 });
-  const headers = { 'X-ManaPool-Email': email, 'X-ManaPool-Access-Token': token, Referer: 'https://manapool.com/account/orders' };
-  let last = null;
-  for (const p of MANAPOOL_LIST_PATHS) {
-    const r = await http(`${MANAPOOL_BASE}${p}`, headers);
-    last = r;
-    if (r.status === 401 || r.status === 403) {
-      throw Object.assign(new Error('ManaPool rejected the saved credentials. Check the account email and the access token under ManaPool → account → Integration settings, then save them again.'), { status: 401 });
-    }
-    if (r.status >= 200 && r.status < 300 && looksLikeOrderList(r.body)) return r;
-  }
-  throw Object.assign(new Error(`ManaPool did not return a recent-order list (last status ${last ? last.status : 'none'}). The order-number field still works.`), { status: 502, listUnavailable: true });
-}
+// The picker's data lives in the source's own order list; see
+// manapoolRecentOrderSummaries (whose card counts need the detail) and
+// fetchTcgRecentOrders below.
 
 async function fetchTcgRecentOrders({ cookies, customerId, httpGet: http = httpGet } = {}) {
   // The recent-list IS what fetchTcgOrder's path-probing already retrieves
@@ -414,13 +534,14 @@ function orderLines(raw, opts = {}) {
     if (Array.isArray(src[k]) && src[k].length && src[k].every((x) => x && typeof x === 'object')) { lines = src[k]; break; }
   }
   if (!lines.length && Array.isArray(src.orderItems)) lines = src.orderItems;
+  if (!lines.length) lines = manapoolNestedItems(src);
   const out = [];
   let extras = 0;
   for (const item of lines) {
     const [prod, ctx] = eachProductLines(item);
     // A single sold card can be spread across forms; check both the row and the
     // product for sealed markers before believing it is a card.
-    const sealedLine = isSealedLine(prod, item);
+    const sealedLine = isSealedLine(prod, item) || isManapoolSealed(item.product);
     if (sealedLine) { extras += 1; if (!includeExtras) continue; }
     const name = String(pick(prod, ['name', 'cardName', 'title']) || pick(item, ['name', 'productName', 'description']) || '').trim();
     const set = pick(prod, ['set', 'setCode', 'set_code', 'expansion', 'expansionName']) || pick(item, ['set', 'setCode']);
@@ -445,7 +566,7 @@ function orderLines(raw, opts = {}) {
       quantity: Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 1,
       price_cents: cents,
       is_foil: isFoilish(item) || isFoilish(prod),
-      condition: mapCondition(pick(item, ['condition', 'conditionCode', 'grade', 'conditionText']) ?? pick(prod, ['condition', 'conditionCode'])),
+      condition: mapCondition(pick(item, ['condition', 'conditionCode', 'grade', 'conditionText', 'condition_id']) ?? pick(prod, ['condition', 'conditionCode', 'condition_id'])),
       year: pick(prod, ['year', 'printed_year', 'printedYear']) || null,
       // Whether this line is a card at all. A sealed box is a real line the user
       // may choose to file, but it is not a card: it must not be counted as one,
@@ -469,6 +590,7 @@ function parseOrderPayload(body, wantNumber, opts = {}) {
     && LINE_KEYS.some((k) => Array.isArray(body[k]) && body[k].length);
   let order = null;
   if (direct) order = body;
+  else if (body && typeof body === 'object' && body.order && typeof body.order === 'object') order = body.order;
   else if (list.length) {
     const num = String(wantNumber || '').trim();
     order = list.find((o) => orderNumberMatches(o, num)) || (num ? null : list[0]);
@@ -719,7 +841,8 @@ module.exports = {
   maskEmail,
   customerIdHints,
   fetchManapoolOrder,
-  fetchManapoolRecentOrders,
+  fetchManapoolOrderList,
+  manapoolRecentOrderSummaries,
   fetchTcgRecentOrders,
   recentOrderSummaries,
   fetchTcgOrder,

@@ -68,7 +68,25 @@ assert.ok(!masked.includes('bturner'), 'the local part is masked');
 assert.deepStrictEqual(customerIdHints('tcg_customer_id=42; sid=abc'), ['42']);
 assert.deepStrictEqual(customerIdHints('sid=abc'), []);
 
-// --- the ManaPool documented detail shape ----------------------------------
+// --- captured live responses (verbatim from a real buyer account, PII trimmed) -
+// The MANAPOOL network paths assert against these, never against a hand-written
+// doc-shaped body: a fixture copied from the examples can only prove the code
+// agrees with the examples.
+const MP_LIST = require('./fixtures/manapool/buyer-orders.json');
+const MP_LIVE_DETAIL = require('./fixtures/manapool/buyer-order-detail.json');
+const MP_DETAILS_BY_UUID = require('./fixtures/manapool/buyer-order-details-by-uuid.json');
+const MP_LIVE_NUM = MP_LIVE_DETAIL.order.order_number;
+const MP_LIVE_UUID = MP_LIVE_DETAIL.order.id;
+assert.ok(MP_LIVE_NUM && /^\d+$/.test(MP_LIVE_NUM), 'fixture is a real six-digit order');
+assert.ok(/^[0-9a-f]{8}-/.test(MP_LIVE_UUID), 'fixture detail is keyed by its row uuid');
+
+// --- a top-level-items body (the shape the published examples imply) ----------
+// Kept as a SYNTHETIC regression for the top-level reader path only. It is NOT
+// what ManaPool sends: the live buyer detail has no top-level items and ships
+// its cards under order_seller_details[].items — see the captured fixtures
+// below. Tests written against a doc-shaped fixture can only ever prove the
+// code agrees with the docs, which is exactly how the picker shipped reading
+// every order as 0 cards.
 const MP_DETAIL = {
   id: 4402, number: 'MP-1', status: 'shipped',
   items: [
@@ -133,32 +151,77 @@ assert.throws(() => parseOrderPayload({ foo: 1, bar: [1, 2] }, '1'), (e) => e.st
 
 // --- fetchers: the injected HTTP edge --------------------------------------
 async function fetchers() {
+  // A uuid goes straight to the detail route: one call, no list lookup.
   const calls = [];
   const mp = await fetchManapoolOrder({
-    email: 'a@b.com', token: 'tok', orderNumber: '4402',
+    email: 'a@b.com', token: 'tok', orderNumber: MP_LIVE_UUID,
     httpGet: (url, headers) => {
       calls.push({ url, headers });
-      // The documented detail route is the live one; a non-404 short-circuits.
-      return { status: 200, body: MP_DETAIL };
+      return { status: 200, body: MP_LIVE_DETAIL };
     },
   });
-  assert.ok(calls.length === 1, 'a hit on the documented route does not also probe the buyer list');
+  assert.strictEqual(calls.length, 1, 'a uuid order number does not consult the list first');
+  assert.ok(calls[0].url.endsWith('/buyer/orders/' + MP_LIVE_UUID), `the uuid-keyed detail route, got ${calls[0].url}`);
   assert.strictEqual(calls[0].headers['X-ManaPool-Email'], 'a@b.com');
-  assert.strictEqual(mp.body.items.length, 3);
+  assert.strictEqual(calls[0].headers['X-ManaPool-Access-Token'], 'tok');
+  assert.strictEqual(mp.body.order.order_number, MP_LIVE_NUM);
 
+  // The cards are per-seller, and the top level has none: a reader that looks
+  // only at the top level returns zero lines, which is the shipped bug.
+  {
+    const o = MP_LIVE_DETAIL.order;
+    assert.ok(!Array.isArray(o.items), 'the live detail carries no top-level items[] — the doc shape is fiction');
+    assert.ok((o.order_seller_details || []).length > 0, 'the cards hang off the seller rows');
+    const p = parseOrderPayload(MP_LIVE_DETAIL, MP_LIVE_NUM);
+    assert.strictEqual(p.number, MP_LIVE_NUM, 'the { order: {...} } wrapper is unwrapped');
+    assert.ok(p.lineCount > 0, `nested items are read, got ${p.lineCount} lines`);
+    assert.ok(p.lines.__cardCopies > 0, 'the copy tally is not zero');
+    const [first] = p.lines;
+    assert.ok(first.name, 'a real card name comes through');
+    assert.ok(first.scryfall_id, 'the live scryfall_id rides along for the resolver');
+    assert.ok(first.price_cents > 0, 'the unit price comes through');
+    assert.strictEqual(first.set_code, String(first.set_code).toLowerCase(), 'set codes stay normalised');
+    assert.ok(p.lines.some((l) => l.is_foil), 'finish_id FO decodes to a foil line');
+    assert.ok(p.lines.some((l) => !l.is_foil), 'finish_id NF stays non-foil');
+    assert.ok(p.lines.every((l) => l.condition === 'Near Mint'), 'condition_id NM decodes');
+    assert.ok(p.lines.every((l) => !l.sealed), 'every mtg_single row is a card, not a box');
+  }
+
+  // A human order number is not what the detail route takes (it 400s with
+  // "id: Invalid UUID"), so it has to be resolved through the list first and
+  // only the row's uuid hits the detail. This is the single most load-bearing
+  // call sequence in the ManaPool path and the doc examples do not show it.
   const probes = [];
   const second = await fetchManapoolOrder({
-    email: 'a@b.com', token: 'tok', orderNumber: '4402',
+    email: 'a@b.com', token: 'tok', orderNumber: MP_LIVE_NUM,
     httpGet: (url) => {
       probes.push(url);
-      return probes.length === 1
-        ? { status: 404, body: '<html>not found</html>' }
-        : { status: 200, body: MP_DETAIL };
+      if (url.endsWith('/buyer/orders')) return { status: 200, body: MP_LIST };
+      if (url.includes(MP_LIVE_UUID)) return { status: 200, body: MP_LIVE_DETAIL };
+      return { status: 404, body: '<html>not found</html>' };
     },
   });
-  assert.strictEqual(probes.length, 2, 'a 404 on the detail route falls through to the buyer list');
-  assert.ok(probes[1].includes('/orders/buyer/'), probes[1]);
-  assert.strictEqual(second.body.items.length, 3, 'the buyer-list response is the one used');
+  assert.ok(probes[0].endsWith('/buyer/orders'), `the list is probed first, got ${probes[0]}`);
+  assert.ok(probes.some((u) => u.includes(MP_LIVE_UUID)), 'the detail is fetched by the row uuid');
+  assert.ok(!probes.some((u) => u.includes(`/${MP_LIVE_NUM}`)), 'the human number never hits the uuid-keyed detail route');
+  assert.ok(second.body.order['order_number'] === MP_LIVE_NUM, 'the resolved detail is the one returned');
+
+  // A number that is not in the list still gets one direct attempt, so a
+  // provider that does speak by-number keeps working, and then it reports.
+  const misses = [];
+  await assert.rejects(
+    fetchManapoolOrder({
+      email: 'a@b.com', token: 'tok', orderNumber: '999999',
+      httpGet: (url) => {
+        misses.push(url);
+        if (url.endsWith('/buyer/orders')) return { status: 200, body: { orders: [] } };
+        return { status: 404, body: { status: 404, message: 'Order not found' } };
+      },
+    }),
+    (e) => e.status === 404 && /999999/.test(e.message),
+    'an unknown ManaPool number says so by number',
+  );
+  assert.ok(misses.length >= 2, 'the list was consulted before giving up');
 
   // An auth failure is auth, not "no orders" — the user has to be told to fix
   // the credential rather than shown an empty list.
@@ -413,29 +476,19 @@ async function writes() {
   console.log('writes ok');
 }
 
-Promise.resolve()
-  .then(fetchers)
-  .then(preview)
-  .then(writes)
-  .then(sealedGating)
-  .then(() => {
-    console.log('marketplaceorders.test.js: all assertions passed');
-  })
-  .catch((err) => {
-    console.error('marketplaceorders.test.js FAILED', err && err.message ? err.message : err);
-    if (err && err.stack) console.error(err.stack.split('\n').slice(0, 4).join('\n'));
-    process.exitCode = 1;
-  });
+// NOTE: the single runner chain lives at the bottom of this file, after the
+// live-picker tests, so every suite runs exactly once.
 
 
 // --- recent-order summaries -------------------------------------------------
-const { fetchManapoolRecentOrders, fetchTcgRecentOrders, recentOrderSummaries, RECENT_LIMIT } =
+const { fetchTcgRecentOrders, recentOrderSummaries, manapoolRecentOrderSummaries, RECENT_LIMIT } =
   require('../src/utils/marketplaceOrders');
 
 assert.strictEqual(RECENT_LIMIT, 3, 'the picker promises three');
 
-// summaries: header-only fields, newest-first, capped, no PII keys.
-{  const list = [
+// summaries keep only header fields, newest first, capped, no PII riding along.
+{
+  const list = [
     { orderNumber: 'A1', created: '2026-09-01T10:00:00Z', status: 'SHIPPED', totalCents: 1250,
       customer: { email: 'me@x.com', address: '1 Main' },
       items: [{ product: { single: { name: 'Tarmogoyf', set: 'FUT', number: '147' } }, quantity: 2, unitPriceCents: 500 }] },
@@ -454,34 +507,75 @@ assert.strictEqual(RECENT_LIMIT, 3, 'the picker promises three');
   assert.ok(!blob.includes('me@x.com') && !blob.includes('Main'), 'no PII rides along');
 }
 
-// fetchManapoolRecentOrders: first list-shaped candidate wins; auth short-circuits.
-{
-  const seen = [];
-  const mk = (status, body) => async (url) => { seen.push(url); return { status, body }; };
-  (async () => {
-    const calls = [];
-    const http = async (url) => {
-      calls.push(url);
-      if (calls.length === 1) return { status: 404, body: 'nope' };
-      if (calls.length === 2) return { status: 200, body: { data: [{ number: 'X9', items: [] }] } };
-      throw new Error('should stop at the first list');
-    };
-    const r = await fetchManapoolRecentOrders({ email: 'a@b.co', token: 't', httpGet: http });
-    assert.strictEqual(calls.length, 2, 'stopped at the first route that answered with a list');
-    assert.ok(calls[0].includes('per_page=3'), 'requests only what the picker shows');
-    const rows = recentOrderSummaries(r.body);
-    assert.strictEqual(rows[0].number, 'X9');
-    // none speak -> honest listUnavailable error
-    const dead = async () => ({ status: 404, body: {} });
-    await assert.rejects(
-      fetchManapoolRecentOrders({ email: 'a@b.co', token: 't', httpGet: dead }),
-      (e) => e.listUnavailable === true && e.status === 502,
-      'unhelpful upstream -> listUnavailable, not a crash');
-    // 401 -> auth error, not listUnavailable
-    const denied = async () => ({ status: 401, body: {} });
-    await assert.rejects(
-      fetchManapoolRecentOrders({ email: 'a@b.co', token: 't', httpGet: denied }),
-      (e) => e.status === 401 && !e.listUnavailable);
-    console.log('recent-order util tests passed');
-  })().catch((e) => { console.error('recent-order util tests FAILED:', e.message); process.exit(1); });
+async function recentPicker() {
+  // The picker's data path, against the captured list AND the captured details.
+  // This is the reported bug: the list rows carry no items at all, so a card
+  // count read off them is 0 by construction — the count has to come from each
+  // order's detail. 517062 is the canary: its list row claims 1 and its real
+  // detail is 2 lines / 3 copies, so this fails if the count ever slides back
+  // to reading the list.
+  const http = async (url) => {
+    if (url.endsWith('/buyer/orders')) return { status: 200, body: MP_LIST };
+    for (const [uuid, body] of Object.entries(MP_DETAILS_BY_UUID)) {
+      if (url.includes(uuid)) return { status: 200, body };
+    }
+    return { status: 404, body: { status: 404, message: 'Order not found' } };
+  };
+  const rows = await manapoolRecentOrderSummaries({ email: 'a@b.co', token: 't', httpGet: http });
+  assert.strictEqual(rows.length, RECENT_LIMIT, 'the picker shows three');
+  assert.deepStrictEqual(rows.map((r) => r.number), ['527407', '524055', '517062'],
+    'newest first — the live list comes back OLDEST first, so it has to be sorted here');
+  assert.ok(rows[0].placedAt > rows[2].placedAt, 'the dates agree with that order');
+  assert.strictEqual(rows[0].cardCount, 10, 'newest order: 10 copies read from its detail');
+  const canary = rows[2];
+  assert.strictEqual(canary.number, '517062');
+  assert.strictEqual(canary.cardCount, 3, '3 copies from the detail, not the list claim of 1');
+  assert.strictEqual(canary.lineCount, 2, 'two distinct line rows');
+  for (const r of rows) {
+    assert.ok(r.cardCount > 0, `a picker row with real cards never reads 0 (got ${r.number}: ${r.cardCount})`);
+    assert.ok(r.number && r.placedAt, 'every row is identifiable and dated');
+  }
+  const blob = JSON.stringify(rows);
+  assert.ok(!/seller_username/.test(blob) && !/buyer_email/.test(blob), 'seller/buyer identity is not echoed to the browser');
+
+  // A dead token is auth, not an empty list — the same distinction that kept the
+  // old code from telling Brent his credential was fine when the route was wrong.
+  await assert.rejects(
+    manapoolRecentOrderSummaries({ email: 'a@b.co', token: 't', httpGet: async () => ({ status: 401, body: {} }) }),
+    (e) => e.status === 401 && /credential/i.test(e.message),
+    'a 401 on the list route reads as an auth problem',
+  );
+  // A route that will not answer at all is an honest list_unavailable, never a
+  // success carrying an empty list (which the UI would render as 'no orders').
+  await assert.rejects(
+    manapoolRecentOrderSummaries({ email: 'a@b.co', token: 't', httpGet: async () => ({ status: 404, body: '<html/>' }) }),
+    (e) => e.listUnavailable === true && e.status === 502,
+    'an unhelpful list route reports list_unavailable',
+  );
+  // Details that fail degrade to the list's own count instead of failing the picker.
+  const partial = await manapoolRecentOrderSummaries({
+    email: 'a@b.co', token: 't',
+    httpGet: async (url) => {
+      if (url.endsWith('/buyer/orders')) return { status: 200, body: MP_LIST };
+      return { status: 500, body: {} };
+    },
+  });
+  assert.strictEqual(partial.length, RECENT_LIMIT, 'the picker still fills when the details die');
+  assert.ok(partial.every((r) => r.cardCount >= 0), 'it falls back to whatever the list does assert');
+  console.log('live ManaPool list/detail/picker tests passed');
 }
+
+Promise.resolve()
+  .then(fetchers)
+  .then(preview)
+  .then(writes)
+  .then(sealedGating)
+  .then(recentPicker)
+  .then(() => {
+    console.log('marketplaceorders.test.js: all assertions passed');
+  })
+  .catch((err) => {
+    console.error('marketplaceorders.test.js FAILED', err && err.message ? err.message : err);
+    if (err && err.stack) console.error(err.stack.split('\n').slice(0, 6).join('\n'));
+    process.exitCode = 1;
+  });
