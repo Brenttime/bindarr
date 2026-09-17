@@ -1146,5 +1146,15 @@
   "marketplace.errLoad": "Could not load the saved credentials.",
   "marketplace.errSave": "Saving failed.",
   "orderimport.source.manapool": "ManaPool",
-  "orderimport.source.tcgplayer": "TCGplayer"
+  "orderimport.source.tcgplayer": "TCGplayer",
+  "marketplace.connect": "Connect",
+  "marketplace.connectWaiting": "Waiting for you to sign in…",
+  "marketplace.connectHelp": "Connect opens the real site in a popup: sign in there as usual and the credential is handed back automatically. Nothing is captured unless you click it. Popup blockers fall back to the manual fields above.",
+  "marketplace.connectDoneMp": "ManaPool connected — token saved.",
+  "marketplace.connectDoneTcg": "TCGplayer connected — session saved.",
+  "marketplace.errPopupBlocked": "The sign-in popup was blocked by the browser. Allow popups for this site, or use the manual fields.",
+  "marketplace.errPopupClosed": "The sign-in popup was closed before a credential came back.",
+  "marketplace.errNoToken": "You are signed in, but no API token was found on the ManaPool settings page. Generate one there first, then click Connect again.",
+  "marketplace.errNoCookies": "No readable TCGplayer cookies came back. TCGplayer marks session cookies HttpOnly in many setups — those are invisible to scripts by design, so use the manual paste from developer tools instead.",
+  "marketplace.errRelay": "The sign-in relay did not return a credential. Try again, or use the manual fields."
 }

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Loader2, Check, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Loader2, Check, Trash2, ExternalLink } from 'lucide-react';
 import { useT } from '../utils/i18n';
+import { startMarketRelay } from '../utils/marketRelay';
 
 // Marketplace account credentials for the "import from order" feature.
 //
@@ -37,6 +38,46 @@ export default function MarketplaceAccountsPanel({ showToast }) {
   const [mpEnabled, setMpEnabled] = useState(true);
   const [tcgCookies, setTcgCookies] = useState('');
   const [tcgEnabled, setTcgEnabled] = useState(true);
+
+  // Connect-button relay state: which source is mid-relay, and a cancel handle
+  // so the panel can abandon a relay (e.g. user closed the popup) cleanly.
+  const [relaying, setRelaying] = useState('');
+  const cancelRef = useRef(null);
+  // The enable checkbox at the moment Connect was clicked (the await inside
+  // connect() spans a user turn; reading state there would use the closure's).
+  const mpEnabledRef = useRef(true);
+  const tcgEnabledRef = useRef(true);
+  mpEnabledRef.current = mpEnabled;
+  tcgEnabledRef.current = tcgEnabled;
+  useEffect(() => () => { if (cancelRef.current) cancelRef.current(); }, []);
+
+  const connect = async (source) => {
+    setError('');
+    setRelaying(source);
+    try {
+      const payload = await startMarketRelay(source, { onStatus: (fn) => { cancelRef.current = fn; } });
+      cancelRef.current = null;
+      // The credential exists in this tab's memory only until the PUT below
+      // completes; it is never rendered into a field, only sent to our backend.
+      const patch = source === 'manapool'
+        ? { manapool: { email: String(payload.email || '').trim(), token: String(payload.token || '').trim(), enabled: mpEnabledRef.current } }
+        : { tcgplayer: { cookies: String(payload.cookies || ''), enabled: tcgEnabledRef.current } };
+      await save(patch);
+      showToast(source === 'manapool' ? t('marketplace.connectDoneMp') : t('marketplace.connectDoneTcg'));
+    } catch (err) {
+      cancelRef.current = null;
+      const code = String(err?.message || '');
+      const msg = code === 'POPUP_BLOCKED' ? t('marketplace.errPopupBlocked')
+        : code === 'POPUP_CLOSED' ? t('marketplace.errPopupClosed')
+        : code === 'USER_CANCELLED' ? ''
+        : code === 'TOKEN_NOT_FOUND' ? t('marketplace.errNoToken')
+        : code === 'TCG_NO_COOKIES' ? t('marketplace.errNoCookies')
+        : t('marketplace.errRelay');
+      if (msg) setError(msg);
+    } finally {
+      setRelaying('');
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -132,11 +173,16 @@ export default function MarketplaceAccountsPanel({ showToast }) {
             onClick={() => save({ manapool: { email: mpEmail.trim(), token: mpToken.trim(), enabled: mpEnabled } })}>
             {saving ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={14} />} {t('marketplace.save')}
           </button>
+          <button type="button" className="btn btn-secondary" disabled={saving || relaying === 'manapool'}
+            onClick={() => connect('manapool')}>
+            {relaying === 'manapool' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <ExternalLink size={14} />} {relaying === 'manapool' ? t('marketplace.connectWaiting') : t('marketplace.connect')}
+          </button>
           <button type="button" className="btn btn-secondary" disabled={saving}
             onClick={() => save({ manapool: { clear: true } })}>
             <Trash2 size={14} /> {t('marketplace.clear')}
           </button>
         </div>
+        <div style={noteStyle}>{t('marketplace.connectHelp')}</div>
       </div>
 
       {/* --- TCGplayer --- */}
@@ -170,6 +216,10 @@ export default function MarketplaceAccountsPanel({ showToast }) {
           <button type="button" className="btn btn-primary" disabled={saving || !tcgCookies.trim()}
             onClick={() => save({ tcgplayer: { cookies: tcgCookies.trim(), enabled: tcgEnabled } })}>
             {saving ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={14} />} {t('marketplace.save')}
+          </button>
+          <button type="button" className="btn btn-secondary" disabled={saving || relaying === 'tcgplayer'}
+            onClick={() => connect('tcgplayer')}>
+            {relaying === 'tcgplayer' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <ExternalLink size={14} />} {relaying === 'tcgplayer' ? t('marketplace.connectWaiting') : t('marketplace.connect')}
           </button>
           <button type="button" className="btn btn-secondary" disabled={saving}
             onClick={() => save({ tcgplayer: { clear: true } })}>
