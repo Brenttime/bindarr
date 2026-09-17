@@ -133,10 +133,15 @@ async function orderFromRequest(req, res) {
   let fetched;
   try {
     if (source === 'manapool') {
-      if (!row.manapool_email || !row.manapool_token) return fail(400, { error: 'ManaPool is not configured' });
+      // fetchManapoolOrder's own enabled-gate is unreachable from this route
+      // because this lookup happens first — the gate has to live here too, or
+      // turning the switch off in Settings is cosmetic for preview/add.
+      if (!row.manapool_email || !row.manapool_token || !row.manapool_enabled) return fail(400, { error: 'ManaPool is not configured or is turned off' });
       fetched = await fetchManapoolOrder({ email: row.manapool_email, token: row.manapool_token, orderNumber: number });
     } else {
-      if (!cookieCount(row.tcgplayer_cookies)) return fail(400, { error: 'TCGplayer is not configured' });
+      // Same master-switch gate as ManaPool above: the *_enabled columns are the
+      // user's on/off, and nothing else in the read path consults them.
+      if (!row.tcgplayer_cookies || !row.tcgplayer_enabled) return fail(400, { error: 'TCGplayer is not configured or is turned off' });
       fetched = await fetchTcgOrder({
         cookies: row.tcgplayer_cookies,
         customerId: req.body.customer_id || customerIdHints(row.tcgplayer_cookies)[0] || null,
