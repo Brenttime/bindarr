@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { Camera, PackageOpen } from 'lucide-react';
+import { Camera, PackageOpen, ShoppingCart } from 'lucide-react';
 import CameraScanner from './CameraScanner';
 import SecretLairPanel from './SecretLairPanel';
+import OrderImportPanel from './OrderImportPanel';
 import { useT } from '../utils/i18n';
 
-// The "Add Cards" tab. It now holds two independent ways to put cards in the
+// The "Add Cards" tab. It now holds three independent ways to put cards in the
 // collection, so it opens on a choice between them rather than assuming the
-// camera: scan a physical card, or bring in a whole Secret Lair drop.
+// camera: scan a physical card, bring in a whole Secret Lair drop, or pull
+// every card from a ManaPool / TCGplayer order you have already placed.
 //
 // The scanner is the default because it is the reason this tab exists and the
 // path nearly everyone takes. The segmented control stays mounted across the
@@ -34,6 +36,7 @@ export default function AddCards({ onAddSuccess, showToast, setActiveTab }) {
   const MODES = [
     { key: 'scan', icon: Camera, label: t('addcards.tabScan') },
     { key: 'secretlair', icon: PackageOpen, label: t('addcards.tabSecretLair') },
+    { key: 'orderimport', icon: ShoppingCart, label: t('addcards.tabOrderImport') },
   ];
 
   return (
@@ -72,9 +75,9 @@ export default function AddCards({ onAddSuccess, showToast, setActiveTab }) {
         ))}
       </div>
 
-      {mode === 'scan'
-        ? <CameraScanner onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />
-        : <SecretLairPanel onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
+      {mode === 'scan' && <CameraScanner onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
+      {mode === 'secretlair' && <SecretLairPanel onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
+      {mode === 'orderimport' && <OrderImportPanel onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
     </div>
   );
 }

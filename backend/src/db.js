@@ -932,6 +932,29 @@ async function initDb() {
   }
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key) WHERE api_key IS NOT NULL`);
 
+  // --- Marketplace order-import credentials (per user) ---
+  // ManaPool exposes a real buyer-order API (email + access token from its
+  // integration settings); TCGplayer has no buyer-order API at all, so the only
+  // server-callable path is its cookie-authenticated SPA gateway, which needs a
+  // pasted session jar. These columns hold whichever the user configured; a
+  // member sees only their own (the router scopes every read/write to req.user.id).
+  //   - the token and the cookie jar are secrets: they are never returned by any
+  //     GET (the UI shows masked presence), and a TCGplayer jar is possession-
+  //     equivalent to a login, so it must not be echoed in logs or error bodies.
+  //   - `*_enabled` is a master on/off the user controls, so an old saved
+  //     credential cannot silently keep being used; a fetch requires both the
+  //     credential AND it being enabled.
+  for (const [col, type] of [
+    ['manapool_email', 'TEXT'], ['manapool_token', 'TEXT'],
+    ['manapool_enabled', 'INTEGER NOT NULL DEFAULT 0'], ['manapool_saved_at', 'TEXT'],
+    ['tcgplayer_cookies', 'TEXT'],
+    ['tcgplayer_enabled', 'INTEGER NOT NULL DEFAULT 0'], ['tcgplayer_saved_at', 'TEXT'],
+  ]) {
+    if (!usersCols.some(c => c.name === col)) {
+      await run(`ALTER TABLE users ADD COLUMN ${col} ${type}`);
+    }
+  }
+
   const deckCardsCols = await all(`PRAGMA table_info(deck_cards)`);
   if (!deckCardsCols.some(c => c.name === 'checked_out')) {
     await run(`ALTER TABLE deck_cards ADD COLUMN checked_out INTEGER DEFAULT 0`);

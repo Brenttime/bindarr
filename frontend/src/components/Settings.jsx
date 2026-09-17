@@ -1,9 +1,10 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Languages, Globe } from 'lucide-react';
+import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Languages, Globe, ShoppingCart } from 'lucide-react';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 import { buildCardListText } from '../utils/cardList';
 import { REPO_URL } from '../utils/repo';
 import MoxfieldPanel from './MoxfieldPanel';
+import MarketplaceAccountsPanel from './MarketplaceAccountsPanel';
 
 // Admin-only surface, code-split like the view components so its heavy deps
 // (catalog management, backups) only load for admins on the Settings tab.
@@ -31,7 +32,8 @@ function Settings({ user, onUpdateUser, showToast, target }) {
   // button) asks us to scroll to a panel once we have rendered.
   useEffect(() => {
     if (!target) return;
-    const id = target === 'moxfield' ? 'moxfield-panel' : null;
+    const id = target === 'moxfield' ? 'moxfield-panel'
+      : target === 'marketplace' ? 'marketplace-panel' : null;
     if (!id) return;
     const timer = setTimeout(() => {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -535,6 +537,19 @@ function Settings({ user, onUpdateUser, showToast, target }) {
           </div>
 
           <MoxfieldPanel user={user} showToast={showToast} />
+        </div>
+
+        {/* Marketplace Accounts: credentials for importing cards from a ManaPool
+            or TCGplayer order you already placed (the Add Cards -> From order tab).
+            Per-user, unlike the instance settings above: a member imports against
+            their own marketplace account, and a TCGplayer cookie jar is a
+            session-grade secret that must never be echoed back to another user. */}
+        <div id="marketplace-panel" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', scrollMarginTop: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
+            <ShoppingCart size={20} style={{ color: 'var(--accent-yellow)' }} />
+            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('marketplace.title')}</h3>
+          </div>
+          <MarketplaceAccountsPanel showToast={showToast} />
         </div>
 
         {/* Collection Backup & Data Options Panel */}

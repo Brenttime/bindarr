@@ -534,6 +534,14 @@ const BULK_ADD_MAX = 250;
 // per-card count (a Secret Lair drop ships 4x of one card and 1x of another).
 // An entry's own quantity wins over the shared one, which is what lets the
 // route keep passing a flat id list with one shared multiplier.
+//
+// `purchase_price` follows the same rule for the same reason: a marketplace
+// order's lines each carry their OWN unit price (this foil was $4.10, that
+// common $0.25), so an entry that knows its price must not be flattened to one
+// shared figure the way a set browse is. Quantity alone was safe before
+// because every existing caller prices uniformly or not at all; an order
+// import is the first caller with per-line truth, so the override rides along
+// here rather than a second, subtly-different bulk path being born beside it.
 // Returns { added, failed, quantity } — `added` counts card TYPES that landed,
 // `quantity` is the fallback multiplier, so a caller can build "12 card types
 // (x2 each)" copy without re-deriving it.
@@ -545,9 +553,16 @@ async function bulkAddToCollection(user, entries, shared) {
   for (const entry of entries) {
     const keyed = entry && typeof entry === 'object';
     const card_id = keyed ? entry.card_id : entry;
-    const perCard = keyed && entry.quantity != null && entry.quantity !== ''
-      ? { quantity: entry.quantity }
-      : null;
+    const perCard = {};
+    if (keyed && entry.quantity != null && entry.quantity !== '') perCard.quantity = entry.quantity;
+    if (keyed && entry.purchase_price != null && entry.purchase_price !== '') {
+      perCard.purchase_price = entry.purchase_price;
+    }
+    // Same argument as purchase_price, and from the same caller: an order line
+    // knows its OWN grade (this slab is NM, that one LP), so a per-entry
+    // condition must not be flattened to the one shared default either.
+    if (keyed && entry.condition != null && entry.condition !== '') perCard.condition = entry.condition;
+
     try {
       const result = await addCardToCollection(user, { ...shared, ...perCard, card_id });
       added.push({ card_id, id: result.id });
