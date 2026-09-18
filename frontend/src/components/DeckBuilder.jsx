@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -305,7 +305,16 @@ function DeckBuilder({ showToast, onNavigate }) {
 
       if (response.ok) {
         showToast(t('deck.deleted'));
-        fetchDecks();
+        // Delete is reached from inside the deck editor now; the deleted deck has
+        // to close itself, or the editor stays open on a row that no longer exists.
+        if (activeDeck && activeDeck.id === deckId) {
+          closeDeck();
+        } else {
+          fetchDecks();
+        }
+      } else {
+        const body = await response.json().catch(() => ({}));
+        showToast(body.error || t('deck.errDelete'));
       }
     } catch (err) {
       console.error(err);
@@ -1014,7 +1023,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                               </span>
                             )}
 
-                            {deck.category && (
+                            {deck.category && deck.source !== 'precon' && (
                               <span style={{
                                 fontSize: '0.6rem',
                                 fontWeight: 700,
@@ -1088,50 +1097,13 @@ function DeckBuilder({ showToast, onNavigate }) {
                       </div>
                     </div>
 
-                    {/* Card Footer Actions */}
-                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    {/* Card footer — metadata only. The whole card is clickable, so
+                        checkout/return/open/delete are not repeated here; they live in
+                        the deck editor (the Delete control sits in its Deck tools). */}
+                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem', display: 'flex', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                         Created {new Date(deck.created_at).toLocaleDateString()}
                       </span>
-
-                      <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        {deck.checked_out ? (
-                          <button
-                            className="btn btn-secondary"
-                            style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', border: '1px solid rgba(234,179,8,0.4)', color: '#eab308' }}
-                            onClick={(e) => { e.stopPropagation(); handleReturn(deck); }}
-                            disabled={checkingOut}
-                          >
-                            <PackageCheck size={12} /> Return
-                          </button>
-                        ) : (
-                          <button
-                            className="btn btn-secondary"
-                            style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                            onClick={(e) => { e.stopPropagation(); handleCheckout(deck); }}
-                            disabled={checkingOut}
-                          >
-                            <LogOut size={12} /> Checkout
-                          </button>
-                        )}
-
-                        <button
-                          className="btn btn-primary"
-                          style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                          onClick={(e) => { e.stopPropagation(); loadDeckDetails(deck.id); }}
-                        >
-                          Open <ArrowRight size={12} />
-                        </button>
-
-                        <button
-                          className="btn btn-danger btn-icon-only"
-                          style={{ padding: '0.3rem' }}
-                          onClick={(e) => { e.stopPropagation(); handleDeleteDeck(deck.id, deck.name); }}
-                          title={t('deck.deleteDeck')}
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
                     </div>
 
                   </div>
@@ -1144,13 +1116,16 @@ function DeckBuilder({ showToast, onNavigate }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    <th style={{ padding: '0.75rem 1rem' }}>{t('deck.format')}</th>
+                    {/* Format column keeps its data but lost its "FORMAT" label (Brent,
+                        2026-09-17): the blank header cell holds the column widths. */}
+                    <th style={{ padding: '0.75rem 1rem' }} aria-hidden="true" />
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colNameDesc')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colCapacity')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.minimumValue')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('admin.colStatus')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('admin.colCreated')}</th>
-                    <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>{t('admin.colActions')}</th>
+                    {/* No Actions column: a row is clicked, not operated on. Checkout /
+                        Return / Delete live in the deck editor you land in by clicking. */}
                   </tr>
                 </thead>
                 <tbody>
@@ -1169,6 +1144,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                         onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                       >
+                        {/* Headerless format column: swatch + format stay, the label is gone. */}
                         <td style={{ padding: '0.75rem 1rem' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1185,7 +1161,10 @@ function DeckBuilder({ showToast, onNavigate }) {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                             <span style={{ fontWeight: 700, color: 'var(--text-strong)' }}>{deck.name}</span>
                             {renderSourceBadge(deck.source)}
-                            {deck.category && (
+                            {/* A precon is a printed product, not a play-style build: its
+                                category tag never renders, even for rows imported before
+                                the import stopped stamping one. */}
+                            {deck.category && deck.source !== 'precon' && (
                               <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
                                 {deck.category}
                               </span>
@@ -1234,25 +1213,8 @@ function DeckBuilder({ showToast, onNavigate }) {
                         <td style={{ padding: '0.75rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                           {new Date(deck.created_at).toLocaleDateString()}
                         </td>
-                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                            {deck.checked_out ? (
-                              <button className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: '#eab308' }} onClick={() => handleReturn(deck)} disabled={checkingOut}>
-                                {t('deck.return')}
-                              </button>
-                            ) : (
-                              <button className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleCheckout(deck)} disabled={checkingOut}>
-                                {t('deck.checkout')}
-                              </button>
-                            )}
-                            <button className="btn btn-primary" style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }} onClick={() => loadDeckDetails(deck.id)}>
-                              {t('deck.open')}
-                            </button>
-                            <button className="btn btn-danger btn-icon-only" style={{ padding: '0.25rem' }} onClick={() => handleDeleteDeck(deck.id, deck.name)}>
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        </td>
+                        {/* Actions column removed by design: the row itself opens the
+                            deck, and checkout/return/delete live in the deck editor. */}
                       </tr>
                     );
                   })}
@@ -1394,6 +1356,17 @@ function DeckBuilder({ showToast, onNavigate }) {
                   style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem' }}
                 >
                   <Upload size={12} />
+                </button>
+                {/* Deck delete lives here, not on the list rows — a deck is removed
+                    deliberately, from inside it, not while browsing the vault. */}
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => handleDeleteDeck(activeDeck.id, activeDeck.name)}
+                  title={t('deck.deleteDeck')}
+                  disabled={!!activeDeck.checked_out}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem', color: '#f87171', borderColor: 'rgba(239,68,68,0.3)' }}
+                >
+                  <Trash2 size={12} />
                 </button>
               </div>
             </div>
