@@ -321,8 +321,6 @@
   "deck.andMore": "(+{count} ещё)",
   "deck.availabilityBreakdown": "Наличие карт в коллекции:",
   "deck.basicLands": "Исключения для базовых земель:",
-  "deck.browseCollection": "Обзор коллекции",
-  "deck.browseHint": "Обзор всех карт коллекции, которые у вас есть",
   "deck.buylistCopied": "Список покупок скопирован — вставьте его в Mass Entry на TCGplayer.",
   "deck.buylistHint": "Только те копии, которых колоде не хватает помимо ваших. Вставьте в Mass Entry на TCGplayer.",
   "deck.cardCapacity": "Вместимость карт",

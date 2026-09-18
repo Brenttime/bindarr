@@ -322,59 +322,28 @@ function DeckBuilder({ showToast, onNavigate }) {
     }
   };
 
-  const handleSearchCards = async (e, forceBrowse = false) => {
+  const handleSearchCards = async (e) => {
     if (e) e.preventDefault();
+    // "Browse Collection" used to sit beside the search box and dumped every card
+    // owned through GET /api/collection. It is gone: searching is the only way
+    // in, so an empty box no-ops instead of flooding the pane with the library.
+    if (!searchQuery.trim()) return;
     try {
       setSearching(true);
-      if (forceBrowse || !searchQuery.trim()) {
-        const res = await fetch(`/api/collection`);
-        if (res.ok) {
-          const data = await res.json();
-          // Deck identity is the game card name, not a printing id. Keep one
-          // representative image while summing every physical printing owned.
-          const byCardName = new Map();
-          for (const item of data) {
-            const quantity = Number(item.quantity);
-            if (!Number.isFinite(quantity) || quantity <= 0) continue;
-            const key = cardKey(item);
-            const existing = byCardName.get(key);
-            if (existing) {
-              existing.owned_qty += quantity;
-            } else {
-              byCardName.set(key, {
-                id: item.card_id,
-                name: item.name,
-                printed_name: item.printed_name,
-                set_name: item.set_name,
-                number: item.number || item.collector_number || item.card_number || '',
-                image_url: item.image_url,
-                owned_qty: quantity,
-                supertype: item.supertype,
-                subtypes: item.subtypes,
-                types: item.types,
-                colors: item.colors,
-                cmc: item.cmc
-              });
-            }
-          }
-          setSearchResults(Array.from(byCardName.values()));
+      const response = await fetch(`/api/search?name=${encodeURIComponent(searchQuery)}&scope=collection`);
+      if (response.ok) {
+        const data = await response.json();
+        // Search returns each owned printing for art/collection display. A deck
+        // picker collapses those to one logical card; owned_qty is already the
+        // all-printings total on every row.
+        const byCardName = new Map();
+        for (const card of data) {
+          const key = cardKey(card);
+          if (!byCardName.has(key)) byCardName.set(key, card);
         }
+        setSearchResults(Array.from(byCardName.values()));
       } else {
-        const response = await fetch(`/api/search?name=${encodeURIComponent(searchQuery)}&scope=collection`);
-        if (response.ok) {
-          const data = await response.json();
-          // Search returns each owned printing for art/collection display. A deck
-          // picker collapses those to one logical card; owned_qty is already the
-          // all-printings total on every row.
-          const byCardName = new Map();
-          for (const card of data) {
-            const key = cardKey(card);
-            if (!byCardName.has(key)) byCardName.set(key, card);
-          }
-          setSearchResults(Array.from(byCardName.values()));
-        } else {
-          showToast(t(response.status === 429 ? 'deck.errRateLimit' : 'deck.errSearch'));
-        }
+        showToast(t(response.status === 429 ? 'deck.errRateLimit' : 'deck.errSearch'));
       }
     } catch (err) {
       console.error(err);
@@ -1411,9 +1380,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                     />
                     <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 1rem' }} title={t('shared.search')}>
                       <Search size={16} />
-                    </button>
-                    <button type="button" className="btn btn-secondary" onClick={(e) => handleSearchCards(e, true)} style={{ padding: '0.5rem 0.9rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }} title={t('deck.browseHint')}>
-                      {t('deck.browseCollection')}
                     </button>
                   </form>
 

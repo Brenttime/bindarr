@@ -321,8 +321,6 @@
   "deck.andMore": "(+{count}개 더)",
   "deck.availabilityBreakdown": "컬렉션 보유 현황:",
   "deck.basicLands": "기본 대지 예외:",
-  "deck.browseCollection": "컬렉션 둘러보기",
-  "deck.browseHint": "컬렉션의 보유 카드 전체 둘러보기",
   "deck.buylistCopied": "구매 목록을 복사했습니다. TCGplayer의 Mass Entry에 붙여 넣으세요.",
   "deck.buylistHint": "보유 수량을 넘겨 이 덱에 필요한 수량만 표시합니다. TCGplayer의 Mass Entry에 붙여 넣으세요.",
   "deck.cardCapacity": "카드 수용량",

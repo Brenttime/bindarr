@@ -321,8 +321,6 @@
   "deck.andMore": "（他 {count} 件）",
   "deck.availabilityBreakdown": "コレクション所持状況:",
   "deck.basicLands": "基本土地の除外:",
-  "deck.browseCollection": "コレクションを閲覧",
-  "deck.browseHint": "コレクションの所有カードをすべて閲覧",
   "deck.buylistCopied": "買い物リストをコピーしました。TCGplayer の Mass Entry に貼り付けてください。",
   "deck.buylistHint": "所有分を超えてこのデッキに必要な枚数だけです。TCGplayer の Mass Entry に貼り付けてください。",
   "deck.cardCapacity": "カード枚数の上限",

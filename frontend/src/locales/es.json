@@ -321,8 +321,6 @@
   "deck.andMore": "(+{count} más)",
   "deck.availabilityBreakdown": "Disponibilidad en la colección:",
   "deck.basicLands": "Excepciones de tierras básicas:",
-  "deck.browseCollection": "Explorar la colección",
-  "deck.browseHint": "Explorar todas las cartas de la colección",
   "deck.buylistCopied": "Lista de compra copiada: pégala en Mass Entry de TCGplayer.",
   "deck.buylistHint": "Solo las copias que este mazo necesita además de las que ya tienes. Pégalo en Mass Entry de TCGplayer.",
   "deck.cardCapacity": "Capacidad de cartas",

@@ -82,6 +82,10 @@ const sourcePolicies = [
   [join('components', 'SharedCollection.jsx'), />\{activeCard\.printing\}</],
   [join('components', 'CameraScanner.jsx'), /Market \(\{printing\}\)/],
   [join('components', 'CameraScanner.jsx'), /\bscanGame\b|\bgame\s*:/],
+  // The deck edit pane searches; it does not browse. The "Browse Collection"
+  // button dumped the whole library into the results pane and was removed by
+  // design (2026-09-18) — searching is the only way to add a card to a deck.
+  [join('components', 'DeckBuilder.jsx'), /\bbrowseCollection\b|\bforceBrowse\b/],
 ];
 for (const [relative, forbidden] of sourcePolicies) {
   assert.doesNotMatch(readFileSync(join(srcDir, relative), 'utf8'), forbidden, `${relative} retains removed residue`);

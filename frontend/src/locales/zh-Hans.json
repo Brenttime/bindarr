@@ -321,8 +321,6 @@
   "deck.andMore": "（另有 {count} 张）",
   "deck.availabilityBreakdown": "收藏持有情况分析:",
   "deck.basicLands": "基本地例外：",
-  "deck.browseCollection": "浏览收藏",
-  "deck.browseHint": "浏览收藏中持有的所有卡牌",
   "deck.buylistCopied": "采购清单已复制，粘贴到 TCGplayer 的 Mass Entry 即可。",
   "deck.buylistHint": "只列出超出你持有量、这副套牌还需要的张数。粘贴到 TCGplayer 的 Mass Entry。",
   "deck.cardCapacity": "卡牌容量",

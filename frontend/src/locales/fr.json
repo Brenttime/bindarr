@@ -321,8 +321,6 @@
   "deck.andMore": "(+{count} de plus)",
   "deck.availabilityBreakdown": "Disponibilité dans la collection :",
   "deck.basicLands": "Exceptions pour les terrains de base :",
-  "deck.browseCollection": "Parcourir la collection",
-  "deck.browseHint": "Parcourir toutes les cartes possédées de la collection",
   "deck.buylistCopied": "Liste d'achat copiée : colle-la dans Mass Entry de TCGplayer.",
   "deck.buylistHint": "Seuls les exemplaires dont ce deck a besoin en plus de ceux que tu possèdes. À coller dans Mass Entry de TCGplayer.",
   "deck.cardCapacity": "Capacité en cartes",
