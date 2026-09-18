@@ -3,8 +3,9 @@
 // accident, so they are pinned here:
 //
 //   1. no Actions column — rows/cards are clicked to open, never operated on;
-//   2. no "Format" column header — the headerless first column keeps the
-//      accent swatch and format text without the label;
+//   2. no Format column at all — header and data alike. The table shows a deck's
+//      format nowhere by design; the Grid view's cards keep their format badge,
+//      which is why that assertion is scoped to the table region.
 //   3. a precon never shows a play-style category tag, and the import that
 //      creates one never stamps a category in the first place.
 //
@@ -41,8 +42,29 @@ assert.doesNotMatch(selection, /handle(?:Checkout|Return)\(\s*deck\s*[,)]/,
   'checkout/return must not be offered per row/card — the editor owns those actions');
 assert.doesNotMatch(selection, /t\('admin\.colActions'\)/,
   'the Actions column header must stay off the deck list');
-assert.doesNotMatch(selection, /t\('deck\.format'\)/,
-  'the Format column must not regain its header label (the data column stays headerless)');
+// --- 2: the table has no Format column, header or body -----------------------
+// Scoped to the table view on purpose: the grid cards are not a column and still
+// carry their format badge, so asserting this over the whole selection view would
+// either pass vacuously or fight the grid design.
+const tableView = section(
+  '/* --- TABLE VIEW --- */',
+  '{/* 2. DECK EDITOR / DETAIL VIEW */}'
+);
+assert.doesNotMatch(tableView, /deck\.format\b/,
+  'the deck table must have no Format column — neither the header label nor the cell content');
+assert.doesNotMatch(tableView, /t\('deck\.format'\)/,
+  'the Format header label must stay off the deck table');
+// Two-sided: the row must not lose its accent swatch while losing the format cell.
+assert.equal((tableView.match(/backgroundColor:\s*accentColor/g) || []).length, 1,
+  'the table row must keep exactly one accent swatch (now beside the deck name)');
+// And the removal stops at the table: the grid cards are a different surface and
+// still badge their format, so a sweep that deletes those too is a regression.
+const cardGrid = section(
+  '/* --- GRID VIEW --- */',
+  '/* --- TABLE VIEW --- */'
+);
+assert.match(cardGrid, /\{deck\.format &&\s*\(/,
+  'the grid cards must keep their format badge — only the table lost the Format column');
 assert.doesNotMatch(selection, /<th[^>]*textAlign:\s*'right'/,
   'no right-aligned action header may reappear in the deck list table');
 

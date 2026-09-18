@@ -1116,9 +1116,12 @@ function DeckBuilder({ showToast, onNavigate }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    {/* Format column keeps its data but lost its "FORMAT" label (Brent,
-                        2026-09-17): the blank header cell holds the column widths. */}
-                    <th style={{ padding: '0.75rem 1rem' }} aria-hidden="true" />
+                    {/* No Format column at all (Brent, 2026-09-17): the deck list is
+                        not a format browser. The name cell carries the accent swatch.
+                        Consequence, stated straight: the table now shows a deck's format
+                        nowhere, and the editor header does not show it either. The Grid
+                        view's cards still badge their format, so Table users can switch
+                        views to read it. */}
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colNameDesc')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colCapacity')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.minimumValue')}</th>
@@ -1144,21 +1147,12 @@ function DeckBuilder({ showToast, onNavigate }) {
                         onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                       >
-                        {/* Headerless format column: swatch + format stay, the label is gone. */}
-                        <td style={{ padding: '0.75rem 1rem' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: accentColor, display: 'inline-block' }} />
-                              {deck.format && (
-                                <span style={{ fontSize: '0.7rem', color: 'var(--text-strong)', fontWeight: 700 }}>
-                                  {deck.format}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            {/* The accent swatch survives here: it is the deck's colour,
+                                not its format, and the table would otherwise have no
+                                trace of accent_color at all. */}
+                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: accentColor, display: 'inline-block', flexShrink: 0 }} />
                             <span style={{ fontWeight: 700, color: 'var(--text-strong)' }}>{deck.name}</span>
                             {renderSourceBadge(deck.source)}
                             {/* A precon is a printed product, not a play-style build: its
