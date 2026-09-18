@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, MoreHorizontal, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -86,6 +86,20 @@ function DeckBuilder({ showToast, onNavigate }) {
   // Checkout States
   const [checkingOut, setCheckingOut] = useState(false);
   const [registeringDeck, setRegisteringDeck] = useState(false);
+  // The header's ⋯ popover: rarely-used deck housekeeping (simulator, import /
+  // export, delete) so the three card-movement verbs stay the only loud things.
+  const [showDeckMenu, setShowDeckMenu] = useState(false);
+  const deckMenuRef = useRef(null);
+  // Click-away and Escape close the header menu, so it can never sit open over
+  // a deck that has since changed state (which would show stale verbs).
+  useEffect(() => {
+    if (!showDeckMenu) return undefined;
+    const onDown = (e) => { if (deckMenuRef.current && !deckMenuRef.current.contains(e.target)) setShowDeckMenu(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setShowDeckMenu(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [showDeckMenu]);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [checkoutLocations, setCheckoutLocations] = useState([]);
   const [checkoutMode, setCheckoutMode] = useState('checkout'); // 'checkout' | 'checkin'
@@ -698,6 +712,27 @@ function DeckBuilder({ showToast, onNavigate }) {
   // 'detail' without an active deck -- a failed fetch, a 422 unresolved-cards
   // deck, the pre-import hop from the precon modal -- can never render an empty
   // editor while the list is suppressed.
+  // The editor header decides its actions from the deck's state, not from a
+  // fixed button row. Every verb here moves cards across one of two boundaries:
+  //   missing -> shopping list   (openMissing: copy the shortfall / make a list)
+  //   deck    -> collection      (register: mint the whole deck as owned copies)
+  //   collection <-> deck        (checkout/return: reserve the copies for play)
+  // Only one of them is ever the primary, so the filled button always answers
+  // "what do I do with this deck right now?".
+  const missingCount = useMemo(() => missingEntries(deckCards).length, [deckCards]);
+  const canRegister = canRegisterDeckInCollection(activeDeck);
+  const isOut = !!activeDeck?.checked_out;
+  const isBuilding = !isOut && missingCount > 0;
+  const busy = checkingOut || registeringDeck;
+  const deckStatus = isOut
+    ? t('deck.statusOut')
+    : (missingCount > 0
+      ? t('deck.statusMissing', { count: missingCount })
+      : t('deck.statusComplete'));
+  const statusColor = isOut ? '#eab308' : (missingCount > 0 ? 'var(--accent-red)' : 'var(--success)');
+  const btnStack = { display: 'flex', alignItems: 'center', gap: '0.4rem' };
+  const quietBtn = { ...btnStack, border: '1px solid var(--border-glass)', color: 'var(--text-secondary)' };
+  const moreItem = { display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: '0.82rem', cursor: 'pointer', textAlign: 'left' };
   const detailOpen = viewMode === 'detail' && !!activeDeck;
 
   const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
@@ -1207,15 +1242,15 @@ function DeckBuilder({ showToast, onNavigate }) {
               }} />
             ) : null}
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <button className="btn btn-secondary btn-icon-only" onClick={closeDeck} style={{ borderRadius: '50%' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <button className="btn btn-secondary btn-icon-only" onClick={closeDeck} aria-label={t('deck.backToDecks')} style={{ borderRadius: '50%', flex: 'none' }}>
                 <ChevronLeft size={16} />
               </button>
-              <div>
-                <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', margin: 0 }}>
                   {activeDeck.name}
                   {renderSourceBadge(activeDeck.source)}
-                  <span style={{ fontSize: '0.8rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--accent-yellow)', fontWeight: 600 }}>
+                  <span style={{ fontSize: '0.78rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--accent-yellow)', fontWeight: 600 }}>
                     ({totalDeckCardsCount}/{targetDeckCardsCount} cards)
                   </span>
                   <span
@@ -1229,111 +1264,109 @@ function DeckBuilder({ showToast, onNavigate }) {
                       <small style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({deckUnpricedCountText(activeDeck, t)})</small>
                     )}
                   </span>
-                  {activeDeck.checked_out ? (
-                    <span style={{
-                      fontSize: '0.65rem',
-                      background: 'rgba(234,179,8,0.15)',
-                      border: '1px solid rgba(234,179,8,0.4)',
-                      color: '#eab308',
-                      padding: '2px 8px',
-                      borderRadius: '12px',
-                      fontWeight: 700,
-                      letterSpacing: '0.05em',
-                      textTransform: 'uppercase',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}>
-                      🎮 In Play
-                    </span>
-                  ) : null}
                 </h2>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{activeDeck.description || 'Custom deck build.'}</p>
-                {!!activeDeck.checked_out && activeDeck.checked_out_at && (
-                  <p style={{ color: '#eab308', fontSize: '0.7rem', marginTop: '2px' }}>
-                    Checked out since {new Date(activeDeck.checked_out_at).toLocaleString()}
-                  </p>
-                )}
+                <p style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', margin: '4px 0 0', color: 'var(--text-secondary)' }}>
+                  <span aria-hidden={'true'} style={{ width: '7px', height: '7px', borderRadius: '50%', background: statusColor, flex: 'none' }} />
+                  <span style={{ color: statusColor, fontWeight: 650, whiteSpace: 'nowrap' }}>{deckStatus}</span>
+                  <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {activeDeck.description || t('deck.defaultDescription')}
+                  </span>
+                  {!!isOut && activeDeck.checked_out_at && (
+                    <span style={{ color: 'var(--text-muted)', flex: 'none' }}>
+                      {t('deck.checkedOutSince', { when: new Date(activeDeck.checked_out_at).toLocaleString() })}
+                    </span>
+                  )}
+                </p>
               </div>
-            </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              {canRegisterDeckInCollection(activeDeck) && (
+            {/* The deck's state picks the one filled verb; the other card-movement
+                verbs stay quiet outlines so the row never reshuffles under a click.
+                Register is hidden while a deck is out because the endpoint refuses it
+                then. Housekeeping sits behind one overflow so only the three verbs
+                that move cards across a boundary compete for attention. */}
+            <div ref={deckMenuRef} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'relative', flex: 'none' }}>
+              {!isOut && isBuilding && (
+                <button
+                  className="btn btn-primary"
+                  onClick={openMissing}
+                  disabled={busy}
+                  title={t('deck.missingHint')}
+                  style={btnStack}
+                >
+                  <ClipboardList size={14} /> {t('deck.exportMissingCount', { count: missingCount })}
+                </button>
+              )}
+              {!isOut && (
+                <button
+                  className={'btn ' + (isBuilding ? 'btn-secondary' : 'btn-primary')}
+                  onClick={() => handleCheckout(activeDeck)}
+                  disabled={busy}
+                  title={t('deck.checkoutHint')}
+                  style={isBuilding ? quietBtn : btnStack}
+                >
+                  <LogOut size={14} /> {t('deck.checkoutAction')}
+                </button>
+              )}
+              {isOut && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => handleReturn(activeDeck)}
+                  disabled={busy}
+                  title={t('deck.returnHint')}
+                  style={btnStack}
+                >
+                  <PackageCheck size={14} /> {t('deck.returnAction')}
+                </button>
+              )}
+              {!isOut && canRegister && (
                 <button
                   className="btn btn-secondary"
                   onClick={handleRegisterInCollection}
-                  disabled={registeringDeck || checkingOut}
+                  disabled={busy}
                   title={t('deck.registerCollectionHint')}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', borderColor: 'rgba(74, 222, 128, 0.38)', color: '#4ade80' }}
+                  style={{ ...btnStack, color: '#4ade80', borderColor: 'rgba(74, 222, 128, 0.38)' }}
                 >
-                  <PackageOpen size={14} />
-                  {registeringDeck ? t('deck.registeringCollection') : t('deck.registerCollection')}
+                  <PackagePlus size={14} /> {registeringDeck ? t('deck.registeringCollection') : t('deck.registerCollection')}
                 </button>
               )}
-              {/* The deck action that's actually used: what's still missing from the collection */}
               <button
-                className="btn btn-primary"
-                onClick={openMissing}
-                title={t('deck.missingHint')}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                className="btn btn-secondary btn-icon-only"
+                onClick={() => setShowDeckMenu((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={showDeckMenu ? 'true' : 'false'}
+                aria-label={t('deck.moreActions')}
+                title={t('deck.moreActions')}
+                style={{ borderRadius: '50%', padding: '0.25rem 0.5rem' }}
               >
-                <List size={14} /> {t('deck.exportMissing')}
+                <MoreHorizontal size={16} />
               </button>
-              {/* Checkout / Return button */}
-              {activeDeck.checked_out ? (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleReturn(activeDeck)}
-                  disabled={checkingOut}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', border: '1px solid rgba(234,179,8,0.4)', color: '#eab308' }}
-                >
-                  <PackageCheck size={14} /> {t('deck.return')}
-                </button>
-              ) : (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleCheckout(activeDeck)}
-                  disabled={checkingOut || registeringDeck}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                >
-                  <LogOut size={14} /> Check Out for Play
-                </button>
+              {showDeckMenu && (
+                <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 60, minWidth: '218px', padding: '0.3rem', background: 'var(--surface-glass)', border: '1px solid var(--border-glass)', borderRadius: '12px', boxShadow: '0 18px 45px rgba(0, 0, 0, 0.45)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); startSimulator(); }}>
+                    <Play size={14} /> {t('deck.drawSimulator')}
+                  </button>
+                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
+                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); setShowExportModal(true); }}>
+                    <Download size={14} /> {t('deck.exportDeckList')}
+                  </button>
+                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); setShowImportModal(true); }}>
+                    <Upload size={14} /> {t('deck.importDeckList')}
+                  </button>
+                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
+                  <button
+                    role="menuitem"
+                    style={{ ...moreItem, color: 'var(--accent-red)', cursor: isOut ? 'not-allowed' : 'pointer', opacity: isOut ? 0.45 : 1 }}
+                    disabled={isOut}
+                    title={isOut ? t('deck.deleteBlockedWhileOut') : t('deck.deleteDeckHint')}
+                    onClick={() => { setShowDeckMenu(false); handleDeleteDeck(activeDeck.id, activeDeck.name); }}
+                  >
+                    <Trash2 size={14} /> {t('deck.deleteDeck')}
+                  </button>
+                </div>
               )}
-              <button className="btn btn-primary" onClick={startSimulator} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <Play size={14} /> Draw Simulator
-              </button>
-              {/* Deck tools — used rarely, so they sit smaller and quieter at the end */}
-              <div style={{ display: 'flex', gap: '0.25rem', opacity: 0.75 }} title={t('deck.deckTools')}>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setShowExportModal(true)}
-                  title={t('deck.exportHint')}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem' }}
-                >
-                  <Download size={12} />
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setShowImportModal(true)}
-                  title={t('deck.importHint')}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem' }}
-                >
-                  <Upload size={12} />
-                </button>
-                {/* Deck delete lives here, not on the list rows — a deck is removed
-                    deliberately, from inside it, not while browsing the vault. */}
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleDeleteDeck(activeDeck.id, activeDeck.name)}
-                  title={t('deck.deleteDeck')}
-                  disabled={!!activeDeck.checked_out}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem', color: '#f87171', borderColor: 'rgba(239,68,68,0.3)' }}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
             </div>
           </div>
+        </div>
 
           {/* Checked out info banner */}
           {!!activeDeck.checked_out && (
