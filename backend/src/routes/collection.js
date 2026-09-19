@@ -523,6 +523,57 @@ router.post('/collection', async (req, res) => {
 // 3b. Bulk add: one shared condition/printing/quantity across many cards, so a
 // set browse can be added in one action instead of one drawer per card.
 const BULK_ADD_MAX = 250;
+
+// The shared bulk-add core, used by the route below AND by the Secret Lair
+// importer (utils/secretLair.js), which resolves a whole product's cards and
+// then files them through here. Extracted rather than duplicated so a bulk
+// import and a bulk tray add can never drift on what "added" means: same
+// per-card service, same sequential order, same per-card error reporting.
+//
+// `entries` are card ids, or { card_id, quantity } when the caller knows a
+// per-card count (a Secret Lair drop ships 4x of one card and 1x of another).
+// An entry's own quantity wins over the shared one, which is what lets the
+// route keep passing a flat id list with one shared multiplier.
+//
+// `purchase_price` follows the same rule for the same reason: a marketplace
+// order's lines each carry their OWN unit price (this foil was $4.10, that
+// common $0.25), so an entry that knows its price must not be flattened to one
+// shared figure the way a set browse is. Quantity alone was safe before
+// because every existing caller prices uniformly or not at all; an order
+// import is the first caller with per-line truth, so the override rides along
+// here rather than a second, subtly-different bulk path being born beside it.
+// Returns { added, failed, quantity } — `added` counts card TYPES that landed,
+// `quantity` is the fallback multiplier, so a caller can build "12 card types
+// (x2 each)" copy without re-deriving it.
+async function bulkAddToCollection(user, entries, shared) {
+  const added = [];
+  const failed = [];
+  // Sequential on purpose: preserve input order and avoid overlapping cache
+  // hydration/insertion work for duplicate cards in the same request.
+  for (const entry of entries) {
+    const keyed = entry && typeof entry === 'object';
+    const card_id = keyed ? entry.card_id : entry;
+    const perCard = {};
+    if (keyed && entry.quantity != null && entry.quantity !== '') perCard.quantity = entry.quantity;
+    if (keyed && entry.purchase_price != null && entry.purchase_price !== '') {
+      perCard.purchase_price = entry.purchase_price;
+    }
+    // Same argument as purchase_price, and from the same caller: an order line
+    // knows its OWN grade (this slab is NM, that one LP), so a per-entry
+    // condition must not be flattened to the one shared default either.
+    if (keyed && entry.condition != null && entry.condition !== '') perCard.condition = entry.condition;
+
+    try {
+      const result = await addCardToCollection(user, { ...shared, ...perCard, card_id });
+      added.push({ card_id, id: result.id });
+    } catch (error) {
+      if (!(error instanceof AddCardError)) console.error(error);
+      failed.push({ card_id, error: error instanceof AddCardError ? error.message : 'Failed to add card' });
+    }
+  }
+  return { added, failed, quantity: Math.max(1, parseInt(shared && shared.quantity, 10) || 1) };
+}
+
 router.post('/collection/bulk-add', async (req, res) => {
   const { card_ids = [], ...shared } = req.body;
   if (!Array.isArray(card_ids) || card_ids.length === 0) {
@@ -531,20 +582,7 @@ router.post('/collection/bulk-add', async (req, res) => {
   if (card_ids.length > BULK_ADD_MAX) {
     return res.status(400).json({ error: `Cannot add more than ${BULK_ADD_MAX} cards at once.` });
   }
-  // Sequential on purpose: preserve input order and avoid overlapping cache
-  // hydration/insertion work for duplicate cards in the same request.
-  const added = [];
-  const failed = [];
-  for (const card_id of card_ids) {
-    try {
-      const result = await addCardToCollection(req.user, { ...shared, card_id });
-      added.push({ card_id, id: result.id });
-    } catch (error) {
-      if (!(error instanceof AddCardError)) console.error(error);
-      failed.push({ card_id, error: error instanceof AddCardError ? error.message : 'Failed to add card' });
-    }
-  }
-  const qty = Math.max(1, parseInt(shared.quantity, 10) || 1);
+  const { added, failed, quantity: qty } = await bulkAddToCollection(req.user, card_ids, shared);
   res.status(failed.length && !added.length ? 500 : 200).json({
     message: failed.length
       ? `Added ${added.length} of ${card_ids.length} cards; ${failed.length} failed.`
@@ -886,3 +924,8 @@ router.post('/collection/bulk', async (req, res) => {
 });
 
 module.exports = router;
+// Shared with the Secret Lair importer, which resolves a product's whole card
+// list and then files it through the same bulk-add core the tray uses. The
+// router is what server.js mounts, so the helper rides along as a property
+// rather than replacing the export.
+module.exports.bulkAddToCollection = bulkAddToCollection;

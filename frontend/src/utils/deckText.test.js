@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { buildDeckExport, parseDeckLine } from './deckText.js';
+import { buildDeckExport, parseDeckLine, missingEntries } from './deckText.js';
 
 const cards = [
   { quantity: 4, name: 'Lightning Bolt', set_id: '2x2', number: '117' },
@@ -30,3 +30,16 @@ const bl = buildDeckExport([
 assert.strictEqual(bl, '3 Lightning Bolt\n3 Izzet Cerberus', 'buylist shortfall lines');
 
 console.log('deckText buylist check passed');
+
+// missing-panel agreement: panel rows and the buylist serialise from one deficit.
+const rows = missingEntries([
+  { name: 'Delta Sentinel', quantity: 4, owned_qty: 1, set_name: 'M11', collector_number: '12a' },
+  { name: 'Delta Sentinel', quantity: 2, owned_qty: 0, set_name: 'M11', collector_number: '12a' },
+  { name: 'Plains', quantity: 9, owned_qty: 0, subtypes: ['Basic', 'Land'] },
+  { name: 'Llanachar Bulette', quantity: 1, owned_qty: 0 },
+]);
+assert.strictEqual(rows.length, 2, 'basics exempt, duplicates merged');
+assert.strictEqual(rows[0].need, 6);
+assert.strictEqual(rows[0].have, 1);
+assert.strictEqual(buildDeckExport(rows.map((r) => ({ quantity: r.need, owned_qty: r.have, name: r.name })), 'buylist'), '5 Delta Sentinel\n1 Llanachar Bulette');
+console.log('deckText missing-panel agreement passed');
