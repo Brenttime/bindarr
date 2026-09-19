@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Trash2, X, ChevronLeft, Search, ListChecks, Copy, Pencil,
-  Layers, Minus, ShoppingBag, DollarSign, Wand2,
+  Layers, Minus, ShoppingBag, Wand2,
 } from 'lucide-react';
 import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
@@ -492,9 +492,10 @@ function Lists({ showToast, handoff, onHandoffDone }) {
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                       <Layers size={13} /> {t('lists.cards', { count: list.total_card_types || 0 })}
                     </span>
-                    <span>{t('lists.total', { count: list.total_cards || 0 })}</span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }} title={deckMinimumValueHint(list, t)}>
-                      <DollarSign size={13} /> {deckMinimumValueText(list)}
+                    {/* deckMinimumValueText already carries the currency symbol —
+                        a DollarSign icon beside it rendered a duplicated "$ $12.35". */}
+                    <span title={deckMinimumValueHint(list, t)}>
+                      {deckMinimumValueText(list)}
                     </span>
                   </div>
                 </div>
