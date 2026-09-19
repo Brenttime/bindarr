@@ -15,6 +15,7 @@ const path = require('path');
 const db = require('./db');
 const scryfallApi = require('./scryfallApi');
 
+
 const authRoutes = require('./routes/auth');
 const sharedRoutes = require('./routes/shared');
 const adminRoutes = require('./routes/admin');
@@ -223,8 +224,10 @@ async function autoUpdateCatalogs() {
 app.use(compression());
 
 // Initialize Database on startup
+let dbReady = false;
 db.initDb()
   .then(async () => {
+    dbReady = true;
     console.log('Database tables verified/created successfully.');
 
     // Daily Oracle Tags + one-time oracle_id backfill start in the background.
@@ -241,6 +244,15 @@ db.initDb()
 
     // Sync sets on startup.
     await scryfallApi.fetchAndCacheSets();
+    // Load sets into the card-sort memory cache. The storage half of the old
+    // compartmentSort went away with the Storage feature (d2fab84) and took the
+    // boot-time import with it; the sort half lives in utils/cardSort, which is
+    // what the weekly refresh below still calls. Leaving no declaration in scope
+    // made that timer throw ReferenceError on every run, so the catalog
+    // auto-update scheduled after it never executed.
+    const { loadSetsCache } = require('./utils/cardSort');
+    await loadSetsCache(db);
+
 
     // Warm the scan models and catalogs. Two ONNX sessions plus an embedding table
     // take ~400 ms to load; paying that on the first scan instead would make the
@@ -274,22 +286,23 @@ db.initDb()
       }
     }, 1000 * 60 * 60 * 24 * 7);
 
-    // Daily: prices. Scryfall refreshes prices once a day, so this is both the
-    // most often worth doing and the most often allowed. `force` because the
-    // interval itself is already the right cadence. A second checkpoint after
-    // the sweep retries any truncate that an active startup reader deferred.
-    const updatePricesAndCheckpoint = async (force = false) => {
-      try {
-        await scryfallApi.updateCollectionPrices(force);
-      } catch (error) {
-        console.error('MTG price update failed:', error.message);
-      } finally {
-        await oracleTags.checkpointWal();
-      }
-    };
+    // Prices. Hourly tick, and NOT forced: shouldSweepPrices decides whether the
+    // sweep is actually due, from the admin's price_refresh_days. The daily timer
+    // this replaces passed force: true, which skipped that gate entirely and made
+    // the configurable interval dead code -- and a daily tick against a daily
+    // interval skips on any clock drift at all ('23h 59m elapsed' is not due), so
+    // the refresh silently became every other day. An hourly tick that refuses in
+    // one indexed read costs nothing and has no such edge.
+    //
+    // The checkpoint after the sweep retries any WAL truncate that an active
+    // startup reader deferred.
     setInterval(() => {
-      updatePricesAndCheckpoint(true);
-    }, 1000 * 60 * 60 * 24);
+      scryfallApi.updateCollectionPrices().catch((error) => {
+        console.error('MTG price update failed:', error.message);
+      }).finally(() => {
+        oracleTags.checkpointWal();
+      });
+    }, 1000 * 60 * 60);
 
     // Shortly after startup, catch up if the last sweep was over a day ago.
     // NOT forced: without that gate this re-ran on every restart, which under
@@ -299,8 +312,12 @@ db.initDb()
       // Both jobs use Scryfall. Let the small one-time identity residual finish
       // before a stale install queues thousands of price batches ahead of it;
       // runMaintenance de-duplicates with the Oracle service's own startup run.
+      // Unforced, so a sweep still inside the interval does not run.
       await oracleTags.runMaintenance();
-      await updatePricesAndCheckpoint();
+      await scryfallApi.updateCollectionPrices().catch((error) => {
+        console.error('MTG boot price catch-up failed:', error.message);
+      });
+      await oracleTags.checkpointWal();
     }, 30000);
 
     // Periodically purge expired sessions so the table doesn't grow unbounded
@@ -327,6 +344,9 @@ db.initDb()
 // Declared before the /api collection mount so nothing shadows it.
 app.get('/api/health', async (req, res) => {
   res.setHeader('X-App-Name', 'Bindarr');
+  if (!dbReady) {
+    return res.status(503).json({ status: 'db_initializing' });
+  }
   try {
     await db.get('SELECT 1');
     res.json({ status: 'ok' });

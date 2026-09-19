@@ -191,6 +191,7 @@ async function initDb() {
       role TEXT CHECK(role IN ('admin', 'member')) NOT NULL DEFAULT 'member',
       share_token TEXT UNIQUE NOT NULL,
       share_enabled INTEGER DEFAULT 0,
+      oidc_sub TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -407,6 +408,14 @@ async function initDb() {
   if (!appSettingsCols.some(c => c.name === 'mtg_prices_swept_at')) {
     await run(`ALTER TABLE app_settings ADD COLUMN mtg_prices_swept_at DATETIME`);
   }
+
+  // How many days between automatic price refreshes; 0 switches them off.
+  // Daily is what every install did before this column existed, so that is the
+  // default and nothing changes for anyone who never touches it.
+  if (!appSettingsCols.some(c => c.name === 'price_refresh_days')) {
+    await run(`ALTER TABLE app_settings ADD COLUMN price_refresh_days INTEGER NOT NULL DEFAULT 1`);
+  }
+
 
   // VESTIGIAL. This gated non-admin members building an individual per-set ORB
   // index, and there are no per-set indexes any more — scanning is CollectorVision
@@ -954,6 +963,12 @@ async function initDb() {
       await run(`ALTER TABLE users ADD COLUMN ${col} ${type}`);
     }
   }
+  // OIDC / SSO unique identifier (subject claim `sub`). Links an external IdP
+  // user account to a Bindarr user row.
+  if (!usersCols.some(c => c.name === 'oidc_sub')) {
+    await run(`ALTER TABLE users ADD COLUMN oidc_sub TEXT`);
+  }
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_sub ON users(oidc_sub) WHERE oidc_sub IS NOT NULL`);
 
   const deckCardsCols = await all(`PRAGMA table_info(deck_cards)`);
   if (!deckCardsCols.some(c => c.name === 'checked_out')) {

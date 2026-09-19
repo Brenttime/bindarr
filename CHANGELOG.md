@@ -6,6 +6,24 @@ release also carries fuller notes on its
 
 ## [Unreleased]
 
+## [1.8.5] - 2026-09-11
+
+### Added
+- **OIDC / SSO login.** Bindarr can sign users in through an external identity provider (Authelia, Authentik, Keycloak and other OIDC providers), linking an IdP identity to a Bindarr account by its `sub` claim. Both `client_secret_post` and `client_secret_basic` token-endpoint auth are selectable, so providers that accept only one of the two work without patching. Thanks [@JGHCode](https://github.com/JGHCode) ([#43](https://github.com/thenotoriousJeremy/bindarr/issues/43), [#45](https://github.com/thenotoriousJeremy/bindarr/pull/45), [#46](https://github.com/thenotoriousJeremy/bindarr/pull/46)).
+
+### Fixed
+- **OIDC ID tokens are validated, not just decoded.** The callback now verifies the token's signature and claims before trusting its subject ([#56](https://github.com/thenotoriousJeremy/bindarr/pull/56)).
+- **OIDC no longer links an IdP identity to a local account by username.** Matching on a username alone let an identity provider claim an existing local account that happened to share a name; linking is opt-in and keyed on `sub` ([#55](https://github.com/thenotoriousJeremy/bindarr/pull/55)).
+
+### Performance
+- **Admin -> Catalogs stopped scanning `card_cache` once per set**, which made the page's cost grow with the number of sets ([#53](https://github.com/thenotoriousJeremy/bindarr/pull/53)).
+
+## [1.8.4] - 2026-08-22
+
+### Fixed
+- **Card Inspector crash on card open.** Fixed a `TypeError` where opening a card in the inspector could attempt to evaluate properties on a `null` active card reference when the modal mounted prior to card selection ([#47](https://github.com/thenotoriousJeremy/bindarr/issues/47), [#48](https://github.com/thenotoriousJeremy/bindarr/pull/48)).
+
+## [1.8.3] - 2026-08-21
 ### Added
 - **Scryfall-syntax search.** The card search page now has a **Scryfall syntax**
   toggle (the braces button next to Rapid add) that swaps the card-name /
