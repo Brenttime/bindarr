@@ -26,6 +26,8 @@ const setsRoutes = require('./routes/sets');
 const decksRoutes = require('./routes/decks');
 const listsRoutes = require('./routes/lists');
 const preconsRoutes = require('./routes/precons');
+const secretLairRoutes = require('./routes/secretLair');
+const marketplaceOrdersRoutes = require('./routes/marketplaceOrders');
 const settingsRoutes = require('./routes/settings');
 const cardArtRoutes = require('./routes/cardArt');
 const { authenticateToken } = require('./middleware/auth');
@@ -405,6 +407,8 @@ app.use('/api/sets', setsRoutes);
 app.use('/api/decks', decksRoutes);
 app.use('/api/lists', listsRoutes);
 app.use('/api/precons', preconsRoutes);
+app.use('/api/secret-lair', secretLairRoutes);
+app.use('/api/marketplace', marketplaceOrdersRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/moxfield', moxfieldRoutes);
 

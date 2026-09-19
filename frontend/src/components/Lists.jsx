@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Trash2, X, ChevronLeft, Search, ListChecks, Copy, Pencil,
-  Layers, Minus,
+  Layers, Minus, ShoppingBag,
 } from 'lucide-react';
 import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
 import { displayName, setReference } from '../utils/languages';
 import { useT } from '../utils/i18n';
 import { cardKey, findSameCard } from '../utils/cardIdentity';
+import { buildManapoolUrl } from '../utils/manapoolUrl';
 
 const ACCENTS = [
   { name: 'Emerald', hex: '#10b981' },
@@ -20,7 +21,7 @@ const ACCENTS = [
   { name: 'Orange', hex: '#f97316' },
 ];
 
-function Lists({ showToast }) {
+function Lists({ showToast, handoff, onHandoffDone }) {
   const { t } = useT();
 
   // View state: 'list' (all lists) or 'detail' (one list's cards)
@@ -200,6 +201,22 @@ function Lists({ showToast }) {
     await loadList(list.id);
   };
 
+  // Handoff from the deck builder's "what's missing" panel: prefill the
+  // create form with the shortfall instead of firing a blind create; the
+  // create modal's own save path stays the single owner of list creation.
+  useEffect(() => {
+    if (!handoff) return;
+    if (handoff.createMissing) {
+      setNewName(handoff.createMissing.name || '');
+      setNewDesc('');
+      setNewAccent('#10b981');
+      setImportText(handoff.createMissing.text || '');
+      setShowCreate(true);
+    }
+    onHandoffDone?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handoff]);
+
   // --- Card search (debounced as the user types) ---
   const doSearch = async (query) => {
     try {
@@ -296,6 +313,69 @@ function Lists({ showToast }) {
         ta.remove();
       }
       showToast(t('lists.exportCopied'));
+    } catch (err) {
+      console.error(err);
+      showToast(t('lists.errExport'));
+    }
+  };
+
+  // "Buy these on ManaPool": hand the list to ManaPool's Mass Entry page as a
+  // prefilled deep link. /add-deck reads a base64 `deck` query param and drops
+  // it straight into its paste box (verified against the live site), so the
+  // user lands on a ready-to-submit list rather than an empty box they have to
+  // paste into. The plain "N Card Name" shape is what that box parses, which is
+  // exactly what the shared card-list formatter emits for style=plain.
+  //
+  // The clipboard copy is kept as a convenience (their cart flow can still take
+  // a paste) but is deliberately non-fatal: a denied or unavailable clipboard
+  // in an insecure context must not sink a link that already works.
+  const handleBuyOnManapool = async () => {
+    // Open the tab SYNCHRONOUSLY, before any await: the transient user
+    // activation that permits window.open does not survive the export request
+    // and the clipboard round-trip, so deferring the open gets it blocked.
+    const tab = window.open('', '_blank', 'noopener,noreferrer');
+    try {
+      const res = await fetch(`/api/lists/${activeList.id}/cardlist?style=plain`);
+      if (!res.ok) {
+        if (tab) { try { tab.close(); } catch { /* already gone */ } }
+        throw new Error('export failed');
+      }
+      const text = await res.text();
+      if (!text) {
+        if (tab) { try { tab.close(); } catch { /* already gone */ } }
+        showToast(t('lists.exportEmpty'));
+        return;
+      }
+      const url = buildManapoolUrl(text.split('\n'));
+      if (!url) {
+        if (tab) { try { tab.close(); } catch { /* already gone */ } }
+        showToast(t('lists.exportEmpty'));
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // Older browsers / non-secure contexts: legacy path. Its failure is
+        // just as non-fatal as the modern API's — the deep link already carries
+        // the whole list, so a broken clipboard must not sink the click.
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+        } catch { /* clipboard unavailable; the link still opens */ }
+      }
+      // Navigate the tab we already own. A blocked popup (tab null) falls back
+      // to the same-window open manager's default behavior: just toast the link
+      // copied state rather than pretend a new tab appeared.
+      if (tab) {
+        tab.location.href = url;
+        showToast(t('lists.buyOnManapoolDone'));
+      } else {
+        showToast(t('lists.buyOnManapoolPopupHint'));
+      }
     } catch (err) {
       console.error(err);
       showToast(t('lists.errExport'));
@@ -459,6 +539,10 @@ function Lists({ showToast }) {
           <button className="btn btn-secondary" onClick={() => handleExport('detailed')}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Copy size={14} /> {t('lists.exportDetailed')}
+          </button>
+          <button className="btn btn-secondary" onClick={handleBuyOnManapool}
+            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <ShoppingBag size={14} /> {t('lists.buyOnManapool')}
           </button>
           <button className="btn btn-secondary" onClick={openEdit}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>

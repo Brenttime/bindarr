@@ -1,0 +1,14 @@
+  // The header's ⋯ popover: rarely-used deck housekeeping (simulator, import /
+  // export, delete) so the three card-movement verbs stay the only loud things.
+  const [showDeckMenu, setShowDeckMenu] = useState(false);
+  const deckMenuRef = useRef(null);
+  // Click-away and Escape close the header menu, so it can never sit open over
+  // a deck that has since changed state (which would show stale verbs).
+  useEffect(() => {
+    if (!showDeckMenu) return undefined;
+    const onDown = (e) => { if (deckMenuRef.current && !deckMenuRef.current.contains(e.target)) setShowDeckMenu(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setShowDeckMenu(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [showDeckMenu]);

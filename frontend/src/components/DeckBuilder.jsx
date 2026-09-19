@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, Swords, Gamepad2, SlidersHorizontal, ArrowRight, FolderPlus, FileText, Globe, PackageOpen, DollarSign } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, MoreHorizontal, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -7,7 +7,7 @@ import CheckoutWizardModal from './CheckoutWizardModal';
 import AddDeckChoiceModal from './AddDeckChoiceModal';
 import PreconSearchModal from './PreconSearchModal';
 import { useBackGuard } from '../utils/useBackGuard';
-import { buildDeckExport, parseDeckLine } from '../utils/deckText';
+import { buildDeckExport, parseDeckLine, missingEntries } from '../utils/deckText';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
 import { canRegisterDeckInCollection, deckRegistrationCardCount } from '../utils/deckCollectionRegistration';
@@ -68,6 +68,9 @@ function DeckBuilder({ showToast, onNavigate }) {
 
   // Draw Simulator States
   const [showSimulator, setShowSimulator] = useState(false);
+  const [missingOpen, setMissingOpen] = useState(false);
+
+  const [missingListName, setMissingListName] = useState('');
   const [simulatorDeck, setSimulatorDeck] = useState([]);
   const [hand, setHand] = useState([]);
   const [mulliganCount, setMulliganCount] = useState(0);
@@ -83,6 +86,20 @@ function DeckBuilder({ showToast, onNavigate }) {
   // Checkout States
   const [checkingOut, setCheckingOut] = useState(false);
   const [registeringDeck, setRegisteringDeck] = useState(false);
+  // The header's ⋯ popover: rarely-used deck housekeeping (simulator, import /
+  // export, delete) so the three card-movement verbs stay the only loud things.
+  const [showDeckMenu, setShowDeckMenu] = useState(false);
+  const deckMenuRef = useRef(null);
+  // Click-away and Escape close the header menu, so it can never sit open over
+  // a deck that has since changed state (which would show stale verbs).
+  useEffect(() => {
+    if (!showDeckMenu) return undefined;
+    const onDown = (e) => { if (deckMenuRef.current && !deckMenuRef.current.contains(e.target)) setShowDeckMenu(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setShowDeckMenu(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [showDeckMenu]);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [checkoutLocations, setCheckoutLocations] = useState([]);
   const [checkoutMode, setCheckoutMode] = useState('checkout'); // 'checkout' | 'checkin'
@@ -95,7 +112,23 @@ function DeckBuilder({ showToast, onNavigate }) {
 
   useBackGuard(showCreateModal, () => setShowCreateModal(false));
   useBackGuard(showSimulator, () => setShowSimulator(false));
-  useBackGuard(!!activeDeck, () => setActiveDeck(null));
+  useBackGuard(missingOpen, () => setMissingOpen(false));
+
+  // Leaving the detail view has to clear BOTH halves of the view state. The two
+  // render blocks are gated independently (`viewMode === 'list'` for the deck
+  // list, `viewMode === 'detail' && activeDeck` for the editor), so clearing
+  // only one of them shows neither: with activeDeck nulled but viewMode still
+  // 'detail' the list is suppressed by viewMode and the editor is suppressed by
+  // the empty deck, leaving a blank pane. That is exactly what browser Back did,
+  // because the guard below only reset activeDeck. One helper, always both.
+  const closeDeck = () => {
+    setMissingOpen(false);
+    setActiveDeck(null);
+    setViewMode('list');
+    fetchDecks();
+  };
+
+  useBackGuard(!!activeDeck, closeDeck);
 
   useEffect(() => {
     fetchDecks();
@@ -286,7 +319,16 @@ function DeckBuilder({ showToast, onNavigate }) {
 
       if (response.ok) {
         showToast(t('deck.deleted'));
-        fetchDecks();
+        // Delete is reached from inside the deck editor now; the deleted deck has
+        // to close itself, or the editor stays open on a row that no longer exists.
+        if (activeDeck && activeDeck.id === deckId) {
+          closeDeck();
+        } else {
+          fetchDecks();
+        }
+      } else {
+        const body = await response.json().catch(() => ({}));
+        showToast(body.error || t('deck.errDelete'));
       }
     } catch (err) {
       console.error(err);
@@ -294,59 +336,28 @@ function DeckBuilder({ showToast, onNavigate }) {
     }
   };
 
-  const handleSearchCards = async (e, forceBrowse = false) => {
+  const handleSearchCards = async (e) => {
     if (e) e.preventDefault();
+    // "Browse Collection" used to sit beside the search box and dumped every card
+    // owned through GET /api/collection. It is gone: searching is the only way
+    // in, so an empty box no-ops instead of flooding the pane with the library.
+    if (!searchQuery.trim()) return;
     try {
       setSearching(true);
-      if (forceBrowse || !searchQuery.trim()) {
-        const res = await fetch(`/api/collection`);
-        if (res.ok) {
-          const data = await res.json();
-          // Deck identity is the game card name, not a printing id. Keep one
-          // representative image while summing every physical printing owned.
-          const byCardName = new Map();
-          for (const item of data) {
-            const quantity = Number(item.quantity);
-            if (!Number.isFinite(quantity) || quantity <= 0) continue;
-            const key = cardKey(item);
-            const existing = byCardName.get(key);
-            if (existing) {
-              existing.owned_qty += quantity;
-            } else {
-              byCardName.set(key, {
-                id: item.card_id,
-                name: item.name,
-                printed_name: item.printed_name,
-                set_name: item.set_name,
-                number: item.number || item.collector_number || item.card_number || '',
-                image_url: item.image_url,
-                owned_qty: quantity,
-                supertype: item.supertype,
-                subtypes: item.subtypes,
-                types: item.types,
-                colors: item.colors,
-                cmc: item.cmc
-              });
-            }
-          }
-          setSearchResults(Array.from(byCardName.values()));
+      const response = await fetch(`/api/search?name=${encodeURIComponent(searchQuery)}&scope=collection`);
+      if (response.ok) {
+        const data = await response.json();
+        // Search returns each owned printing for art/collection display. A deck
+        // picker collapses those to one logical card; owned_qty is already the
+        // all-printings total on every row.
+        const byCardName = new Map();
+        for (const card of data) {
+          const key = cardKey(card);
+          if (!byCardName.has(key)) byCardName.set(key, card);
         }
+        setSearchResults(Array.from(byCardName.values()));
       } else {
-        const response = await fetch(`/api/search?name=${encodeURIComponent(searchQuery)}&scope=collection`);
-        if (response.ok) {
-          const data = await response.json();
-          // Search returns each owned printing for art/collection display. A deck
-          // picker collapses those to one logical card; owned_qty is already the
-          // all-printings total on every row.
-          const byCardName = new Map();
-          for (const card of data) {
-            const key = cardKey(card);
-            if (!byCardName.has(key)) byCardName.set(key, card);
-          }
-          setSearchResults(Array.from(byCardName.values()));
-        } else {
-          showToast(t(response.status === 429 ? 'deck.errRateLimit' : 'deck.errSearch'));
-        }
+        showToast(t(response.status === 429 ? 'deck.errRateLimit' : 'deck.errSearch'));
       }
     } catch (err) {
       console.error(err);
@@ -530,15 +541,37 @@ function DeckBuilder({ showToast, onNavigate }) {
       .catch(() => showToast(t('deck.errCopy')));
   };
 
-  // Copy just the cards this deck needs beyond what the collection owns — the
-  // "what am I missing for this deck?" list. Same math as the buylist format,
-  // so it stays consistent with the TCGplayer Mass Entry path.
-  const handleCopyMissing = () => {
-    const text = buildDeckExport(activeDeck?.cards, 'buylist');
-    if (!text) { showToast(t('deck.nothingToBuy')); return; }
-    navigator.clipboard.writeText(text)
+  // "What's missing" compares the deck against the owned collection (shared
+  // missingEntries math) and opens a panel listing the shortfall. From there
+  // the user can copy the list or hand it to the Lists tab as a prefilled
+  // create form — one click from "missing" to a shopping list.
+  const missingRows = () => missingEntries(activeDeck?.cards || []);
+
+  const openMissing = () => {
+    if (!activeDeck) return;
+    setMissingListName(t('deck.missingListDefault', { name: activeDeck.name || t('deck.untitled') }));
+    setMissingOpen(true);
+  };
+
+  const closeMissing = () => setMissingOpen(false);
+
+  const missingLines = (rows) => rows.map((r) => `${r.need - r.have} ${r.name}`).join('\n');
+
+  const copyMissing = () => {
+    const rows = missingRows();
+    if (!rows.length) { showToast(t('deck.nothingToBuy')); return; }
+    navigator.clipboard.writeText(missingLines(rows))
       .then(() => showToast(t('deck.missingCopied')))
       .catch(() => showToast(t('deck.errCopy')));
+  };
+
+  const saveMissingAsList = () => {
+    const rows = missingRows();
+    if (!rows.length) { showToast(t('deck.nothingToBuy')); return; }
+    if (!onNavigate) return;
+    const name = missingListName.trim() || t('deck.missingListDefault', { name: activeDeck?.name || '' });
+    onNavigate('lists', { createMissing: { name, text: missingLines(rows) } });
+    setMissingOpen(false);
   };
 
   // Copy the buylist and open TCGplayer Mass Entry — user pastes (their mass
@@ -672,6 +705,36 @@ function DeckBuilder({ showToast, onNavigate }) {
   } = deckDerived;
   const targetDeckCardsCount = activeDeck?.target_size || 60;
 
+  // One source of truth for which half of the component paints. Deriving it
+  // from BOTH pieces of view state (instead of gating the two blocks on
+  // independent conditions) makes the desync that blanked the pane unrepresentable:
+  // with no deck loaded there is nothing to edit, so the list always shows, and
+  // 'detail' without an active deck -- a failed fetch, a 422 unresolved-cards
+  // deck, the pre-import hop from the precon modal -- can never render an empty
+  // editor while the list is suppressed.
+  // The editor header decides its actions from the deck's state, not from a
+  // fixed button row. Every verb here moves cards across one of two boundaries:
+  //   missing -> shopping list   (openMissing: copy the shortfall / make a list)
+  //   deck    -> collection      (register: mint the whole deck as owned copies)
+  //   collection <-> deck        (checkout/return: reserve the copies for play)
+  // Only one of them is ever the primary, so the filled button always answers
+  // "what do I do with this deck right now?".
+  const missingCount = useMemo(() => missingEntries(deckCards).length, [deckCards]);
+  const canRegister = canRegisterDeckInCollection(activeDeck);
+  const isOut = !!activeDeck?.checked_out;
+  const isBuilding = !isOut && missingCount > 0;
+  const busy = checkingOut || registeringDeck;
+  const deckStatus = isOut
+    ? t('deck.statusOut')
+    : (missingCount > 0
+      ? t('deck.statusMissing', { count: missingCount })
+      : t('deck.statusComplete'));
+  const statusColor = isOut ? '#eab308' : (missingCount > 0 ? 'var(--accent-red)' : 'var(--success)');
+  const btnStack = { display: 'flex', alignItems: 'center', gap: '0.4rem' };
+  const quietBtn = { ...btnStack, border: '1px solid var(--border-glass)', color: 'var(--text-secondary)' };
+  const moreItem = { display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: '0.82rem', cursor: 'pointer', textAlign: 'left' };
+  const detailOpen = viewMode === 'detail' && !!activeDeck;
+
   const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
   const renderSourceBadge = (source) => {
@@ -685,6 +748,15 @@ function DeckBuilder({ showToast, onNavigate }) {
       </span>
     );
   };
+
+  // A Moxfield-mirrored deck keeps its remote public id (set by the sync
+  // scheduler), so an opened deck can deep-link back to the same page on
+  // moxfield.com — the exact href the Moxfield sync panel uses. Hand-made and
+  // precon decks have no public id, so this renders nothing for them.
+  const moxfieldDeckUrl = (deck) =>
+    deck && deck.source === 'moxfield' && deck.moxfield_public_id
+      ? `https://moxfield.com/decks/${encodeURIComponent(deck.moxfield_public_id)}`
+      : null;
 
   // --- SELECTION MENU METRICS & FILTERING ---
   const filteredDecks = decks.filter(deck => {
@@ -710,7 +782,7 @@ function DeckBuilder({ showToast, onNavigate }) {
     <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       
       {/* 1. SELECTION MENU VIEW OF ALL DECKS */}
-      {viewMode === 'list' && (
+      {!detailOpen && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           
           {/* Top Banner Header & Primary Action */}
@@ -955,7 +1027,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                               </span>
                             )}
 
-                            {deck.category && (
+                            {deck.category && deck.source !== 'precon' && (
                               <span style={{
                                 fontSize: '0.6rem',
                                 fontWeight: 700,
@@ -1029,50 +1101,13 @@ function DeckBuilder({ showToast, onNavigate }) {
                       </div>
                     </div>
 
-                    {/* Card Footer Actions */}
-                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    {/* Card footer — metadata only. The whole card is clickable, so
+                        checkout/return/open/delete are not repeated here; they live in
+                        the deck editor (the Delete control sits in its Deck tools). */}
+                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem', display: 'flex', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                         Created {new Date(deck.created_at).toLocaleDateString()}
                       </span>
-
-                      <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        {deck.checked_out ? (
-                          <button
-                            className="btn btn-secondary"
-                            style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', border: '1px solid rgba(234,179,8,0.4)', color: '#eab308' }}
-                            onClick={(e) => { e.stopPropagation(); handleReturn(deck); }}
-                            disabled={checkingOut}
-                          >
-                            <PackageCheck size={12} /> Return
-                          </button>
-                        ) : (
-                          <button
-                            className="btn btn-secondary"
-                            style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                            onClick={(e) => { e.stopPropagation(); handleCheckout(deck); }}
-                            disabled={checkingOut}
-                          >
-                            <LogOut size={12} /> Checkout
-                          </button>
-                        )}
-
-                        <button
-                          className="btn btn-primary"
-                          style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                          onClick={(e) => { e.stopPropagation(); loadDeckDetails(deck.id); }}
-                        >
-                          Open <ArrowRight size={12} />
-                        </button>
-
-                        <button
-                          className="btn btn-danger btn-icon-only"
-                          style={{ padding: '0.3rem' }}
-                          onClick={(e) => { e.stopPropagation(); handleDeleteDeck(deck.id, deck.name); }}
-                          title={t('deck.deleteDeck')}
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
                     </div>
 
                   </div>
@@ -1085,13 +1120,19 @@ function DeckBuilder({ showToast, onNavigate }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    <th style={{ padding: '0.75rem 1rem' }}>{t('deck.format')}</th>
+                    {/* No Format column at all (Brent, 2026-09-17): the deck list is
+                        not a format browser. The name cell carries the accent swatch.
+                        Consequence, stated straight: the table now shows a deck's format
+                        nowhere, and the editor header does not show it either. The Grid
+                        view's cards still badge their format, so Table users can switch
+                        views to read it. */}
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colNameDesc')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.colCapacity')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('deck.minimumValue')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('admin.colStatus')}</th>
                     <th style={{ padding: '0.75rem 1rem' }}>{t('admin.colCreated')}</th>
-                    <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>{t('admin.colActions')}</th>
+                    {/* No Actions column: a row is clicked, not operated on. Checkout /
+                        Return / Delete live in the deck editor you land in by clicking. */}
                   </tr>
                 </thead>
                 <tbody>
@@ -1111,22 +1152,17 @@ function DeckBuilder({ showToast, onNavigate }) {
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                       >
                         <td style={{ padding: '0.75rem 1rem' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: accentColor, display: 'inline-block' }} />
-                              {deck.format && (
-                                <span style={{ fontSize: '0.7rem', color: 'var(--text-strong)', fontWeight: 700 }}>
-                                  {deck.format}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            {/* The accent swatch survives here: it is the deck's colour,
+                                not its format, and the table would otherwise have no
+                                trace of accent_color at all. */}
+                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: accentColor, display: 'inline-block', flexShrink: 0 }} />
                             <span style={{ fontWeight: 700, color: 'var(--text-strong)' }}>{deck.name}</span>
                             {renderSourceBadge(deck.source)}
-                            {deck.category && (
+                            {/* A precon is a printed product, not a play-style build: its
+                                category tag never renders, even for rows imported before
+                                the import stopped stamping one. */}
+                            {deck.category && deck.source !== 'precon' && (
                               <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
                                 {deck.category}
                               </span>
@@ -1175,25 +1211,8 @@ function DeckBuilder({ showToast, onNavigate }) {
                         <td style={{ padding: '0.75rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                           {new Date(deck.created_at).toLocaleDateString()}
                         </td>
-                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                            {deck.checked_out ? (
-                              <button className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: '#eab308' }} onClick={() => handleReturn(deck)} disabled={checkingOut}>
-                                {t('deck.return')}
-                              </button>
-                            ) : (
-                              <button className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleCheckout(deck)} disabled={checkingOut}>
-                                {t('deck.checkout')}
-                              </button>
-                            )}
-                            <button className="btn btn-primary" style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }} onClick={() => loadDeckDetails(deck.id)}>
-                              {t('deck.open')}
-                            </button>
-                            <button className="btn btn-danger btn-icon-only" style={{ padding: '0.25rem' }} onClick={() => handleDeleteDeck(deck.id, deck.name)}>
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        </td>
+                        {/* Actions column removed by design: the row itself opens the
+                            deck, and checkout/return/delete live in the deck editor. */}
                       </tr>
                     );
                   })}
@@ -1223,15 +1242,15 @@ function DeckBuilder({ showToast, onNavigate }) {
               }} />
             ) : null}
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <button className="btn btn-secondary btn-icon-only" onClick={() => { setViewMode('list'); fetchDecks(); }} style={{ borderRadius: '50%' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <button className="btn btn-secondary btn-icon-only" onClick={closeDeck} aria-label={t('deck.backToDecks')} style={{ borderRadius: '50%', flex: 'none' }}>
                 <ChevronLeft size={16} />
               </button>
-              <div>
-                <h2 style={{ fontSize: '1.25rem', color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', margin: 0 }}>
                   {activeDeck.name}
                   {renderSourceBadge(activeDeck.source)}
-                  <span style={{ fontSize: '0.8rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--accent-yellow)', fontWeight: 600 }}>
+                  <span style={{ fontSize: '0.78rem', color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--accent-yellow)', fontWeight: 600 }}>
                     ({totalDeckCardsCount}/{targetDeckCardsCount} cards)
                   </span>
                   <span
@@ -1245,100 +1264,109 @@ function DeckBuilder({ showToast, onNavigate }) {
                       <small style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({deckUnpricedCountText(activeDeck, t)})</small>
                     )}
                   </span>
-                  {activeDeck.checked_out ? (
-                    <span style={{
-                      fontSize: '0.65rem',
-                      background: 'rgba(234,179,8,0.15)',
-                      border: '1px solid rgba(234,179,8,0.4)',
-                      color: '#eab308',
-                      padding: '2px 8px',
-                      borderRadius: '12px',
-                      fontWeight: 700,
-                      letterSpacing: '0.05em',
-                      textTransform: 'uppercase',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}>
-                      🎮 In Play
-                    </span>
-                  ) : null}
                 </h2>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{activeDeck.description || 'Custom deck build.'}</p>
-                {!!activeDeck.checked_out && activeDeck.checked_out_at && (
-                  <p style={{ color: '#eab308', fontSize: '0.7rem', marginTop: '2px' }}>
-                    Checked out since {new Date(activeDeck.checked_out_at).toLocaleString()}
-                  </p>
-                )}
+                <p style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', margin: '4px 0 0', color: 'var(--text-secondary)' }}>
+                  <span aria-hidden={'true'} style={{ width: '7px', height: '7px', borderRadius: '50%', background: statusColor, flex: 'none' }} />
+                  <span style={{ color: statusColor, fontWeight: 650, whiteSpace: 'nowrap' }}>{deckStatus}</span>
+                  <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {activeDeck.description || t('deck.defaultDescription')}
+                  </span>
+                  {!!isOut && activeDeck.checked_out_at && (
+                    <span style={{ color: 'var(--text-muted)', flex: 'none' }}>
+                      {t('deck.checkedOutSince', { when: new Date(activeDeck.checked_out_at).toLocaleString() })}
+                    </span>
+                  )}
+                </p>
               </div>
-            </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              {canRegisterDeckInCollection(activeDeck) && (
+            {/* The deck's state picks the one filled verb; the other card-movement
+                verbs stay quiet outlines so the row never reshuffles under a click.
+                Register is hidden while a deck is out because the endpoint refuses it
+                then. Housekeeping sits behind one overflow so only the three verbs
+                that move cards across a boundary compete for attention. */}
+            <div ref={deckMenuRef} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'relative', flex: 'none' }}>
+              {!isOut && isBuilding && (
+                <button
+                  className="btn btn-primary"
+                  onClick={openMissing}
+                  disabled={busy}
+                  title={t('deck.missingHint')}
+                  style={btnStack}
+                >
+                  <ClipboardList size={14} /> {t('deck.exportMissingCount', { count: missingCount })}
+                </button>
+              )}
+              {!isOut && (
+                <button
+                  className={'btn ' + (isBuilding ? 'btn-secondary' : 'btn-primary')}
+                  onClick={() => handleCheckout(activeDeck)}
+                  disabled={busy}
+                  title={t('deck.checkoutHint')}
+                  style={isBuilding ? quietBtn : btnStack}
+                >
+                  <LogOut size={14} /> {t('deck.checkoutAction')}
+                </button>
+              )}
+              {isOut && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => handleReturn(activeDeck)}
+                  disabled={busy}
+                  title={t('deck.returnHint')}
+                  style={btnStack}
+                >
+                  <PackageCheck size={14} /> {t('deck.returnAction')}
+                </button>
+              )}
+              {!isOut && canRegister && (
                 <button
                   className="btn btn-secondary"
                   onClick={handleRegisterInCollection}
-                  disabled={registeringDeck || checkingOut}
+                  disabled={busy}
                   title={t('deck.registerCollectionHint')}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', borderColor: 'rgba(74, 222, 128, 0.38)', color: '#4ade80' }}
+                  style={{ ...btnStack, color: '#4ade80', borderColor: 'rgba(74, 222, 128, 0.38)' }}
                 >
-                  <PackageOpen size={14} />
-                  {registeringDeck ? t('deck.registeringCollection') : t('deck.registerCollection')}
+                  <PackagePlus size={14} /> {registeringDeck ? t('deck.registeringCollection') : t('deck.registerCollection')}
                 </button>
               )}
-              {/* The deck action that's actually used: what's still missing from the collection */}
               <button
-                className="btn btn-primary"
-                onClick={handleCopyMissing}
-                title={t('deck.missingHint')}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                className="btn btn-secondary btn-icon-only"
+                onClick={() => setShowDeckMenu((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={showDeckMenu ? 'true' : 'false'}
+                aria-label={t('deck.moreActions')}
+                title={t('deck.moreActions')}
+                style={{ borderRadius: '50%', padding: '0.25rem 0.5rem' }}
               >
-                <List size={14} /> {t('deck.exportMissing')}
+                <MoreHorizontal size={16} />
               </button>
-              {/* Checkout / Return button */}
-              {activeDeck.checked_out ? (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleReturn(activeDeck)}
-                  disabled={checkingOut}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', border: '1px solid rgba(234,179,8,0.4)', color: '#eab308' }}
-                >
-                  <PackageCheck size={14} /> {t('deck.return')}
-                </button>
-              ) : (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleCheckout(activeDeck)}
-                  disabled={checkingOut || registeringDeck}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                >
-                  <LogOut size={14} /> Check Out for Play
-                </button>
+              {showDeckMenu && (
+                <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 60, minWidth: '218px', padding: '0.3rem', background: 'var(--surface-glass)', border: '1px solid var(--border-glass)', borderRadius: '12px', boxShadow: '0 18px 45px rgba(0, 0, 0, 0.45)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); startSimulator(); }}>
+                    <Play size={14} /> {t('deck.drawSimulator')}
+                  </button>
+                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
+                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); setShowExportModal(true); }}>
+                    <Download size={14} /> {t('deck.exportDeckList')}
+                  </button>
+                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); setShowImportModal(true); }}>
+                    <Upload size={14} /> {t('deck.importDeckList')}
+                  </button>
+                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
+                  <button
+                    role="menuitem"
+                    style={{ ...moreItem, color: 'var(--accent-red)', cursor: isOut ? 'not-allowed' : 'pointer', opacity: isOut ? 0.45 : 1 }}
+                    disabled={isOut}
+                    title={isOut ? t('deck.deleteBlockedWhileOut') : t('deck.deleteDeckHint')}
+                    onClick={() => { setShowDeckMenu(false); handleDeleteDeck(activeDeck.id, activeDeck.name); }}
+                  >
+                    <Trash2 size={14} /> {t('deck.deleteDeck')}
+                  </button>
+                </div>
               )}
-              <button className="btn btn-primary" onClick={startSimulator} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <Play size={14} /> Draw Simulator
-              </button>
-              {/* Deck tools — used rarely, so they sit smaller and quieter at the end */}
-              <div style={{ display: 'flex', gap: '0.25rem', opacity: 0.75 }} title={t('deck.deckTools')}>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setShowExportModal(true)}
-                  title={t('deck.exportHint')}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem' }}
-                >
-                  <Download size={12} />
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setShowImportModal(true)}
-                  title={t('deck.importHint')}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.45rem' }}
-                >
-                  <Upload size={12} />
-                </button>
-              </div>
             </div>
           </div>
+        </div>
 
           {/* Checked out info banner */}
           {!!activeDeck.checked_out && (
@@ -1385,9 +1413,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                     />
                     <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 1rem' }} title={t('shared.search')}>
                       <Search size={16} />
-                    </button>
-                    <button type="button" className="btn btn-secondary" onClick={(e) => handleSearchCards(e, true)} style={{ padding: '0.5rem 0.9rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }} title={t('deck.browseHint')}>
-                      {t('deck.browseCollection')}
                     </button>
                   </form>
 
@@ -1567,6 +1592,22 @@ function DeckBuilder({ showToast, onNavigate }) {
                       </strong>
                     </div>
                   </div>
+
+                  {/* Synced decks get one clear exit to the Moxfield listing
+                      the mirror came from. A real button under the stats, not
+                      an icon on the title: it stays out of the deck-name row
+                      and reads as an action instead of decoration. */}
+                  {moxfieldDeckUrl(activeDeck) && (
+                    <a
+                      className="btn btn-secondary"
+                      href={moxfieldDeckUrl(activeDeck)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ justifyContent: 'center', fontSize: '0.8rem', padding: '0.5rem 0.9rem' }}
+                    >
+                      <ExternalLink size={13} /> {t('mfx.openOnMoxfield')}
+                    </a>
+                  )}
                 </div>
 
                 {/* Bar Chart: Mana Cost Curve */}
@@ -1953,6 +1994,50 @@ function DeckBuilder({ showToast, onNavigate }) {
       )}
 
       {/* C. Export Modal */}
+      {/* What's missing: deck requirement vs owned collection, with copy and
+          create-list-from-shortfall exits riding the shared deficit math. */}
+      {missingOpen && (
+        <div className="modal-overlay" onClick={closeMissing}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '560px', width: '100%', maxHeight: '80vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.6rem', position: 'relative' }}>
+            <button className="btn btn-secondary btn-icon-only" onClick={closeMissing} title={t('common.close')}
+              style={{ position: 'absolute', top: '1rem', right: '1rem', borderRadius: '50%' }}>
+              <X size={16} />
+            </button>
+            <h3 style={{ fontSize: '1.2rem', color: 'var(--text-strong)', marginBottom: '0.4rem' }}>{t('deck.exportMissing')}</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>{t('deck.missingHint')}</p>
+            {missingRows().length === 0 ? (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', padding: '1rem 0' }}>{t('deck.nothingToBuy')}</p>
+            ) : (
+              <>
+                <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '0.3rem 0.7rem', marginBottom: '1rem', maxHeight: '40vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                  {missingRows().map((r, i) => (
+                    <div key={`${r.name}-${r.card_id ?? r.scryfall_id ?? 'x'}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent)', minWidth: '3rem' }}>+{r.need - r.have}</span>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-strong)', flex: 1 }}>{r.name}</span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{r.have}/{r.need}</span>
+                    </div>
+                  ))}
+                </div>
+                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>{t('lists.name')}</label>
+                <input className="input-control" value={missingListName} onChange={(e) => setMissingListName(e.target.value)}
+                  style={{ width: '100%', fontSize: '0.85rem', marginBottom: '1rem' }} />
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-secondary" onClick={closeMissing}>{t('common.close')}</button>
+                  <button className="btn btn-secondary" onClick={copyMissing} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <Copy size={14} /> {t('deck.copyClipboard')}
+                  </button>
+                  <button className="btn btn-primary" onClick={saveMissingAsList} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <ListChecks size={14} /> {t('deck.createMissing')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {showExportModal && (
         <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
           <div className="glass-panel" style={{ maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.75rem', position: 'relative' }}>

@@ -16,9 +16,11 @@ const router = express.Router();
 // type starts out as. Everything else is a 60-card deck.
 const COMMANDER_TYPES = new Set(['Commander Deck', 'MTGO Commander Deck', 'Commander Deck', 'Oathbreaker Deck']);
 
+// Precons are printed as-is, so they carry no play-style tag: a sealed deck is
+// not a 'Competitive' build just because it plays commander. category stays null.
 const defaultShape = (type) => (COMMANDER_TYPES.has(type)
-  ? { format: 'Commander / EDH', category: 'Competitive', accentColor: '#8b5cf6', targetSize: 100 }
-  : { format: 'Standard', category: 'Casual', accentColor: '#eab308', targetSize: 60 });
+  ? { format: 'Commander / EDH', category: null, accentColor: '#8b5cf6', targetSize: 100 }
+  : { format: 'Standard', category: null, accentColor: '#eab308', targetSize: 60 });
 
 router.get('/', async (req, res) => {
   const q = String(req.query.q || '').trim();
