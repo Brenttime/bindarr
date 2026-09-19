@@ -966,6 +966,12 @@
   "lists.unmatched": ", {count} not found: {names}",
   "lists.cards": "{count} card type(s)",
   "lists.total": "{count} copies",
+  "lists.cheapestButton": "Move to cheapest printings",
+  "lists.cheapestWorking": "Moving…",
+  "lists.cheapestTitle": "Rewrite this list so every card points at its cheapest known USD printing. Other printings of the same card fold into it and quantities are kept.",
+  "lists.confirmCheapest": "Move every card in \"{name}\" to its cheapest printing? Other printing rows merge into the cheapest one. This cannot be undone from the app.",
+  "lists.cheapestDone": "Moved {count} card(s) to their cheapest printings",
+  "lists.minimumValue": "Min value",
   "lists.allCards": "All Cards",
   "lists.missingOnly": "Missing Only",
   "lists.ownedOnly": "Owned",
@@ -1058,5 +1064,6 @@
   "admin.priceRefreshWeekly": "Every week",
   "admin.priceRefreshMonthly": "Every 30 days",
   "admin.priceRefreshOff": "Never — do not refresh automatically",
-  "admin.priceRefreshHint": "How often owned and decked cards have their prices re-fetched. Daily is what the free providers publish, so leave it there unless you have a reason. It is worth turning down if you use a provider that charges per card refreshed, or if you have a very large collection and only look at its value occasionally — a sweep only ever touches cards whose prices have gone stale, but the bigger the collection the more that is. Turning it off entirely stops all automatic refreshes; prices already stored stay as they are."
+  "admin.priceRefreshHint": "How often owned and decked cards have their prices re-fetched. Daily is what the free providers publish, so leave it there unless you have a reason. It is worth turning down if you use a provider that charges per card refreshed, or if you have a very large collection and only look at its value occasionally — a sweep only ever touches cards whose prices have gone stale, but the bigger the collection the more that is. Turning it off entirely stops all automatic refreshes; prices already stored stay as they are.",
+  "lists.cheapestFailed": "Could not move the cards to their cheapest printings."
 }

@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Trash2, X, ChevronLeft, Search, ListChecks, Copy, Pencil,
-  Layers, Minus,
+  Layers, Minus, DollarSign, Wand2,
 } from 'lucide-react';
 import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
 import { displayName, setReference } from '../utils/languages';
 import { useT } from '../utils/i18n';
 import { cardKey, findSameCard } from '../utils/cardIdentity';
+import { deckMinimumValueText, deckMinimumValueHint } from '../utils/deckMinimumValue';
 
 const ACCENTS = [
   { name: 'Emerald', hex: '#10b981' },
@@ -60,6 +61,9 @@ function Lists({ showToast }) {
 
   // True while an add/qty write is in flight (prevents clobbering upserts)
   const [savingCard, setSavingCard] = useState(false);
+
+  // True while the cheapest-printings rewrite is in flight
+  const [movingCheapest, setMovingCheapest] = useState(false);
 
   useBackGuard(showCreate, () => setShowCreate(false));
   useBackGuard(showEdit, () => setShowEdit(false));
@@ -277,6 +281,32 @@ function Lists({ showToast }) {
     }
   };
 
+  // Rewrites the list: every logical card moves to its cheapest known USD
+  // printing, sibling-printing rows fold into it. Deliberately loud and
+  // confirm-gated — this is a one-way reshape of the saved list.
+  const moveToCheapestPrintings = async () => {
+    if (movingCheapest || savingCard) return;
+    const message = t('lists.confirmCheapest', { name: activeList.name });
+    if (!window.confirm(message)) return;
+    setMovingCheapest(true);
+    try {
+      const res = await fetch(`/api/lists/${activeList.id}/cheapest-printings`, { method: 'PUT' });
+      if (res.ok) {
+        const body = await res.json();
+        showToast(t('lists.cheapestDone', { count: Number(body.moved) || 0 }));
+        await Promise.all([loadList(activeList.id), fetchLists()]);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || t('lists.cheapestFailed'));
+      }
+    } catch (err) {
+      console.error(err);
+      showToast(t('lists.cheapestFailed'));
+    } finally {
+      setMovingCheapest(false);
+    }
+  };
+
   // --- Export (the same two shapes as the collection cardlist) ---
   const handleExport = async (style) => {
     try {
@@ -383,6 +413,9 @@ function Lists({ showToast }) {
                       <Layers size={13} /> {t('lists.cards', { count: list.total_card_types || 0 })}
                     </span>
                     <span>{t('lists.total', { count: list.total_cards || 0 })}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }} title={deckMinimumValueHint(list, t)}>
+                      <DollarSign size={13} /> {deckMinimumValueText(list)}
+                    </span>
                   </div>
                 </div>
               );
@@ -459,6 +492,11 @@ function Lists({ showToast }) {
           <button className="btn btn-secondary" onClick={() => handleExport('detailed')}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Copy size={14} /> {t('lists.exportDetailed')}
+          </button>
+          <button className="btn btn-secondary" onClick={moveToCheapestPrintings}
+            disabled={movingCheapest || savingCard} title={t('lists.cheapestTitle')}
+            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: (movingCheapest || savingCard) ? 0.6 : 1 }}>
+            <Wand2 size={14} /> {movingCheapest ? t('lists.cheapestWorking') : t('lists.cheapestButton')}
           </button>
           <button className="btn btn-secondary" onClick={openEdit}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
