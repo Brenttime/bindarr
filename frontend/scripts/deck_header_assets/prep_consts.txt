@@ -1,0 +1,21 @@
+  // The editor header decides its actions from the deck's state, not from a
+  // fixed button row. Every verb here moves cards across one of two boundaries:
+  //   missing -> shopping list   (openMissing: copy the shortfall / make a list)
+  //   deck    -> collection      (register: mint the whole deck as owned copies)
+  //   collection <-> deck        (checkout/return: reserve the copies for play)
+  // Only one of them is ever the primary, so the filled button always answers
+  // "what do I do with this deck right now?".
+  const missingCount = useMemo(() => missingEntries(deckCards).length, [deckCards]);
+  const canRegister = canRegisterDeckInCollection(activeDeck);
+  const isOut = !!activeDeck?.checked_out;
+  const isBuilding = !isOut && missingCount > 0;
+  const busy = checkingOut || registeringDeck;
+  const deckStatus = isOut
+    ? t('deck.statusOut')
+    : (missingCount > 0
+      ? t('deck.statusMissing', { count: missingCount })
+      : t('deck.statusComplete'));
+  const statusColor = isOut ? '#eab308' : (missingCount > 0 ? 'var(--accent-red)' : 'var(--success)');
+  const btnStack = { display: 'flex', alignItems: 'center', gap: '0.4rem' };
+  const quietBtn = { ...btnStack, border: '1px solid var(--border-glass)', color: 'var(--text-secondary)' };
+  const moreItem = { display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: '0.82rem', cursor: 'pointer', textAlign: 'left' };

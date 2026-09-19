@@ -4,6 +4,7 @@ const cardApi = require('../utils/cardApi');
 const { parseCardRow } = require('../utils/priceHelpers');
 const { buildCardListText } = require('../../../shared/cardListText.js');
 const { sqlCardKey } = require('../utils/cardIdentity');
+const { getListMinimumValues, getCheapestPrintings, emptyDeckMinimumValue } = require('../utils/deckPricing');
 
 const router = express.Router();
 
@@ -44,7 +45,11 @@ router.get('/', async (req, res) => {
        ORDER BY l.created_at DESC`,
       [req.user.id]
     );
-    res.json(rows);
+    const values = await getListMinimumValues(db, rows.map(row => row.id));
+    res.json(rows.map(row => ({
+      ...row,
+      ...(values.get(Number(row.id)) || emptyDeckMinimumValue()),
+    })));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to retrieve lists' });
@@ -161,7 +166,12 @@ router.get('/:id', async (req, res) => {
        ORDER BY cc.name ASC`,
       [id, req.user.id]
     );
-    res.json({ ...list, cards: cards.map(parseCardRow) });
+    const values = await getListMinimumValues(db, [Number(id)]);
+    res.json({
+      ...list,
+      ...(values.get(Number(id)) || emptyDeckMinimumValue()),
+      cards: cards.map(parseCardRow),
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to retrieve list details' });
@@ -205,6 +215,83 @@ router.get('/:id/cardlist', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to build card list' });
+  }
+});
+
+// Cheapest-printing rewrite: point every logical card in the list at its cheapest
+// known USD printing. Rows for other printings of the same game card are folded
+// into the target row (quantities summed) so the swap misses nothing. Cards with
+// no priced printing are left exactly as they are, which makes a rerun after a
+// price refresh pick up the stragglers. Runs in one transaction: the fold is
+// two statements per card (carry the total, sweep the sibling rows) and must
+// not interleave with a concurrent card edit.
+router.put('/:id/cheapest-printings', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const list = await db.get(`SELECT id FROM card_lists WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    if (!list) {
+      return res.status(404).json({ error: 'List not found or unauthorized' });
+    }
+
+    // Cheapest target per logical card, computed the same way the deck/list
+    // minimum value is — every cached USD printing, not just those already in
+    // the list — so the rewrite and the shown floor can never disagree.
+    const cardKeys = (await db.all(`
+      SELECT DISTINCT ${sqlCardKey('lc_cc')} AS card_key
+      FROM list_cards lc
+      JOIN card_cache lc_cc ON lc_cc.id = lc.card_id
+      WHERE lc.list_id = ? AND lc.quantity > 0
+    `, [id])).map(row => row.card_key).filter(Boolean);
+    const cheapest = await getCheapestPrintings(db, cardKeys);
+
+    // Total wanted quantity per logical card: the fold target carries the full
+    // demand after siblings are swept, whatever row it started on.
+    const demands = await db.all(`
+      SELECT ${sqlCardKey('lc_cc')} AS card_key, SUM(lc.quantity) AS quantity
+      FROM list_cards lc
+      JOIN card_cache lc_cc ON lc_cc.id = lc.card_id
+      WHERE lc.list_id = ? AND lc.quantity > 0
+      GROUP BY card_key
+    `, [id]);
+
+    let moved = 0;
+    await db.withTransaction(async () => {
+      for (const demand of demands) {
+        const target = cheapest.get(demand.card_key);
+        if (!target) continue; // no priced printing on record: leave it alone
+
+        // Already the sole row and already cheapest? Nothing to do — this keeps
+        // reruns honest after a price refresh, when only some cards move.
+        const misaligned = await db.get(`
+          SELECT 1 AS hit FROM list_cards mc
+          LEFT JOIN card_cache mc_cc ON mc_cc.id = mc.card_id
+          WHERE mc.list_id = ? AND mc.quantity > 0
+            AND ${sqlCardKey('mc_cc')} = ? AND mc.card_id != ?
+          LIMIT 1
+        `, [id, demand.card_key, target.card_id]);
+        if (!misaligned) continue;
+
+        await db.run(
+          `INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, ?, ?)
+           ON CONFLICT(list_id, card_id) DO UPDATE SET quantity = excluded.quantity`,
+          [id, target.card_id, demand.quantity]
+        );
+        await db.run(`
+          DELETE FROM list_cards
+          WHERE list_id = ? AND card_id != ?
+            AND card_id IN (
+              SELECT sibling.id FROM card_cache sibling
+              WHERE ${sqlCardKey('sibling')} = ?
+            )
+        `, [id, target.card_id, demand.card_key]);
+        moved += 1;
+      }
+    });
+
+    res.json({ message: 'Cards moved to their cheapest printings', moved });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to move cards to cheapest printings' });
   }
 });
 

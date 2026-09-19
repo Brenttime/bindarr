@@ -89,6 +89,10 @@ router.get('/', async (req, res) => {
         d.checked_out,
         d.checked_out_at,
         d.source,
+        -- Moxfield mirror decks keep their remote public id; the deck list uses it
+        -- to offer "open on Moxfield" next to the source badge, the same link the
+        -- Moxfield sync panel shows. NULL for hand-made/precon decks.
+        d.moxfield_public_id,
         COUNT(DISTINCT CASE
           WHEN dc.quantity > 0 THEN CASE
             WHEN deck_cc.id IS NULL THEN 'missing:' || dc.card_id

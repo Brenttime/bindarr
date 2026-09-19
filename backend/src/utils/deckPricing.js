@@ -41,14 +41,28 @@ async function getDeckRequirements(client, deckIds) {
   return requirements;
 }
 
+// Lowest USD price per logical card across every cached printing and finish.
 async function getCheapestPrices(client, cardKeys) {
+  const printings = await getCheapestPrintings(client, cardKeys);
   const cheapestByKey = new Map();
+  for (const [cardKey, printing] of printings) cheapestByKey.set(cardKey, printing.price);
+  return cheapestByKey;
+}
+
+// Same sweep, but keeps WHICH printing holds the floor — the move-to-cheapest
+// rewrite needs the target row, not only its number. Ties break on the
+// printing id so two equally cheap printings resolve to the same target on
+// every run; otherwise a rewrite would shuffle cards whose price never moved
+// and the operation would not be idempotent.
+async function getCheapestPrintings(client, cardKeys) {
+  const bestByKey = new Map();
   for (const keys of chunked(cardKeys)) {
     const valueRows = keys.map(() => '(?)').join(', ');
     const rows = await client.all(`
       WITH required(card_key) AS (VALUES ${valueRows})
       SELECT
         ${sqlCardKey('priced_cc')} AS card_key,
+        priced_cc.id,
         priced_cc.price_normal,
         priced_cc.price_holofoil,
         priced_cc.price_etched,
@@ -60,23 +74,60 @@ async function getCheapestPrices(client, cardKeys) {
     `, keys);
 
     for (const row of rows) {
-      const candidate = cheapestEligiblePrice(row);
-      if (candidate === null) continue;
-      const current = cheapestByKey.get(row.card_key);
-      if (current === undefined || candidate < current) {
-        cheapestByKey.set(row.card_key, candidate);
+      const price = cheapestEligiblePrice(row);
+      if (price === null) continue;
+      const current = bestByKey.get(row.card_key);
+      if (current === undefined || price < current.price ||
+          (price === current.price && String(row.id) < String(current.card_id))) {
+        bestByKey.set(row.card_key, { card_id: row.id, price });
       }
     }
   }
-  return cheapestByKey;
+  return bestByKey;
 }
 
 async function getDeckMinimumValues(client, deckIds = []) {
   const normalizedDeckIds = [...new Set(deckIds.map(Number).filter(Number.isSafeInteger))];
-  const values = new Map(normalizedDeckIds.map(deckId => [deckId, emptyDeckMinimumValue()]));
-  if (normalizedDeckIds.length === 0) return values;
-
+  if (normalizedDeckIds.length === 0) return new Map();
   const requirements = await getDeckRequirements(client, normalizedDeckIds);
+  return computeMinimumValues(client, requirements, normalizedDeckIds, 'deck_id');
+}
+
+async function getListRequirements(client, listIds) {
+  const requirements = [];
+  for (const ids of chunked(listIds)) {
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = await client.all(`
+      SELECT
+        lc.list_id,
+        COALESCE(NULLIF(${sqlCardKey('list_cc')}, ''), 'missing:' || lc.card_id) AS card_key,
+        SUM(lc.quantity) AS quantity
+      FROM list_cards lc
+      LEFT JOIN card_cache list_cc ON list_cc.id = lc.card_id
+      WHERE lc.list_id IN (${placeholders})
+        AND lc.quantity > 0
+      GROUP BY lc.list_id, card_key
+    `, ids);
+    requirements.push(...rows);
+  }
+  return requirements;
+}
+
+// Same floor for card lists (wishlists/buylists): what completing every wanted
+// copy costs right now if each card is bought at its cheapest known printing.
+async function getListMinimumValues(client, listIds = []) {
+  const normalizedListIds = [...new Set(listIds.map(Number).filter(Number.isSafeInteger))];
+  if (normalizedListIds.length === 0) return new Map();
+  const requirements = await getListRequirements(client, normalizedListIds);
+  return computeMinimumValues(client, requirements, normalizedListIds, 'list_id');
+}
+
+// Shared aggregation for decks and lists: both reduce to (owner id, logical
+// card key, quantity) requirements, and both price them the same way — the
+// cheapest USD printing/finish on record, with unpriced demand counted aside
+// so the UI can show an honest floor with a "+".
+async function computeMinimumValues(client, requirements, ownerIds, ownerField) {
+  const values = new Map(ownerIds.map(id => [id, emptyDeckMinimumValue()]));
   const cardKeys = [...new Set(
     requirements
       .map(row => row.card_key)
@@ -85,9 +136,9 @@ async function getDeckMinimumValues(client, deckIds = []) {
   const cheapestByKey = await getCheapestPrices(client, cardKeys);
 
   for (const requirement of requirements) {
-    const deckId = Number(requirement.deck_id);
+    const ownerId = Number(requirement[ownerField]);
     const quantity = Number(requirement.quantity) || 0;
-    const value = values.get(deckId);
+    const value = values.get(ownerId);
     if (!value || quantity <= 0) continue;
 
     const price = cheapestByKey.get(requirement.card_key);
@@ -116,5 +167,7 @@ function emptyDeckMinimumValue() {
 
 module.exports = {
   getDeckMinimumValues,
+  getListMinimumValues,
+  getCheapestPrintings,
   emptyDeckMinimumValue,
 };
