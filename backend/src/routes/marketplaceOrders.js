@@ -84,10 +84,20 @@ router.put('/accounts', async (req, res) => {
     } else {
       const email = String(manapool.email || '').trim();
       const token = String(manapool.token || '').trim();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'ManaPool email is not valid' });
-      if (!token || token.length > 4096) return res.status(400).json({ error: 'A ManaPool access token is required' });
-      sets.push('manapool_email = ?', 'manapool_token = ?', 'manapool_enabled = ?', 'manapool_saved_at = ?');
-      params.push(email, token, manapool.enabled === false ? 0 : 1, now);
+      if (!email && !token && row.manapool_email && row.manapool_token) {
+        // Enabled-only update: the fields are write-only (see GET), so a Save
+        // with blank fields on a configured account means "move the switch,
+        // keep the credential and its stamp".
+        sets.push('manapool_enabled = ?');
+        params.push(manapool.enabled === false ? 0 : 1);
+      } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        return res.status(400).json({ error: 'ManaPool email is not valid' });
+      } else if (!token || token.length > 4096) {
+        return res.status(400).json({ error: 'A ManaPool access token is required' });
+      } else {
+        sets.push('manapool_email = ?', 'manapool_token = ?', 'manapool_enabled = ?', 'manapool_saved_at = ?');
+        params.push(email, token, manapool.enabled === false ? 0 : 1, now);
+      }
     }
   }
 
@@ -96,10 +106,21 @@ router.put('/accounts', async (req, res) => {
       sets.push('tcgplayer_cookies = NULL', 'tcgplayer_enabled = 0', 'tcgplayer_saved_at = NULL');
     } else {
       const jar = normalizeCookies(tcgplayer.cookies ?? req.body.tcgplayer_cookies);
-      if (!jar) return res.status(400).json({ error: 'No usable cookies — paste the Cookie header from tcgplayer.com, or an array of {name,value}' });
-      if (jar.length > 64 * 1024) return res.status(400).json({ error: 'Cookie jar is too large' });
-      sets.push('tcgplayer_cookies = ?', 'tcgplayer_enabled = ?', 'tcgplayer_saved_at = ?');
-      params.push(jar, tcgplayer.enabled === false ? 0 : 1, now);
+      if (!jar) {
+        // Enabled-only update: the field is write-only, so toggling the master
+        // switch on an already-configured account arrives with no jar. Keep the
+        // stored credential (and its saved_at) and move only the switch.
+        if (row.tcgplayer_cookies) {
+          sets.push('tcgplayer_enabled = ?');
+          params.push(tcgplayer.enabled === false ? 0 : 1);
+        } else {
+          return res.status(400).json({ error: 'No usable cookies — paste the Cookie header from tcgplayer.com, or an array of {name,value}' });
+        }
+      } else {
+        if (jar.length > 64 * 1024) return res.status(400).json({ error: 'Cookie jar is too large' });
+        sets.push('tcgplayer_cookies = ?', 'tcgplayer_enabled = ?', 'tcgplayer_saved_at = ?');
+        params.push(jar, tcgplayer.enabled === false ? 0 : 1, now);
+      }
     }
   }
 

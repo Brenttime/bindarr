@@ -67,7 +67,15 @@ export default function SecretLairPanel({ onAddSuccess, setActiveTab }) {
   // Debounced live search, the way the collection search box behaves: typing
   // settles for a quarter-second and the lookup fires without a button press.
   useEffect(() => {
-    if (!query.trim()) { setResults(null); setStale(false); return; }
+    if (!query.trim()) {
+      // Same sequence bump runSearch does: an answer already in flight for the
+      // PREVIOUS term would otherwise land after the clear and repopulate the
+      // list the user just emptied. Bumping invalidates it (its seq check fails),
+      // and setSearching(false) releases the spinner it was holding.
+      searchSeq.current += 1;
+      setResults(null); setStale(false); setSearching(false);
+      return;
+    }
     const id = setTimeout(() => runSearch(query.trim()), 250);
     return () => clearTimeout(id);
   }, [query, runSearch]);

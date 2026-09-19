@@ -170,7 +170,7 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
             {readyFor(source)
               ? <>{t('orderimport.ready', { source: t(`orderimport.source.${source}`) })}</>
               : <><ShieldAlert size={14} /> {t('orderimport.notConfigured', { source: t(`orderimport.source.${source}`) })}
-                   <button type="button" className="btn btn-small" onClick={() => setActiveTab?.('settings')}>
+                   <button type="button" className="btn btn-small" onClick={() => setActiveTab?.('settings', 'marketplace')}>
                      <KeyRound size={12} /> {t('orderimport.goToSettings')}
                    </button></>}
           </div>

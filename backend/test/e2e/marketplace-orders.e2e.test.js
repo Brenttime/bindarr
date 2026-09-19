@@ -183,6 +183,23 @@ async function runTests() {
     assert.ok(!JSON.stringify(accts).includes('junk_no_value'), 'the unusable fragment was dropped, not stored');
     console.log('PASS: F9-TC4');
 
+    // F9-TC4b: the master switch moves on its own. With a token already stored,
+    // a PUT carrying only {enabled:true} keeps the credential instead of
+    // demanding a fresh one (the field is write-only; blank means keep).
+    const onOnly = await put({ manapool: { enabled: true } });
+    assert.strictEqual(onOnly.status, 200, `enabled-only toggle returned ${onOnly.status}`);
+    const onOnlyBody = (await onOnly.json()).accounts;
+    assert.strictEqual(onOnlyBody.manapool?.configured, true, 'the stored token survives a toggle-only PUT');
+    assert.strictEqual(onOnlyBody.manapool?.enabled, true, 'the switch moved');
+    console.log('PASS: F9-TC4b');
+
+    // F9-TC4c: enabled-only with nothing stored is still nonsense -> 400.
+    await put({ manapool: { clear: true } });
+    const toggleReject = await put({ manapool: { enabled: true } });
+    assert.strictEqual(toggleReject.status, 400, 'enabled-only on an empty row must be refused');
+    await put({ manapool: MP_CRED });   // restore for the order-flow tests
+    console.log('PASS: F9-TC4c');
+
     // F9-TC5: preview resolves the real order through the fake market, holds the
     // sealed box out of the card list but counts it, and totals from the cards.
     const prev = await post('preview', { source: 'manapool', order_number: '90001' });

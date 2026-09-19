@@ -330,26 +330,52 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   // a paste) but is deliberately non-fatal: a denied or unavailable clipboard
   // in an insecure context must not sink a link that already works.
   const handleBuyOnManapool = async () => {
+    // Open the tab SYNCHRONOUSLY, before any await: the transient user
+    // activation that permits window.open does not survive the export request
+    // and the clipboard round-trip, so deferring the open gets it blocked.
+    const tab = window.open('', '_blank', 'noopener,noreferrer');
     try {
       const res = await fetch(`/api/lists/${activeList.id}/cardlist?style=plain`);
-      if (!res.ok) throw new Error('export failed');
+      if (!res.ok) {
+        if (tab) { try { tab.close(); } catch { /* already gone */ } }
+        throw new Error('export failed');
+      }
       const text = await res.text();
-      if (!text) { showToast(t('lists.exportEmpty')); return; }
+      if (!text) {
+        if (tab) { try { tab.close(); } catch { /* already gone */ } }
+        showToast(t('lists.exportEmpty'));
+        return;
+      }
       const url = buildManapoolUrl(text.split('\n'));
-      if (!url) { showToast(t('lists.exportEmpty')); return; }
+      if (!url) {
+        if (tab) { try { tab.close(); } catch { /* already gone */ } }
+        showToast(t('lists.exportEmpty'));
+        return;
+      }
       try {
         await navigator.clipboard.writeText(text);
       } catch {
-        // Older browsers / non-secure contexts: legacy path.
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
+        // Older browsers / non-secure contexts: legacy path. Its failure is
+        // just as non-fatal as the modern API's — the deep link already carries
+        // the whole list, so a broken clipboard must not sink the click.
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+        } catch { /* clipboard unavailable; the link still opens */ }
       }
-      window.open(url, '_blank', 'noopener,noreferrer');
-      showToast(t('lists.buyOnManapoolDone'));
+      // Navigate the tab we already own. A blocked popup (tab null) falls back
+      // to the same-window open manager's default behavior: just toast the link
+      // copied state rather than pretend a new tab appeared.
+      if (tab) {
+        tab.location.href = url;
+        showToast(t('lists.buyOnManapoolDone'));
+      } else {
+        showToast(t('lists.buyOnManapoolPopupHint'));
+      }
     } catch (err) {
       console.error(err);
       showToast(t('lists.errExport'));
