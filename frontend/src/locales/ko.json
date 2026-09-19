@@ -316,6 +316,8 @@
   "deck.accentColor": "금고 강조색",
   "deck.addCardsTitle": "덱에 카드 추가",
   "deck.addToDeck": "덱에 추가…",
+  "deck.rowMissing.other": "+{count} \uc7a5 \uceec\ub809\uc158\uc5d0 \uc5c6\uc74c",
+  "deck.rowMissingTitle": "\uc774 \ub371\uc740 {need}\uc7a5\uc774 \ud544\uc694\ud558\uc9c0\ub9cc \uceec\ub809\uc158\uc5d0 {have}\uc7a5 \uc788\uc2b5\ub2c8\ub2e4",
   "deck.addedCard": "{name}을(를) 덱에 추가했습니다",
   "deck.allStatuses": "모든 상태",
   "deck.andMore": "(+{count}개 더)",

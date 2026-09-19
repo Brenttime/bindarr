@@ -316,6 +316,8 @@
   "deck.accentColor": "保险库强调色",
   "deck.addCardsTitle": "向套牌添加卡牌",
   "deck.addToDeck": "添加到套牌…",
+  "deck.rowMissing.other": "+{count} \u6536\u85cf\u4e2d\u7f3a\u5c11",
+  "deck.rowMissingTitle": "\u8fd9\u526f\u724c\u9700\u8981{need}\u5f20\uff0c\u4f46\u6536\u85cf\u53ea\u6709{have}\u5f20",
   "deck.addedCard": "已把 {name} 添加到套牌",
   "deck.allStatuses": "所有状态",
   "deck.andMore": "（另有 {count} 张）",

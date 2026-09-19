@@ -1228,7 +1228,7 @@ function DeckBuilder({ showToast, onNavigate }) {
       {viewMode === 'detail' && activeDeck && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {/* Header */}
-          <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', position: 'relative', overflow: 'hidden' }}>
+          <div className="glass-panel deck-editor-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', position: 'relative', overflow: 'visible' }}>
             
             {/* Checked out banner */}
             {activeDeck.checked_out ? (
@@ -1237,12 +1237,13 @@ function DeckBuilder({ showToast, onNavigate }) {
                 top: 0, left: 0, right: 0,
                 height: '4px',
                 background: 'linear-gradient(90deg, #eab308, #f59e0b, #eab308)',
+                borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
                 backgroundSize: '200% auto',
                 animation: 'shimmer-gold 2s linear infinite'
               }} />
             ) : null}
 
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+            <div className="deck-editor-header-id" style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', minWidth: 0 }}>
               <button className="btn btn-secondary btn-icon-only" onClick={closeDeck} aria-label={t('deck.backToDecks')} style={{ borderRadius: '50%', flex: 'none' }}>
                 <ChevronLeft size={16} />
               </button>
@@ -1265,10 +1266,10 @@ function DeckBuilder({ showToast, onNavigate }) {
                     )}
                   </span>
                 </h2>
-                <p style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', margin: '4px 0 0', color: 'var(--text-secondary)' }}>
+                <p style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', margin: '4px 0 0', color: 'var(--text-secondary)', flexWrap: 'wrap', minWidth: 0 }}>
                   <span aria-hidden={'true'} style={{ width: '7px', height: '7px', borderRadius: '50%', background: statusColor, flex: 'none' }} />
-                  <span style={{ color: statusColor, fontWeight: 650, whiteSpace: 'nowrap' }}>{deckStatus}</span>
-                  <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: statusColor, fontWeight: 650 }}>{deckStatus}</span>
+                  <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 auto', minWidth: 0 }}>
                     {activeDeck.description || t('deck.defaultDescription')}
                   </span>
                   {!!isOut && activeDeck.checked_out_at && (
@@ -1284,7 +1285,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 Register is hidden while a deck is out because the endpoint refuses it
                 then. Housekeeping sits behind one overflow so only the three verbs
                 that move cards across a boundary compete for attention. */}
-            <div ref={deckMenuRef} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'relative', flex: 'none' }}>
+            <div className="deck-editor-header-actions" ref={deckMenuRef} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'relative', flexWrap: 'wrap', justifyContent: 'flex-end', flex: '0 1 auto', minWidth: 0 }}>
               {!isOut && isBuilding && (
                 <button
                   className="btn btn-primary"
@@ -1498,9 +1499,14 @@ function DeckBuilder({ showToast, onNavigate }) {
                                 <div key={card.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.01)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
                                     <CardImage card={card} loading="lazy" decoding="async" style={{ width: '32px', height: '44px', objectFit: 'cover', borderRadius: '2px' }} />
-                                    <div>
+                                    <div style={{ minWidth: 0 }}>
                                       <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-strong)' }}>{displayName(card)}</div>
                                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{card.set_name} • #{card.number}</div>
+                                      {(card.owned_qty || 0) < card.quantity && !isBasicLand(card) && (
+                                        <div className="deck-missing-note" title={t('deck.rowMissingTitle', { need: card.quantity, have: card.owned_qty || 0 })}>
+                                          {t('deck.rowMissing', { count: card.quantity - (card.owned_qty || 0) })}
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
 
@@ -1541,6 +1547,11 @@ function DeckBuilder({ showToast, onNavigate }) {
                                     <span style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.85)', color: 'var(--accent-yellow)', fontSize: '0.75rem', fontWeight: 800, padding: '1px 6px', borderRadius: '10px', border: '1px solid var(--accent-yellow)' }}>
                                       x{card.quantity}
                                     </span>
+                                    {(card.owned_qty || 0) < card.quantity && !isBasicLand(card) && (
+                                      <span className="deck-missing-chip" title={t('deck.rowMissingTitle', { need: card.quantity, have: card.owned_qty || 0 })}>
+                                        +{card.quantity - (card.owned_qty || 0)}
+                                      </span>
+                                    )}
                                   </div>
                                   <div style={{ padding: '4px', display: 'flex', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }}>
                                     <div style={{ display: 'flex', gap: '2px' }}>

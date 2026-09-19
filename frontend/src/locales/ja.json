@@ -316,6 +316,8 @@
   "deck.accentColor": "保管庫のアクセントカラー",
   "deck.addCardsTitle": "デッキにカードを追加",
   "deck.addToDeck": "デッキに追加…",
+  "deck.rowMissing.other": "+{count} \u679a\u30b3\u30ec\u30af\u30b7\u30e7\u30f3\u306b\u4e0d\u8db3",
+  "deck.rowMissingTitle": "\u3053\u306e\u30c7\u30c3\u30ad\u306f{need}\u679a\u5fc5\u8981\u3067\u3059\u304c\u3001\u30b3\u30ec\u30af\u30b7\u30e7\u30f3\u306b\u306f{have}\u679a\u3042\u308a\u307e\u3059",
   "deck.addedCard": "{name} をデッキに追加しました",
   "deck.allStatuses": "すべての状態",
   "deck.andMore": "（他 {count} 件）",
