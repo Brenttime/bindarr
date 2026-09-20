@@ -8,6 +8,7 @@ import OverflowMenu from './OverflowMenu';
 import AddDeckChoiceModal from './AddDeckChoiceModal';
 import PreconSearchModal from './PreconSearchModal';
 import { useBackGuard } from '../utils/useBackGuard';
+import { getRememberedView, rememberOpen, clearOpen } from '../utils/viewMemory';
 import { buildDeckExport, parseDeckLine, missingEntries } from '../utils/deckText';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
@@ -115,13 +116,28 @@ function DeckBuilder({ showToast, onNavigate }) {
     setMissingOpen(false);
     setActiveDeck(null);
     setViewMode('list');
+    clearOpen('deckbuilder');
     fetchDecks();
   };
 
   useBackGuard(!!activeDeck, closeDeck);
 
   useEffect(() => {
-    fetchDecks();
+    // A refresh inside a deck should land back inside it: fetch the list first
+    // (its rows carry the checkout badges the editor shows), then reopen the
+    // deck the memory names. A dead id (deleted elsewhere) quietly stops at the
+    // deck list — loadDeckDetails shows its own error toast for real failures,
+    // so route the reopen through it once the rows are in.
+    (async () => {
+      const rows = await fetchDecks();
+      const remembered = getRememberedView();
+      if (remembered.tab !== 'deckbuilder' || !remembered.deckId) return;
+      if (!rows.some(d => String(d.id) === remembered.deckId)) {
+        clearOpen('deckbuilder');
+        return;
+      }
+      loadDeckDetails(Number(remembered.deckId) || remembered.deckId, rows);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -132,6 +148,7 @@ function DeckBuilder({ showToast, onNavigate }) {
       if (response.ok) {
         const data = await response.json();
         setDecks(data);
+        return data;
       }
     } catch (err) {
       console.error(err);
@@ -139,6 +156,7 @@ function DeckBuilder({ showToast, onNavigate }) {
     } finally {
       setLoading(false);
     }
+    return [];
   };
 
   const handleCreateDeck = async (e) => {
@@ -181,16 +199,20 @@ function DeckBuilder({ showToast, onNavigate }) {
     }
   };
 
-  const loadDeckDetails = async (deckId) => {
+  // sourceRows lets the boot-time restore pass the rows IT fetched: the closure
+  // around loadDeckDetails at mount still sees the empty decks state, and the
+  // checkout badges come from those rows.
+  const loadDeckDetails = async (deckId, sourceRows = decks) => {
     try {
       setLoading(true);
       const response = await fetch(`/api/decks/${deckId}`);
       if (response.ok) {
         const data = await response.json();
         // Also get checkout status from deck list
-        const deckMeta = decks.find(d => d.id === deckId);
+        const deckMeta = sourceRows.find(d => d.id === deckId);
         setActiveDeck({ ...data, checked_out: deckMeta?.checked_out || 0, checked_out_at: deckMeta?.checked_out_at || null });
         setViewMode('detail');
+        rememberOpen('deckbuilder', deckId);
       }
     } catch (err) {
       console.error(err);
@@ -309,6 +331,9 @@ function DeckBuilder({ showToast, onNavigate }) {
 
       if (response.ok) {
         showToast(t('deck.deleted'));
+        // A deleted deck must not linger as the remembered open one — a
+        // restore of a dead id just lands back on the deck list anyway.
+        clearOpen('deckbuilder');
         // Delete is reached from inside the deck editor now; the deleted deck has
         // to close itself, or the editor stays open on a row that no longer exists.
         if (activeDeck && activeDeck.id === deckId) {
