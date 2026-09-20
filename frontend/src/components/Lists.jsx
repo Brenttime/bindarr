@@ -10,6 +10,7 @@ import { displayName, setReference } from '../utils/languages';
 import { useT } from '../utils/i18n';
 import { cardKey, findSameCard } from '../utils/cardIdentity';
 import { buildManapoolUrl } from '../utils/manapoolUrl';
+import { buildTcgMassEntryUrl } from '../utils/tcgMassEntryUrl';
 import { deckMinimumValueText, deckMinimumValueHint } from '../utils/deckMinimumValue';
 
 const ACCENTS = [
@@ -422,15 +423,24 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     setShowBuy(false);
   };
 
-  // TCGplayer has no prefill URL (verified: /massentry ignores deck params), so
-  // the flow is copy + open + paste. Clipboard write fires while the click's
-  // user activation is still active; its failure is non-fatal because the text
-  // is visible in the modal and the toast tells the user to paste.
+  // TCGplayer prefilled Mass Entry: the `c=` param is exactly what their own
+  // "Create a Shareable Link" button emits — qty + name segments joined by
+  // `||` (see utils/tcgMassEntryUrl.js). Unknown names still land as
+  // "not found" rows rather than vanishing. The list is also left on the
+  // clipboard as a belt-and-braces fallback for the rare overlong link that
+  // browsers refuse to navigate; the modal text remains selectable too.
   const buyTcgplayer = () => {
-    copyToClipboard(buyText);
-    window.open('https://www.tcgplayer.com/massentry?productline=Magic', '_blank', 'noopener,noreferrer');
+    const url = buildTcgMassEntryUrl(buyText.split('\n'));
+    if (!url) { showToast(t('lists.exportEmpty')); return; }
+    // Chrome caps navigable URLs at 2MB and TCGplayer's own frontend gives
+    // up past ~8KB of query. Past that threshold, degrade to the copy+paste
+    // flow deliberately: the plain page opens, the list is on the clipboard,
+    // and the toast says so — instead of a link that dies mid-navigation.
+    const tooLong = url.length > 8000;
+    if (tooLong) copyToClipboard(buyText);
+    window.open(tooLong ? 'https://www.tcgplayer.com/massentry?productline=Magic' : url, '_blank', 'noopener,noreferrer');
     setShowBuy(false);
-    showToast(t('lists.buyTcgCopied'));
+    if (tooLong) showToast(t('lists.buyTcgCopied'));
   };
 
   const copyBuyList = () => {
@@ -785,7 +795,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
               {[
                 { label: t('lists.buyOnManapool'), hint: buyText ? t('lists.buyManaPoolHint', { count: buyLineCount }) : '', onClick: buyManapool, accent: accent },
-                { label: t('lists.buyTcg'), hint: buyText ? t('lists.buyTcgHint') : '', onClick: buyTcgplayer, accent: '#ff2b03' },
+                { label: t('lists.buyTcg'), hint: buyText ? t('lists.buyTcgHint', { count: buyLineCount }) : '', onClick: buyTcgplayer, accent: '#ff2b03' },
               ].map(card => (
                 <button key={card.label} type="button" onClick={card.onClick}
                   disabled={buyLoading || buyError || !buyText}
