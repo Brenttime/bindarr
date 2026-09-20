@@ -375,7 +375,10 @@ function Lists({ showToast, handoff, onHandoffDone }) {
       setCopyError('failed');
     } finally {
       copyInFlight.current[style] = false;
-      setCopyLoading(false);
+      // Spinner stays up while any style is still in flight — otherwise a
+      // fast plain response would clear the flag while detailed is pending,
+      // leaving the modal with neither text nor loading hint.
+      setCopyLoading(Object.values(copyInFlight.current).some(Boolean));
     }
   };
 
