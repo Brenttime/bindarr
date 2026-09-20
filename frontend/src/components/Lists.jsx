@@ -63,6 +63,15 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   // false (fine) | 'empty' (list has no cards) | 'failed' (request broke)
   const [buyError, setBuyError] = useState('');
 
+  // Copy modal: exported text per style, lazy-fetched on first tab activation
+  // and cached keyed by style; loadList() drops the cache like buyText's.
+  const [showCopy, setShowCopy] = useState(false);
+  const [copyStyle, setCopyStyle] = useState('plain');
+  const [copyTexts, setCopyTexts] = useState({});
+  const [copyLoading, setCopyLoading] = useState(false);
+  const [copyError, setCopyError] = useState('');
+  const copyInFlight = useRef({});
+
   // Card search inside detail view
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -82,6 +91,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   useBackGuard(showCreate, () => setShowCreate(false));
   useBackGuard(showEdit, () => setShowEdit(false));
   useBackGuard(showBuy, () => setShowBuy(false));
+  useBackGuard(showCopy, () => setShowCopy(false));
   useBackGuard(!!activeList, () => setActiveList(null));
 
   useEffect(() => { fetchLists(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -204,9 +214,11 @@ function Lists({ showToast, handoff, onHandoffDone }) {
         setListDetail(await res.json());
         // The buy modal caches the exported text; any detail reload (list
         // switch, qty edits, reshuffles) can change it, so drop the cache and
-        // let the next modal open refetch it lazily.
+        // let the next modal open refetch it lazily. Same goes for the copy
+        // modal's per-style cache.
         setBuyText('');
         setBuyError(false);
+        setCopyTexts({});
       } else {
         showToast(t('lists.errLoad'));
       }
@@ -343,29 +355,51 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     }
   };
 
-  // --- Export (the same two shapes as the collection cardlist) ---
-  const handleExport = async (style) => {
+  // --- Copy modal: lazy per-style export text (same shapes as the cardlist) ---
+  // Each style is fetched on first activation and cached keyed by style
+  // (loadList drops the cache when the detail reloads). In-flight refs keep a
+  // impatient tab click from firing the same request twice.
+  const fetchCopyStyle = async (style) => {
+    if (copyTexts[style] || copyInFlight.current[style]) return;
+    copyInFlight.current[style] = true;
+    setCopyLoading(true);
+    setCopyError('');
     try {
       const res = await fetch(`/api/lists/${activeList.id}/cardlist?style=${style}`);
       if (!res.ok) throw new Error('export failed');
       const text = await res.text();
-      if (!text) { showToast(t('lists.exportEmpty')); return; }
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        // Older browsers / non-secure contexts: legacy path.
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-      }
-      showToast(t('lists.exportCopied'));
+      if (text.trim()) setCopyTexts(prev => ({ ...prev, [style]: text }));
+      else setCopyError('empty');
     } catch (err) {
       console.error(err);
-      showToast(t('lists.errExport'));
+      setCopyError('failed');
+    } finally {
+      copyInFlight.current[style] = false;
+      setCopyLoading(false);
     }
+  };
+
+  const openCopy = () => {
+    setCopyStyle('plain');
+    setCopyError('');
+    setShowCopy(true);
+    fetchCopyStyle('plain');
+  };
+
+  const selectCopyStyle = (style) => {
+    setCopyStyle(style);
+    setCopyError('');
+    fetchCopyStyle(style);
+  };
+
+  const copyActiveText = copyTexts[copyStyle] || '';
+  const copyLineCount = copyActiveText ? copyActiveText.split('\n').filter(l => l.trim()).length : 0;
+
+  // The modal also shows the text in a selectable textarea, so a denied
+  // clipboard still leaves the list copyable by hand.
+  const copyActiveList = () => {
+    copyToClipboard(copyActiveText);
+    showToast(t('lists.exportCopied'));
   };
 
   // --- Buy modal ("shop cart") ---
@@ -459,6 +493,15 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     if (cardFilter === 'owned') return (c.owned_qty || 0) > 0;
     return true;
   });
+
+  // Escape closes the copy modal (the overlay itself is never focused). The
+  // effect sits above the list-view early return so hook order stays stable.
+  useEffect(() => {
+    if (!showCopy) return;
+    const onKey = (e) => { if (e.key === 'Escape') setShowCopy(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showCopy]);
 
   // ============================ LIST VIEW ============================
   if (!activeList) {
@@ -605,9 +648,10 @@ function Lists({ showToast, handoff, onHandoffDone }) {
           </div>
         </div>
         <div className="list-editor-header-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <button className="btn btn-secondary" onClick={() => handleExport('plain')}
-            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Copy size={14} /> {t('lists.exportPlain')}
+          <button className="btn btn-secondary btn-icon-only" onClick={openCopy}
+            title={t('lists.copyList')} aria-label={t('lists.copyList')}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Copy size={16} />
           </button>
 <button className="btn btn-primary btn-icon-only" onClick={openBuy}
             title={t('lists.buyList')} aria-label={t('lists.buyList')}
@@ -620,10 +664,6 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             <Wand2 size={14} /> {movingCheapest ? t('lists.cheapestWorking') : t('lists.cheapestButton')}
           </button>
           <OverflowMenu label={t('lists.moreActions')}>
-            <button role="menuitem" style={menuItem} onClick={() => handleExport('detailed')}>
-              <Copy size={14} /> {t('lists.exportDetailed')}
-            </button>
-            <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
             <button role="menuitem" style={{ ...menuItem, color: 'var(--accent-red)' }} onClick={handleDelete}>
               <Trash2 size={14} /> {t('deck.deleteDeck')}
             </button>
@@ -828,6 +868,62 @@ function Lists({ showToast, handoff, onHandoffDone }) {
                     <Copy size={14} /> {t('lists.copyList')}
                   </button>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('lists.buyLineCount', { count: buyLineCount })}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Copy modal — one entry point, two export shapes as tabs */}
+      {showCopy && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowCopy(false); }}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div className="glass-panel" style={{ maxWidth: '520px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.75rem', position: 'relative', border: '1px solid rgba(255,255,255,0.15)' }}>
+            <button className="btn btn-secondary btn-icon-only" onClick={() => setShowCopy(false)}
+              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem' }}><X size={16} /></button>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-strong)', margin: '0 0 0.35rem' }}>{t('lists.copyListModal')}</h3>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeList.name}</div>
+
+            {/* Format tabs — same flat bordered cards as the buy modal's providers.
+                 The hint line mirrors the provider cards: a line count once
+                 that style's text is cached, blank until then. */}
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              {[
+                { style: 'plain', label: t('lists.copyStylePlain'), accent: accent },
+                { style: 'detailed', label: t('lists.copyStyleDetailed'), accent: accent },
+              ].map(tab => (
+                <button key={tab.style} type="button" onClick={() => selectCopyStyle(tab.style)}
+                  aria-pressed={copyStyle === tab.style}
+                  style={{ flex: '1 1 200px', minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '0.35rem', padding: '0.9rem 1rem', borderRadius: 'var(--radius-sm)', textAlign: 'left', cursor: 'pointer', background: copyStyle === tab.style ? `${tab.accent}1a` : 'rgba(0,0,0,0.3)', border: `1.5px solid ${copyStyle === tab.style ? `${tab.accent}66` : 'rgba(255,255,255,0.15)'}`, color: 'var(--text-primary)', fontSize: '0.8rem' }}>
+                  <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.9rem' }}>{tab.label}</span>
+                  <span style={{ color: 'var(--text-secondary)', lineHeight: 1.4 }}>{copyTexts[tab.style] ? t('lists.buyLineCount', { count: copyTexts[tab.style].split('\n').filter(l => l.trim()).length }) : ''}</span>
+                </button>
+              ))}
+            </div>
+
+            {copyLoading && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.9rem' }}>{t('lists.buyLoading')}</div>
+            )}
+            {copyError && !copyLoading && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--accent-red)', marginTop: '0.9rem' }}>
+                {copyError === 'empty' ? t('lists.exportEmpty') : t('lists.errExport')}
+              </div>
+            )}
+
+            {/* The text of the active tab: always selectable, so the flow
+                survives a broken clipboard. */}
+            {copyActiveText && !copyLoading && (
+              <div style={{ marginTop: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <textarea readOnly value={copyActiveText} rows={6} aria-label={t('lists.copyList')}
+                  onFocus={e => e.target.select()}
+                  style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.75rem', padding: '0.6rem', borderRadius: 'var(--radius-sm)', background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.15)', resize: 'vertical', boxSizing: 'border-box' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-primary" onClick={copyActiveList}
+                    style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Copy size={14} /> {t('lists.copyList')}
+                  </button>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('lists.buyLineCount', { count: copyLineCount })}</span>
                 </div>
               </div>
             )}
