@@ -59,7 +59,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   const [showBuy, setShowBuy] = useState(false);
   const [buyText, setBuyText] = useState('');
   const [buyLoading, setBuyLoading] = useState(false);
-  // '' (fine) | 'empty' (list has no cards) | 'failed' (request broke)
+  // false (fine) | 'empty' (list has no cards) | 'failed' (request broke)
   const [buyError, setBuyError] = useState('');
 
   // Card search inside detail view
@@ -784,8 +784,8 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             {/* Provider choices — flat bordered cards, no glass, wrap on narrow screens */}
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
               {[
-                { label: t('lists.buyOnManapool'), hint: t('lists.buyManaPoolHint', { count: buyLineCount }), onClick: buyManapool, accent: accent },
-                { label: t('lists.buyTcg'), hint: t('lists.buyTcgHint'), onClick: buyTcgplayer, accent: '#ff2b03' },
+                { label: t('lists.buyOnManapool'), hint: buyText ? t('lists.buyManaPoolHint', { count: buyLineCount }) : '', onClick: buyManapool, accent: accent },
+                { label: t('lists.buyTcg'), hint: buyText ? t('lists.buyTcgHint') : '', onClick: buyTcgplayer, accent: '#ff2b03' },
               ].map(card => (
                 <button key={card.label} type="button" onClick={card.onClick}
                   disabled={buyLoading || buyError || !buyText}
