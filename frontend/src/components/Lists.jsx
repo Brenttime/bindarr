@@ -3,6 +3,7 @@ import {
   Plus, Trash2, X, ChevronLeft, Search, ListChecks, Copy, Pencil,
   Layers, Minus, ShoppingBag, Wand2,
 } from 'lucide-react';
+import OverflowMenu from './OverflowMenu';
 import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
 import { displayName, setReference } from '../utils/languages';
@@ -24,6 +25,9 @@ const ACCENTS = [
 
 function Lists({ showToast, handoff, onHandoffDone }) {
   const { t } = useT();
+
+  // Menu-item style shared by the header's overflow menu (mirrors the deck editor).
+  const menuItem = { display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: '0.82rem', cursor: 'pointer', textAlign: 'left' };
 
   // View state: 'list' (all lists) or 'detail' (one list's cards)
   const [lists, setLists] = useState([]);
@@ -565,16 +569,12 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             {activeList.description && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{activeList.description}</div>}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div className="list-editor-header-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button className="btn btn-secondary" onClick={() => handleExport('plain')}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Copy size={14} /> {t('lists.exportPlain')}
           </button>
-          <button className="btn btn-secondary" onClick={() => handleExport('detailed')}
-            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Copy size={14} /> {t('lists.exportDetailed')}
-          </button>
-<button className="btn btn-secondary" onClick={handleBuyOnManapool}
+<button className="btn btn-primary" onClick={handleBuyOnManapool}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <ShoppingBag size={14} /> {t('lists.buyOnManapool')}
           </button>
@@ -587,10 +587,15 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Pencil size={14} /> {t('lists.editList')}
           </button>
-          <button className="btn btn-danger" onClick={handleDelete}
-            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Trash2 size={14} /> {t('deck.deleteDeck')}
-          </button>
+          <OverflowMenu label={t('lists.moreActions')}>
+            <button role="menuitem" style={menuItem} onClick={() => handleExport('detailed')}>
+              <Copy size={14} /> {t('lists.exportDetailed')}
+            </button>
+            <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
+            <button role="menuitem" style={{ ...menuItem, color: 'var(--accent-red)' }} onClick={handleDelete}>
+              <Trash2 size={14} /> {t('deck.deleteDeck')}
+            </button>
+          </OverflowMenu>
         </div>
       </div>
 

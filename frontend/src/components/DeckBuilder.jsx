@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, MoreHorizontal, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
 import CheckoutWizardModal from './CheckoutWizardModal';
+import OverflowMenu from './OverflowMenu';
 import AddDeckChoiceModal from './AddDeckChoiceModal';
 import PreconSearchModal from './PreconSearchModal';
 import { useBackGuard } from '../utils/useBackGuard';
@@ -86,20 +87,9 @@ function DeckBuilder({ showToast, onNavigate }) {
   // Checkout States
   const [checkingOut, setCheckingOut] = useState(false);
   const [registeringDeck, setRegisteringDeck] = useState(false);
-  // The header's ⋯ popover: rarely-used deck housekeeping (simulator, import /
-  // export, delete) so the three card-movement verbs stay the only loud things.
-  const [showDeckMenu, setShowDeckMenu] = useState(false);
-  const deckMenuRef = useRef(null);
-  // Click-away and Escape close the header menu, so it can never sit open over
-  // a deck that has since changed state (which would show stale verbs).
-  useEffect(() => {
-    if (!showDeckMenu) return undefined;
-    const onDown = (e) => { if (deckMenuRef.current && !deckMenuRef.current.contains(e.target)) setShowDeckMenu(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setShowDeckMenu(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [showDeckMenu]);
+  // The header's overflow (⋯) menu lives in OverflowMenu: a portaled panel
+  // that escapes the glass-panel stacking trap. Its open state is internal.
+
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [checkoutLocations, setCheckoutLocations] = useState([]);
   const [checkoutMode, setCheckoutMode] = useState('checkout'); // 'checkout' | 'checkin'
@@ -1285,7 +1275,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 Register is hidden while a deck is out because the endpoint refuses it
                 then. Housekeeping sits behind one overflow so only the three verbs
                 that move cards across a boundary compete for attention. */}
-            <div className="deck-editor-header-actions" ref={deckMenuRef} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'relative', flexWrap: 'wrap', justifyContent: 'flex-end', flex: '0 1 auto', minWidth: 0 }}>
+            <div className="deck-editor-header-actions" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'relative', flexWrap: 'wrap', justifyContent: 'flex-end', flex: '0 1 auto', minWidth: 0 }}>
               {!isOut && isBuilding && (
                 <button
                   className="btn btn-primary"
@@ -1330,41 +1320,28 @@ function DeckBuilder({ showToast, onNavigate }) {
                   <PackagePlus size={14} /> {registeringDeck ? t('deck.registeringCollection') : t('deck.registerCollection')}
                 </button>
               )}
-              <button
-                className="btn btn-secondary btn-icon-only"
-                onClick={() => setShowDeckMenu((v) => !v)}
-                aria-haspopup="menu"
-                aria-expanded={showDeckMenu ? 'true' : 'false'}
-                aria-label={t('deck.moreActions')}
-                title={t('deck.moreActions')}
-                style={{ borderRadius: '50%', padding: '0.25rem 0.5rem' }}
-              >
-                <MoreHorizontal size={16} />
-              </button>
-              {showDeckMenu && (
-                <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 60, minWidth: '218px', padding: '0.3rem', background: 'var(--surface-glass)', border: '1px solid var(--border-glass)', borderRadius: '12px', boxShadow: '0 18px 45px rgba(0, 0, 0, 0.45)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); startSimulator(); }}>
-                    <Play size={14} /> {t('deck.drawSimulator')}
-                  </button>
-                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
-                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); setShowExportModal(true); }}>
-                    <Download size={14} /> {t('deck.exportDeckList')}
-                  </button>
-                  <button role="menuitem" style={moreItem} onClick={() => { setShowDeckMenu(false); setShowImportModal(true); }}>
-                    <Upload size={14} /> {t('deck.importDeckList')}
-                  </button>
-                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
-                  <button
-                    role="menuitem"
-                    style={{ ...moreItem, color: 'var(--accent-red)', cursor: isOut ? 'not-allowed' : 'pointer', opacity: isOut ? 0.45 : 1 }}
-                    disabled={isOut}
-                    title={isOut ? t('deck.deleteBlockedWhileOut') : t('deck.deleteDeckHint')}
-                    onClick={() => { setShowDeckMenu(false); handleDeleteDeck(activeDeck.id, activeDeck.name); }}
-                  >
-                    <Trash2 size={14} /> {t('deck.deleteDeck')}
-                  </button>
-                </div>
-              )}
+              <OverflowMenu label={t('deck.moreActions')}>
+                <button role="menuitem" style={moreItem} onClick={() => { startSimulator(); }}>
+                  <Play size={14} /> {t('deck.drawSimulator')}
+                </button>
+                <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
+                <button role="menuitem" style={moreItem} onClick={() => setShowExportModal(true)}>
+                  <Download size={14} /> {t('deck.exportDeckList')}
+                </button>
+                <button role="menuitem" style={moreItem} onClick={() => setShowImportModal(true)}>
+                  <Upload size={14} /> {t('deck.importDeckList')}
+                </button>
+                <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
+                <button
+                  role="menuitem"
+                  style={{ ...moreItem, color: 'var(--accent-red)', cursor: isOut ? 'not-allowed' : 'pointer', opacity: isOut ? 0.45 : 1 }}
+                  disabled={isOut}
+                  title={isOut ? t('deck.deleteBlockedWhileOut') : t('deck.deleteDeckHint')}
+                  onClick={() => handleDeleteDeck(activeDeck.id, activeDeck.name)}
+                >
+                  <Trash2 size={14} /> {t('deck.deleteDeck')}
+                </button>
+              </OverflowMenu>
             </div>
           </div>
         </div>
