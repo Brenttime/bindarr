@@ -497,14 +497,15 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     return true;
   });
 
-  // Escape closes the copy modal (the overlay itself is never focused). The
-  // effect sits above the list-view early return so hook order stays stable.
+  // Escape closes the copy and buy modals (the overlay itself is never
+  // focused). The effect sits above the list-view early return so hook order
+  // stays stable.
   useEffect(() => {
-    if (!showCopy) return;
-    const onKey = (e) => { if (e.key === 'Escape') setShowCopy(false); };
+    if (!showCopy && !showBuy) return;
+    const onKey = (e) => { if (e.key === 'Escape') { setShowCopy(false); setShowBuy(false); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showCopy]);
+  }, [showCopy, showBuy]);
 
   // ============================ LIST VIEW ============================
   if (!activeList) {
@@ -827,11 +828,13 @@ function Lists({ showToast, handoff, onHandoffDone }) {
 
       {/* Buy modal — pick where to buy the list */}
       {showBuy && (
-        <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowBuy(false); }}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
           <div className="glass-panel" style={{ maxWidth: '520px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.75rem', position: 'relative', border: '1px solid rgba(255,255,255,0.15)' }}>
             <button className="btn btn-secondary btn-icon-only" onClick={() => setShowBuy(false)}
-              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem' }}><X size={16} /></button>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-strong)', margin: '0 0 0.35rem' }}>{t('lists.buyList')}</h3>
+              aria-label={t('common.close')} title={t('common.close')}
+              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', zIndex: 1 }}><X size={16} /></button>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-strong)', margin: '0 0 0.35rem', paddingRight: '2.25rem' }}>{t('lists.buyList')}</h3>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeList.name}</div>
 
             {/* Provider choices — flat bordered cards, no glass, wrap on narrow screens */}
