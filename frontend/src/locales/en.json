@@ -199,6 +199,7 @@
   "deck.importDeckList": "Import deck list",
   "deck.exportDeckList": "Export deck list",
   "deck.moreActions": "More deck actions",
+  "lists.moreActions": "More list actions",
   "deck.drawSimulator": "Draw simulator",
   "deck.returnHint": "Give the reserved copies back to your collection",
   "deck.returnAction": "Return cards",

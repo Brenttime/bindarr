@@ -1939,3 +1939,14 @@ button, input, select, textarea {
   border-radius: 10px;
   border: 1px solid #ef4444;
 }
+
+/* Editor-header overflow triggers (deck + list editors): guarantee thumb-sized
+   round buttons on phones. The portaled menu panel itself needs no rule — it
+   lives on document.body and positionMenu clamps it inside the viewport. */
+@media (max-width: 720px) {
+  .deck-editor-header-actions .btn-icon-only,
+  .list-editor-header-actions .btn-icon-only {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
