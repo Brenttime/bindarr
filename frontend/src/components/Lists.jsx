@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Trash2, X, ChevronLeft, Search, ListChecks, Copy, Pencil,
-  Layers, Minus, ShoppingBag, Wand2,
+  Layers, Minus, ShoppingCart, Wand2,
 } from 'lucide-react';
 import OverflowMenu from './OverflowMenu';
 import CardImage from './CardImage';
@@ -54,6 +54,14 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   const [editDesc, setEditDesc] = useState('');
   const [editAccent, setEditAccent] = useState('#10b981');
 
+  // Buy modal ("shop cart"): the plain list text is fetched when the modal
+  // opens rather than on header click, so no half-fetched tab is ever opened.
+  const [showBuy, setShowBuy] = useState(false);
+  const [buyText, setBuyText] = useState('');
+  const [buyLoading, setBuyLoading] = useState(false);
+  // '' (fine) | 'empty' (list has no cards) | 'failed' (request broke)
+  const [buyError, setBuyError] = useState('');
+
   // Card search inside detail view
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -72,6 +80,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
 
   useBackGuard(showCreate, () => setShowCreate(false));
   useBackGuard(showEdit, () => setShowEdit(false));
+  useBackGuard(showBuy, () => setShowBuy(false));
   useBackGuard(!!activeList, () => setActiveList(null));
 
   useEffect(() => { fetchLists(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -192,6 +201,11 @@ function Lists({ showToast, handoff, onHandoffDone }) {
       const res = await fetch(`/api/lists/${listId}`);
       if (res.ok) {
         setListDetail(await res.json());
+        // The buy modal caches the exported text; any detail reload (list
+        // switch, qty edits, reshuffles) can change it, so drop the cache and
+        // let the next modal open refetch it lazily.
+        setBuyText('');
+        setBuyError(false);
       } else {
         showToast(t('lists.errLoad'));
       }
@@ -353,67 +367,75 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     }
   };
 
-  // "Buy these on ManaPool": hand the list to ManaPool's Mass Entry page as a
-  // prefilled deep link. /add-deck reads a base64 `deck` query param and drops
-  // it straight into its paste box (verified against the live site), so the
-  // user lands on a ready-to-submit list rather than an empty box they have to
-  // paste into. The plain "N Card Name" shape is what that box parses, which is
-  // exactly what the shared card-list formatter emits for style=plain.
-  //
-  // The clipboard copy is kept as a convenience (their cart flow can still take
-  // a paste) but is deliberately non-fatal: a denied or unavailable clipboard
-  // in an insecure context must not sink a link that already works.
-  const handleBuyOnManapool = async () => {
-    // Open the tab SYNCHRONOUSLY, before any await: the transient user
-    // activation that permits window.open does not survive the export request
-    // and the clipboard round-trip, so deferring the open gets it blocked.
-    const tab = window.open('', '_blank', 'noopener,noreferrer');
+  // --- Buy modal ("shop cart") ---
+  // Clipboard write with the legacy textarea fallback. Non-fatal by design:
+  // every flow that uses it also leaves the text visible in the modal, so a
+  // denied clipboard degrades the UX without breaking the purchase.
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      } catch { /* clipboard unavailable; the text stays selectable in the modal */ }
+    }
+  };
+
+  // Fetch the plain list when the modal opens (not on header click): an
+  // in-flight fetch never races a user activation, so no tab is opened before
+  // its payload exists. Cached afterwards; switching lists invalidates it.
+  const openBuy = async () => {
+    setShowBuy(true);
+    setBuyError(false);
+    if (buyText) return;
+    setBuyLoading(true);
     try {
       const res = await fetch(`/api/lists/${activeList.id}/cardlist?style=plain`);
-      if (!res.ok) {
-        if (tab) { try { tab.close(); } catch { /* already gone */ } }
-        throw new Error('export failed');
-      }
+      if (!res.ok) throw new Error('export failed');
       const text = await res.text();
-      if (!text) {
-        if (tab) { try { tab.close(); } catch { /* already gone */ } }
-        showToast(t('lists.exportEmpty'));
-        return;
-      }
-      const url = buildManapoolUrl(text.split('\n'));
-      if (!url) {
-        if (tab) { try { tab.close(); } catch { /* already gone */ } }
-        showToast(t('lists.exportEmpty'));
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        // Older browsers / non-secure contexts: legacy path. Its failure is
-        // just as non-fatal as the modern API's — the deep link already carries
-        // the whole list, so a broken clipboard must not sink the click.
-        try {
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          ta.remove();
-        } catch { /* clipboard unavailable; the link still opens */ }
-      }
-      // Navigate the tab we already own. A blocked popup (tab null) falls back
-      // to the same-window open manager's default behavior: just toast the link
-      // copied state rather than pretend a new tab appeared.
-      if (tab) {
-        tab.location.href = url;
-        showToast(t('lists.buyOnManapoolDone'));
-      } else {
-        showToast(t('lists.buyOnManapoolPopupHint'));
-      }
+      if (text.trim()) setBuyText(text);
+      else setBuyError('empty');
     } catch (err) {
       console.error(err);
-      showToast(t('lists.errExport'));
+      setBuyError('failed');
+    } finally {
+      setBuyLoading(false);
     }
+  };
+
+  const buyLineCount = buyText ? buyText.split('\n').filter(l => l.trim()).length : 0;
+
+  // ManaPool prefill deep link: /add-deck reads the base64 `deck` param and
+  // drops it straight into its Mass Entry paste box (verified live). The open
+  // must stay SYNCHRONOUS inside the click handler — the user activation does
+  // not survive an await — and window.open returns null with these features
+  // even when the tab opens, so the return value is deliberately ignored.
+  const buyManapool = () => {
+    const url = buildManapoolUrl(buyText.split('\n'));
+    if (!url) { showToast(t('lists.exportEmpty')); return; }
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setShowBuy(false);
+  };
+
+  // TCGplayer has no prefill URL (verified: /massentry ignores deck params), so
+  // the flow is copy + open + paste. Clipboard write fires while the click's
+  // user activation is still active; its failure is non-fatal because the text
+  // is visible in the modal and the toast tells the user to paste.
+  const buyTcgplayer = () => {
+    copyToClipboard(buyText);
+    window.open('https://www.tcgplayer.com/massentry?productline=Magic', '_blank', 'noopener,noreferrer');
+    setShowBuy(false);
+    showToast(t('lists.buyTcgCopied'));
+  };
+
+  const copyBuyList = () => {
+    copyToClipboard(buyText);
+    showToast(t('lists.exportCopied'));
   };
 
   // --- Derived data ---
@@ -577,9 +599,10 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <Copy size={14} /> {t('lists.exportPlain')}
           </button>
-<button className="btn btn-primary" onClick={handleBuyOnManapool}
-            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <ShoppingBag size={14} /> {t('lists.buyOnManapool')}
+<button className="btn btn-primary btn-icon-only" onClick={openBuy}
+            title={t('lists.buyList')} aria-label={t('lists.buyList')}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ShoppingCart size={16} />
           </button>
           <button className="btn btn-secondary" onClick={moveToCheapestPrintings}
             disabled={movingCheapest || savingCard} title={t('lists.cheapestTitle')}
@@ -745,6 +768,59 @@ function Lists({ showToast, handoff, onHandoffDone }) {
                 <button type="submit" className="btn btn-primary" style={{ fontWeight: 700 }}>{t('lists.save')}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Buy modal — pick where to buy the list */}
+      {showBuy && (
+        <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div className="glass-panel" style={{ maxWidth: '520px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.75rem', position: 'relative', border: '1px solid rgba(255,255,255,0.15)' }}>
+            <button className="btn btn-secondary btn-icon-only" onClick={() => setShowBuy(false)}
+              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem' }}><X size={16} /></button>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-strong)', margin: '0 0 0.35rem' }}>{t('lists.buyList')}</h3>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeList.name}</div>
+
+            {/* Provider choices — flat bordered cards, no glass, wrap on narrow screens */}
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              {[
+                { label: t('lists.buyOnManapool'), hint: t('lists.buyManaPoolHint', { count: buyLineCount }), onClick: buyManapool, accent: accent },
+                { label: t('lists.buyTcg'), hint: t('lists.buyTcgHint'), onClick: buyTcgplayer, accent: '#ff2b03' },
+              ].map(card => (
+                <button key={card.label} type="button" onClick={card.onClick}
+                  disabled={buyLoading || buyError || !buyText}
+                  style={{ flex: '1 1 200px', minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '0.35rem', padding: '0.9rem 1rem', borderRadius: 'var(--radius-sm)', textAlign: 'left', cursor: (buyLoading || buyError || !buyText) ? 'not-allowed' : 'pointer', opacity: (buyLoading || buyError || !buyText) ? 0.5 : 1, background: 'rgba(0,0,0,0.3)', border: `1.5px solid ${card.accent}66`, color: 'var(--text-primary)', fontSize: '0.8rem' }}>
+                  <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.9rem' }}>{card.label}</span>
+                  <span style={{ color: 'var(--text-secondary)', lineHeight: 1.4 }}>{card.hint}</span>
+                </button>
+              ))}
+            </div>
+
+            {buyLoading && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.9rem' }}>{t('lists.buyLoading')}</div>
+            )}
+            {buyError && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--accent-red)', marginTop: '0.9rem' }}>
+                {buyError === 'empty' ? t('lists.exportEmpty') : t('lists.errExport')}
+              </div>
+            )}
+
+            {/* The plain text itself: always selectable, so the flow survives a
+                broken clipboard (and lets a detail edit ship its own way). */}
+            {buyText && !buyLoading && (
+              <div style={{ marginTop: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <textarea readOnly value={buyText} rows={6} aria-label={t('lists.copyList')}
+                  onFocus={e => e.target.select()}
+                  style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.75rem', padding: '0.6rem', borderRadius: 'var(--radius-sm)', background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.15)', resize: 'vertical', boxSizing: 'border-box' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-secondary" onClick={copyBuyList}
+                    style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Copy size={14} /> {t('lists.copyList')}
+                  </button>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('lists.buyLineCount', { count: buyLineCount })}</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
