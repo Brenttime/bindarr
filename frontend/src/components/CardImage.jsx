@@ -21,7 +21,7 @@ import { artUrl, useCardArtIndex } from '../utils/cardArt';
 //
 // Step 3 is why onError chaining is used rather than a plain src: a URL that 404s
 // or a CDN that is unreachable has to degrade the same way an absent one does.
-export default function CardImage({ card, src, alt, ...imgProps }) {
+export default function CardImage({ card, src, fallbackSrc, alt, ...imgProps }) {
   const index = useCardArtIndex();
 
   // Collection rows carry the card's own id in card_id (id is the row's), while
@@ -35,6 +35,10 @@ export default function CardImage({ card, src, alt, ...imgProps }) {
   const chain = [
     cardId && index.has(cardId) ? artUrl(cardId) : null,
     provider || null,
+    // A derived provider URL (e.g. an art crop of the same card) is a better
+    // picture, not a replacement one: when it 404s the original comes first,
+    // and only then the card back.
+    fallbackSrc || null,
     back,
   ].filter(Boolean);
 

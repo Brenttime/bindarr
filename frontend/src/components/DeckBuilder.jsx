@@ -939,6 +939,13 @@ function DeckBuilder({ showToast, onNavigate }) {
                 const isComplete = totalCards >= targetSize;
                 const percent = Math.min(100, Math.round((totalCards / targetSize) * 100));
                 const accentColor = deck.accent_color || '#ef4444';
+                // ManaBox-style: the commander's art is the tile. Without a
+                // commander the card keeps the old accent-gradient look.
+                const commanderArt = deck.commander_image_url || null;
+                // ManaBox tiles crop to the illustration; Scryfall serves the same
+                // crop at art_crop/, falling to the full face if a print lacks it.
+                const commanderCrop = commanderArt
+                  ? commanderArt.replace('/normal/front/', '/art_crop/front/') : null;
 
                 return (
                   <div
@@ -949,7 +956,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                       flexDirection: 'column',
                       justifyContent: 'space-between',
                       gap: '1rem',
-                      padding: '1.25rem',
+                      padding: commanderArt ? 0 : '1.25rem',
                       border: deck.checked_out
                         ? '1px solid rgba(234,179,8,0.5)'
                         : `1px solid ${accentColor}40`,
@@ -977,6 +984,44 @@ function DeckBuilder({ showToast, onNavigate }) {
                         : `linear-gradient(90deg, ${accentColor}, ${accentColor}cc)`
                     }} />
 
+                    {/* Commander Art Banner */}
+                    {commanderArt ? (
+                      <div style={{ position: 'relative', marginTop: '3px' }}>
+                        <CardImage
+                          // card-shaped object so CardImage resolves contributed
+                          // art from the cache id before falling to the URL.
+                          card={{ id: deck.commander_card_id, name: deck.commander_name }}
+                          src={commanderCrop || commanderArt}
+                          fallbackSrc={commanderCrop && commanderCrop !== commanderArt ? commanderArt : undefined}
+                          loading="lazy"
+                          decoding="async"
+                          style={{ width: '100%', height: '170px', display: 'block', objectFit: 'cover' }}
+                        />
+                        <div style={{
+                          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                          background: 'linear-gradient(to bottom, rgba(15,23,42,0.35) 0%, rgba(15,23,42,0) 35%, rgba(15,23,42,0.85) 100%)',
+                          pointerEvents: 'none'
+                        }} />
+                        <h3 style={{
+                          position: 'absolute',
+                          left: '1rem',
+                          right: '1rem',
+                          bottom: '0.6rem',
+                          margin: 0,
+                          color: '#fff',
+                          fontSize: '1.15rem',
+                          fontWeight: 800,
+                          letterSpacing: '-0.01em',
+                          textShadow: '0 1px 10px rgba(0,0,0,0.8)'
+                        }}>
+                          {deck.name}
+                        </h3>
+                      </div>
+                    ) : null}
+
+                    <div style={commanderArt
+                      ? { display: 'flex', flexDirection: 'column', gap: '1rem', justifyContent: 'space-between', flex: 1, padding: '0 1.25rem 1.25rem' }
+                      : { display: 'contents' }}>
                     {/* In Play Banner */}
                     {deck.checked_out ? (
                       <div style={{
@@ -1007,9 +1052,13 @@ function DeckBuilder({ showToast, onNavigate }) {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-                            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.15rem', fontWeight: 800, margin: 0, letterSpacing: '-0.01em' }}>
-                              {deck.name}
-                            </h3>
+                            {/* With an art banner the name lives on the scrim;
+                                rendering it twice reads as a label, not a title. */}
+                            {!commanderArt && (
+                              <h3 style={{ color: 'var(--text-strong)', fontSize: '1.15rem', fontWeight: 800, margin: 0, letterSpacing: '-0.01em' }}>
+                                {deck.name}
+                              </h3>
+                            )}
                             <span style={{
                               fontSize: '0.6rem',
                               fontWeight: 800,
@@ -1123,6 +1172,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                         Created {new Date(deck.created_at).toLocaleDateString()}
                       </span>
+                    </div>
                     </div>
 
                   </div>
