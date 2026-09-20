@@ -647,6 +647,33 @@ button, input, select, textarea {
   aspect-ratio: 1;
 }
 
+/* Bare icon affordance next to a heading (e.g. edit pencil by a list name) —
+   no border, no background until hover. */
+.icon-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.icon-btn-ghost:hover {
+  color: var(--text-strong);
+  background: rgba(148, 163, 184, 0.15);
+}
+@media (max-width: 720px) {
+  .icon-btn-ghost {
+    width: 36px;
+    height: 36px;
+  }
+}
+
 /* Grid Forms & Input Styling */
 .form-group {
   display: flex;

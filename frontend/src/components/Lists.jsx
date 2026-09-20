@@ -565,7 +565,10 @@ function Lists({ showToast, handoff, onHandoffDone }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', minWidth: 0 }}>
           <button className="btn btn-secondary btn-icon-only" onClick={() => { setActiveList(null); setListDetail(null); }} title={t('nav.dashboard')}><ChevronLeft size={16} /></button>
           <div style={{ minWidth: 0 }}>
-            <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-strong)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeList.name}</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+              <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-strong)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeList.name}</h2>
+              <button className="icon-btn-ghost" onClick={openEdit} title={t('lists.editList')} aria-label={t('lists.editList')}><Pencil size={15} /></button>
+            </div>
             {activeList.description && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{activeList.description}</div>}
           </div>
         </div>
@@ -582,10 +585,6 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             disabled={movingCheapest || savingCard} title={t('lists.cheapestTitle')}
             style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: (movingCheapest || savingCard) ? 0.6 : 1 }}>
             <Wand2 size={14} /> {movingCheapest ? t('lists.cheapestWorking') : t('lists.cheapestButton')}
-          </button>
-          <button className="btn btn-secondary" onClick={openEdit}
-            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Pencil size={14} /> {t('lists.editList')}
           </button>
           <OverflowMenu label={t('lists.moreActions')}>
             <button role="menuitem" style={menuItem} onClick={() => handleExport('detailed')}>
