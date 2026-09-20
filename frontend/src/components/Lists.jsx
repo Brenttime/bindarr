@@ -6,6 +6,7 @@ import {
 import OverflowMenu from './OverflowMenu';
 import CardImage from './CardImage';
 import { useBackGuard } from '../utils/useBackGuard';
+import { getRememberedView, rememberOpen, clearOpen } from '../utils/viewMemory';
 import { displayName, setReference } from '../utils/languages';
 import { useT } from '../utils/i18n';
 import { cardKey, findSameCard } from '../utils/cardIdentity';
@@ -92,22 +93,55 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   useBackGuard(showEdit, () => setShowEdit(false));
   useBackGuard(showBuy, () => setShowBuy(false));
   useBackGuard(showCopy, () => setShowCopy(false));
-  useBackGuard(!!activeList, () => setActiveList(null));
+  useBackGuard(!!activeList, () => leaveList());
 
-  useEffect(() => { fetchLists(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Leaving a list clears BOTH detail states and the remembered open id —
+  // missing one of them is how a back gesture used to leave the next refresh
+  // restoring a list the user had already walked out of.
+  const leaveList = () => {
+    setActiveList(null);
+    setListDetail(null);
+    clearOpen('lists');
+  };
 
   const fetchLists = async () => {
     try {
       setLoading(true);
       const res = await fetch('/api/lists');
-      if (res.ok) setLists(await res.json());
+      if (res.ok) {
+        const rows = await res.json();
+        setLists(rows);
+        return rows;
+      }
     } catch (err) {
       console.error(err);
       showToast(t('lists.errLoad'));
     } finally {
       setLoading(false);
     }
+    return [];
   };
+
+  useEffect(() => {
+    // Load the overview first, then reopen the remembered list (refresh
+    // mid-edit should land back in it). The overview rows are the account's
+    // current truth: a stale id from a deleted list or another account quietly
+    // stops at the overview instead of a broken detail pane. activeList gets
+    // the overview entry merged with the detail response — the detail view
+    // reads name/description/accent_color off activeList, which the overview
+    // row has but a bare openList call never relied on being absent.
+    (async () => {
+      try {
+        const rows = await fetchLists();
+        const remembered = getRememberedView();
+        if (remembered.tab !== 'lists' || !remembered.listId) return;
+        const entry = rows.find(l => String(l.id) === remembered.listId);
+        if (!entry) { clearOpen('lists'); return; }
+        await openList(entry);
+      } catch { /* restore is best-effort; overview already shows */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const openCreate = () => {
     setNewName('');
@@ -195,8 +229,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
       const res = await fetch(`/api/lists/${activeList.id}`, { method: 'DELETE' });
       if (res.ok) {
         showToast(t('lists.deleted'));
-        setActiveList(null);
-        setListDetail(null);
+        leaveList();
         fetchLists();
       } else {
         showToast(t('lists.errDelete'));
@@ -212,6 +245,9 @@ function Lists({ showToast, handoff, onHandoffDone }) {
       const res = await fetch(`/api/lists/${listId}`);
       if (res.ok) {
         setListDetail(await res.json());
+        // Which list is open is now this id — reloads after edits re-assert it,
+        // which is exactly right: the open list never changed.
+        rememberOpen('lists', listId);
         // The buy modal caches the exported text; any detail reload (list
         // switch, qty edits, reshuffles) can change it, so drop the cache and
         // let the next modal open refetch it lazily. Same goes for the copy
@@ -642,7 +678,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', padding: '1.25rem 1.5rem', border: `1px solid ${accent}40`, background: `linear-gradient(135deg, ${accent}14, rgba(15,23,42,0.8))` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', minWidth: 0 }}>
-          <button className="btn btn-secondary btn-icon-only" onClick={() => { setActiveList(null); setListDetail(null); }} title={t('nav.dashboard')}><ChevronLeft size={16} /></button>
+          <button className="btn btn-secondary btn-icon-only" onClick={leaveList} title={t('nav.dashboard')}><ChevronLeft size={16} /></button>
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
               <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-strong)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeList.name}</h2>

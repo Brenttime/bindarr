@@ -3,6 +3,7 @@ import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, 
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
+import { getRememberedTab, rememberView, clearRememberedView } from './utils/viewMemory';
 import { useT } from './utils/i18n';
 
 // View components are code-split so heavy deps (recharts in the chart views)
@@ -90,7 +91,10 @@ function App() {
     }
   });
 
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // Boot where the refresh found us, not on Dashboard. Only meaningful once
+  // we know we are logged in and not on a share route — see the effect below
+  // that reconciles this with token/user/share state.
+  const [activeTab, setActiveTab] = useState(() => getRememberedTab());
   // First-run scanning setup. Asked once per session, only for an admin, and only
   // while it is genuinely incomplete — setupNeeded() reads the same endpoints the
   // wizard does so there is one definition of 'set up'.
@@ -118,8 +122,10 @@ function App() {
     tabGuardRef.current = pushBackGuard(() => {
       tabGuardRef.current = null;
       setActiveTab(prev);
+      rememberView(prev); // back is a real navigation; the memory follows it
     });
     setActiveTab(tab);
+    rememberView(tab);
     setSettingsTarget(tab === 'settings' ? target : null);
     if (tab === 'lists') setListsHandoff(target || null);
   };
@@ -130,6 +136,23 @@ function App() {
     const match = path.match(/^\/share\/([a-zA-Z0-9_-]+)$/);
     return match ? match[1] : null;
   });
+
+  // Keep the remembered place honest with who is looking. Logged out or on a
+  // share page there is no place to keep (and a share visitor must never be
+  // teleported into someone's saved view), so drop the key. Logged in, the key
+  // wins — that is the case where the account changed under the app (logout ->
+  // login as someone else) and the booted tab belongs to the previous user.
+  useEffect(() => {
+    if (shareToken || !token || !user) {
+      clearRememberedView();
+      return;
+    }
+    const remembered = getRememberedTab();
+    if (remembered !== activeTab) setActiveTab(remembered);
+    // Only the login/logout/share transitions matter; a deliberate tab click
+    // already wrote the key before it changed activeTab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shareToken, token, user]);
 
   const showToast = (message) => {
     setToast(message);
@@ -194,6 +217,9 @@ function App() {
   // Handle automatic logout on 401
   useEffect(() => {
     const handleAutoLogout = () => {
+      // Clear the place-memory while the user is still in state — after
+      // removeItem below, viewMemory could not tell whose entry to drop.
+      if (user && user.username) clearRememberedView(user.username);
       setToken(null);
       setUser(null);
       localStorage.removeItem('bindarr_token');
@@ -202,7 +228,7 @@ function App() {
     };
     window.addEventListener('bindarr_logout', handleAutoLogout);
     return () => window.removeEventListener('bindarr_logout', handleAutoLogout);
-  }, [t]);
+  }, [t, user]);
 
   // Pointer-reactive foil: one delegated listener drives --px/--py (0-100%) on
   // whichever card the pointer is over, so the foil rainbow tracks the cursor.
@@ -234,13 +260,21 @@ function App() {
     localStorage.setItem('bindarr_token', newToken);
     localStorage.setItem('bindarr_user', JSON.stringify(newUser));
     showToast(t('toast.welcomeBack', { name: newUser.username }));
+    // Welcome starts at Dashboard. Overwrite the remembered entry with it:
+    // logout only *tries* to clear the key (private mode can refuse
+    // removeItem), so a stale entry must not drag a fresh login into the last
+    // session's tab.
     setActiveTab('dashboard');
+    rememberView('dashboard');
   };
 
   const handleLogout = () => {
     // Revoke token on server asynchronously
     fetch('/api/auth/logout', { method: 'POST' }).catch(err => console.error(err));
 
+    // Same ordering rule as the auto-logout: forget the place while we still
+    // know whose place it is.
+    if (user && user.username) clearRememberedView(user.username);
     setToken(null);
     setUser(null);
     localStorage.removeItem('bindarr_token');
