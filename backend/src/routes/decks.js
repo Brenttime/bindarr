@@ -6,6 +6,7 @@ const { validateDeckAddition, isBasicLand } = require('../utils/deckRules');
 const { sqlCardKey, sqlIsBasicLand } = require('../utils/cardIdentity');
 const { withAllocationLock } = require('../utils/collectionHelpers');
 const { getDeckMinimumValues, emptyDeckMinimumValue } = require('../utils/deckPricing');
+const { getDeckCommanders } = require('../utils/deckCommander');
 
 const router = express.Router();
 
@@ -109,11 +110,24 @@ router.get('/', async (req, res) => {
       ORDER BY d.created_at DESC
     `;
     const rows = await db.all(query, [req.user.id]);
-    const values = await getDeckMinimumValues(db, rows.map(row => row.id));
-    res.json(rows.map(row => ({
-      ...row,
-      ...(values.get(Number(row.id)) || emptyDeckMinimumValue()),
-    })));
+    // Value and commander art are both deck-wide scans that must stay one-pass,
+    // but they are independent, so they run together.
+    const [values, commanders] = await Promise.all([
+      getDeckMinimumValues(db, rows.map(row => row.id)),
+      getDeckCommanders(db, req.user.id),
+    ]);
+    res.json(rows.map(row => {
+      const commander = commanders.get(Number(row.id));
+      return {
+        ...row,
+        ...(values.get(Number(row.id)) || emptyDeckMinimumValue()),
+        commander_name: commander ? commander.commander_name : null,
+        commander_image_url: commander ? commander.commander_image_url : null,
+        // The cache id behind the art. The frontend resolves contributed art
+        // from the card id, not from the provider URL.
+        commander_card_id: commander ? commander.commander_card_id : null,
+      };
+    }));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to retrieve decks' });
