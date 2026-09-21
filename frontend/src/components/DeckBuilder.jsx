@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink, ShoppingCart } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink, ShoppingCart } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -790,7 +790,6 @@ function DeckBuilder({ showToast, onNavigate }) {
   const deckCards = activeDeck?.cards || EMPTY_DECK_CARDS;
   const deckDerived = useMemo(() => deriveDeckRenderData(deckCards), [deckCards]);
   const {
-    basicLandCount,
     countsByName,
     deckGroups,
     totalDeckCardsCount,
@@ -1500,6 +1499,12 @@ function DeckBuilder({ showToast, onNavigate }) {
                 <button role="menuitem" style={moreItem} onClick={() => setShowImportModal(true)}>
                   <Upload size={14} /> {t('deck.importDeckList')}
                 </button>
+                {moxfieldDeckUrl(activeDeck) && (
+                  <a role="menuitem" style={{ ...moreItem, textDecoration: 'none' }}
+                    href={moxfieldDeckUrl(activeDeck)} target="_blank" rel="noreferrer">
+                    <ExternalLink size={14} /> {t('mfx.openOnMoxfield')}
+                  </a>
+                )}
                 <div style={{ height: '1px', background: 'var(--border-glass)', margin: '0.25rem 0.35rem' }} />
                 <button
                   role="menuitem"
@@ -1760,39 +1765,15 @@ function DeckBuilder({ showToast, onNavigate }) {
                   </div>
                 </div>
                 
-                {/* Deck Health & Summary Status */}
-                <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <h3 style={{ fontSize: '0.95rem', color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    {totalDeckCardsCount === targetDeckCardsCount ? (
-                      <CheckCircle size={15} style={{ color: 'var(--success)' }} />
-                    ) : (
-                      <AlertTriangle size={15} style={{ color: 'var(--accent-yellow)' }} />
-                    )}
-                    {t('deck.healthTitle')}
-                  </h3>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.8rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
-                      <span>{t('deck.targetDeckSize')}</span>
-                      <strong style={{ color: totalDeckCardsCount === targetDeckCardsCount ? 'var(--success)' : 'var(--text-strong)' }}>{totalDeckCardsCount}/{targetDeckCardsCount} {t('deck.cardCapacity')}</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
-                      <span>{t('deck.uniqueCards')}</span>
-                      <strong style={{ color: 'var(--text-strong)' }}>{activeDeck.cards.length} {t('deck.titlesCount', { count: activeDeck.cards.length })}</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
-                      <span>{t('deck.basicLands')}</span>
-                      <strong style={{ color: 'var(--accent-yellow)' }}>
-                        {basicLandCount} {t('deck.basicLandsCount', { count: basicLandCount })}
-                      </strong>
-                    </div>
-                  </div>
-
-                  {/* Synced decks get one clear exit to the Moxfield listing
-                      the mirror came from. A real button under the stats, not
-                      an icon on the title: it stays out of the deck-name row
-                      and reads as an action instead of decoration. */}
-                  {moxfieldDeckUrl(activeDeck) && (
+                {/* Moxfield: mirrored decks get their own one-action section —
+                    just the exit to the upstream listing, promoted out of the
+                    (now gone) Deck Health panel. Unmirrored decks have nothing
+                    to point at, so the section doesn't render for them. */}
+                {moxfieldDeckUrl(activeDeck) && (
+                  <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                    <h3 style={{ fontSize: '0.95rem', color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <ExternalLink size={14} style={{ color: '#3b82f6' }} /> {t('deck.moxfieldTitle')}
+                    </h3>
                     <a
                       className="btn btn-secondary"
                       href={moxfieldDeckUrl(activeDeck)}
@@ -1802,8 +1783,8 @@ function DeckBuilder({ showToast, onNavigate }) {
                     >
                       <ExternalLink size={13} /> {t('mfx.openOnMoxfield')}
                     </a>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Bar Chart: Mana Cost Curve */}
                 {manaCurveData.some(d => d.count > 0) && (

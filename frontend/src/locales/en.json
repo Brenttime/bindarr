@@ -175,6 +175,7 @@
   "deck.minimumValueIncomplete": "Current replacement-cost floor using the cheapest known USD printings or finishes. {count} cards do not have a USD price, so the complete deck costs more.",
   "deck.unpricedCount": "{count} unpriced",
   "deck.valueTitle": "Value",
+  "deck.moxfieldTitle": "Moxfield",
   "deck.valueCurrent": "Current printings",
   "deck.valueCheapest": "Cheapest printings",
   "deck.valueCurrentComplete": "What the deck's own printings cost right now, the USD price on the exact printing this deck holds.",
