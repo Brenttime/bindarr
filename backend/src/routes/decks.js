@@ -5,7 +5,7 @@ const { parseCardRow, recordPrice } = require('../utils/priceHelpers');
 const { validateDeckAddition, isBasicLand } = require('../utils/deckRules');
 const { sqlCardKey, sqlIsBasicLand } = require('../utils/cardIdentity');
 const { withAllocationLock } = require('../utils/collectionHelpers');
-const { getDeckMinimumValues, emptyDeckMinimumValue } = require('../utils/deckPricing');
+const { getDeckMinimumValues, emptyDeckMinimumValue, getCheapestPrices, currentPrintingPrice, deckCurrentPrintValues } = require('../utils/deckPricing');
 const { getDeckCommanders } = require('../utils/deckCommander');
 
 const router = express.Router();
@@ -224,6 +224,7 @@ router.get('/:id', async (req, res) => {
       )
       SELECT
         requested.quantity,
+        requested.card_key,
         cc.id,
         cc.name, cc.printed_name,
         cc.supertype,
@@ -235,6 +236,10 @@ router.get('/:id', async (req, res) => {
         cc.number,
         cc.image_url,
         cc.price_trend,
+        cc.price_normal,
+        cc.price_holofoil,
+        cc.price_etched,
+        cc.price_currency,
         COALESCE(owned.owned_qty, 0) AS owned_qty
       FROM requested
       JOIN card_cache cc ON cc.id = requested.representative_id
@@ -243,12 +248,40 @@ router.get('/:id', async (req, res) => {
     `;
     const cards = await db.all(cardsQuery, [id, req.user.id]);
 
-    const formatted = cards.map(parseCardRow);
+    // Two value axes on the same card row: current_price is what THIS deck's
+    // printing costs (cheapestEligiblePrice over the representative row's own
+    // fields, USD-gated exactly like the floor query), cheapest_price is the
+    // logical card's cheapest known USD printing — getCheapestPrices, the same
+    // helper behind minimum_value, so screen and total can't disagree.
+    const cheapestByKey = await getCheapestPrices(db, cards.map(c => c.card_key).filter(Boolean));
+    const formatted = cards.map(row => ({
+      ...parseCardRow(row),
+      current_price: currentPrintingPrice(row),
+      cheapest_price: cheapestByKey.has(row.card_key) ? cheapestByKey.get(row.card_key) : null,
+    }));
+
     const values = await getDeckMinimumValues(db, [deck.id]);
+
+    // Current-printings deck total: summed from EVERY deck_cards row, not the
+    // grouped representatives above — a deck holding two printings of one
+    // logical card pays each printing its own price, the same row-level
+    // accounting getDeckRequirements sums for the floor.
+    const currentRows = await db.all(`
+      SELECT dc.quantity,
+             cc.price_normal, cc.price_holofoil, cc.price_etched, cc.price_trend, cc.price_currency
+      FROM deck_cards dc
+      JOIN card_cache cc ON cc.id = dc.card_id
+      WHERE dc.deck_id = ? AND dc.quantity > 0
+    `, [id]);
+    const currentValues = deckCurrentPrintValues(currentRows.map(row => ({
+      quantity: row.quantity,
+      current_price: currentPrintingPrice(row),
+    })));
 
     res.json({
       ...deck,
       ...(values.get(Number(deck.id)) || emptyDeckMinimumValue()),
+      ...currentValues,
       cards: formatted
     });
   } catch (error) {
