@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, CheckCircle, AlertTriangle, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink, ShoppingCart } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -15,6 +15,10 @@ import { useT } from '../utils/i18n';
 import { canRegisterDeckInCollection, deckRegistrationCardCount } from '../utils/deckCollectionRegistration';
 import { cardKey, findSameCard } from '../utils/cardIdentity';
 import { deckMinimumValueHint, deckMinimumValueText, deckUnpricedCountText } from '../utils/deckMinimumValue';
+import { buildCardListText } from '../utils/cardList';
+import { buildManapoolUrl } from '../utils/manapoolUrl';
+import { buildTcgMassEntryUrl } from '../utils/tcgMassEntryUrl';
+import { priceText } from '../utils/formatPrice';
 import { deriveDeckRenderData, isBasicLand } from '../utils/deckRenderData';
 
 const EMPTY_DECK_CARDS = [];
@@ -101,6 +105,13 @@ function DeckBuilder({ showToast, onNavigate }) {
   // clobber one another (last-writer-wins on the server upsert).
   const [savingCard, setSavingCard] = useState(false);
 
+  // Deck buy modal (same shape as the Lists buy modal). The detail response
+  // already carries every card, so the plain buylist is rebuilt from
+  // activeDeck.cards on every open — synchronous, and a card add/remove
+  // (which refetches the detail) can never leave stale lines behind.
+  const [showBuy, setShowBuy] = useState(false);
+  const [buyText, setBuyText] = useState('');
+
   useBackGuard(showCreateModal, () => setShowCreateModal(false));
   useBackGuard(showSimulator, () => setShowSimulator(false));
   useBackGuard(missingOpen, () => setMissingOpen(false));
@@ -114,6 +125,8 @@ function DeckBuilder({ showToast, onNavigate }) {
   // because the guard below only reset activeDeck. One helper, always both.
   const closeDeck = () => {
     setMissingOpen(false);
+    setShowBuy(false);
+    setBuyText('');
     setActiveDeck(null);
     setViewMode('list');
     clearOpen('deckbuilder');
@@ -121,6 +134,17 @@ function DeckBuilder({ showToast, onNavigate }) {
   };
 
   useBackGuard(!!activeDeck, closeDeck);
+  useBackGuard(showBuy, () => setShowBuy(false));
+
+  // Escape closes the deck buy modal (the overlay itself is never focused).
+  // The effect sits above the list-view early return so hook order stays
+  // stable — same rule as the Lists buy/copy modal.
+  useEffect(() => {
+    if (!showBuy) return;
+    const onKey = (e) => { if (e.key === 'Escape') setShowBuy(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showBuy]);
 
   useEffect(() => {
     // A refresh inside a deck should land back inside it: fetch the list first
@@ -600,6 +624,62 @@ function DeckBuilder({ showToast, onNavigate }) {
     showToast(t('deck.buylistCopied'));
   };
 
+  // --- DECK BUY MODAL (mirrors the Lists buy modal) ---
+  // Deck rows arrive from the detail endpoint already carrying quantity/name,
+  // so the plain list builds synchronously — same text shape as
+  // GET /api/lists/:id/cardlist?style=plain (shared/cardListText.js), via the
+  // frontend twin in utils/cardList.
+  const openBuy = () => {
+    setShowBuy(true);
+    setBuyText(buildCardListText(activeDeck?.cards || [], 'plain'));
+  };
+
+  const buyLineCount = buyText ? buyText.split('\n').filter(l => l.trim()).length : 0;
+
+  // ManaPool prefill deep link + TCGplayer prefilled Mass Entry: identical
+  // mechanics to Lists.jsx — the window.open stays synchronous inside the
+  // click handler (user activation doesn't survive an await), and an overlong
+  // TCG link degrades to copy+paste rather than dying mid-navigation.
+  const buyManapool = () => {
+    const url = buildManapoolUrl(buyText.split('\n'));
+    if (!url) { showToast(t('deck.buyEmpty')); return; }
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setShowBuy(false);
+  };
+
+  const buyTcgplayer = () => {
+    const url = buildTcgMassEntryUrl(buyText.split('\n'));
+    if (!url) { showToast(t('deck.buyEmpty')); return; }
+    const tooLong = url.length > 8000;
+    if (tooLong) copyToClipboard(buyText);
+    window.open(tooLong ? 'https://www.tcgplayer.com/massentry?productline=Magic' : url, '_blank', 'noopener,noreferrer');
+    setShowBuy(false);
+    if (tooLong) showToast(t('deck.buyTcgCopied'));
+  };
+
+  const copyBuyList = () => {
+    copyToClipboard(buyText);
+    showToast(t('deck.buyCopied'));
+  };
+
+  // Clipboard with a document.execCommand fallback; every flow that uses it
+  // also leaves the text visible in the modal, so a denied clipboard degrades
+  // the UX without breaking the purchase (same rule as Lists.jsx).
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      } catch { /* clipboard unavailable; the text stays selectable in the modal */ }
+    }
+  };
+
   const handleCompareImport = async () => {
     if (!importText.trim() || !activeDeck) return;
     setComparingImport(true);
@@ -749,6 +829,20 @@ function DeckBuilder({ showToast, onNavigate }) {
   const quietBtn = { ...btnStack, border: '1px solid var(--border-glass)', color: 'var(--text-secondary)' };
   const moreItem = { display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: '0.82rem', cursor: 'pointer', textAlign: 'left' };
   const detailOpen = viewMode === 'detail' && !!activeDeck;
+
+  // Value-section numbers for the open deck. Null-safe: the deck list renders
+  // with no active deck and must not touch these. The current-printings total
+  // gets the same "+" honesty rule as the cheapest floor — unpriced copies
+  // make the shown number a floor, not a full price.
+  const currentUnpricedCards = Number(activeDeck?.current_unpriced_cards) || 0;
+  const currentValueText = activeDeck
+    ? `${priceText(Number(activeDeck.current_printing_value) || 0, activeDeck.minimum_value_currency || 'USD')}${currentUnpricedCards > 0 ? '+' : ''}`
+    : '';
+  const currentValueHint = currentUnpricedCards === 1
+    ? t('deck.valueCurrentIncompleteOne')
+    : currentUnpricedCards > 0
+      ? t('deck.valueCurrentIncomplete', { count: currentUnpricedCards })
+      : t('deck.valueCurrentComplete');
 
   const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
@@ -1627,6 +1721,44 @@ function DeckBuilder({ showToast, onNavigate }) {
 
               {/* Right Column: Statistics, Mana Curve & Deck Health */}
               <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+                {/* Value: what the deck's OWN printings cost vs the cheapest
+                    printings floor. Two axes answer two different questions —
+                    sell-this-deck (current) vs build-it-cheap (floor); the
+                    printings the deck actually holds are one representative
+                    per logical card, so an unpriced representative hides a
+                    priced reprint. Buy sends the whole deck to ManaPool or
+                    TCGplayer exactly like a list does. */}
+                <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <h3 style={{ fontSize: '0.95rem', color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <DollarSign size={14} style={{ color: 'var(--accent-yellow)' }} /> {t('deck.valueTitle')}
+                    <button className="btn btn-primary btn-icon-only" onClick={openBuy}
+                      title={t('deck.buyDeck')} aria-label={t('deck.buyDeck')}
+                      style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <ShoppingCart size={16} />
+                    </button>
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.8rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
+                      <span title={currentValueHint} tabIndex={0}
+                        aria-label={`${t('deck.valueCurrent')}: ${currentValueText}. ${currentValueHint}`}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        {t('deck.valueCurrent')}
+                        {Number(activeDeck?.current_unpriced_cards) > 0 && (
+                          <small style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({t('deck.unpricedCount', { count: currentUnpricedCards })})</small>
+                        )}
+                      </span>
+                      <strong style={{ color: 'var(--text-strong)' }}>{currentValueText}</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
+                      <span title={deckMinimumValueHint(activeDeck, t)} tabIndex={0}
+                        aria-label={`${t('deck.valueCheapest')}: ${deckMinimumValueText(activeDeck)}. ${deckMinimumValueHint(activeDeck, t)}`}>
+                        {t('deck.valueCheapest')}
+                      </span>
+                      <strong style={{ color: 'var(--accent-yellow)' }}>{deckMinimumValueText(activeDeck)}</strong>
+                    </div>
+                  </div>
+                </div>
                 
                 {/* Deck Health & Summary Status */}
                 <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -1764,6 +1896,58 @@ function DeckBuilder({ showToast, onNavigate }) {
       )}
 
       {/* --- POPUPS & MODALS --- */}
+
+      {/* Deck buy modal — same flow as the Lists buy modal: provider cards for
+          ManaPool + TCGplayer prefilled Mass Entry, the plain list selectable
+          as a copy fallback, Escape and an overlay click close it. */}
+      {showBuy && activeDeck && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowBuy(false); }}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div className="glass-panel" style={{ maxWidth: '520px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.75rem', position: 'relative', border: '1px solid rgba(255,255,255,0.15)' }}>
+            <button className="btn btn-secondary btn-icon-only" onClick={() => setShowBuy(false)}
+              aria-label={t('common.close')} title={t('common.close')}
+              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', zIndex: 1 }}><X size={16} /></button>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-strong)', margin: '0 0 0.35rem', paddingRight: '2.25rem' }}>{t('deck.buyDeck')}</h3>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeDeck.name}</div>
+
+            {/* Provider choices — flat bordered cards, no glass, wrap on narrow screens */}
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              {[
+                { label: t('lists.buyOnManapool'), hint: buyText ? t('lists.buyManaPoolHint', { count: buyLineCount }) : '', onClick: buyManapool, accent: activeDeck.accent_color || '#eab308' },
+                { label: t('lists.buyTcg'), hint: buyText ? t('lists.buyTcgHint', { count: buyLineCount }) : '', onClick: buyTcgplayer, accent: '#ff2b03' },
+              ].map(card => (
+                <button key={card.label} type="button" onClick={card.onClick}
+                  disabled={!buyText}
+                  style={{ flex: '1 1 200px', minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '0.35rem', padding: '0.9rem 1rem', borderRadius: 'var(--radius-sm)', textAlign: 'left', cursor: !buyText ? 'not-allowed' : 'pointer', opacity: !buyText ? 0.5 : 1, background: 'rgba(0,0,0,0.3)', border: `1.5px solid ${card.accent}66`, color: 'var(--text-primary)', fontSize: '0.8rem' }}>
+                  <span style={{ fontWeight: 800, color: 'var(--text-strong)', fontSize: '0.9rem' }}>{card.label}</span>
+                  <span style={{ color: 'var(--text-secondary)', lineHeight: 1.4 }}>{card.hint}</span>
+                </button>
+              ))}
+            </div>
+
+            {!buyText && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--accent-red)', marginTop: '0.9rem' }}>{t('deck.buyEmpty')}</div>
+            )}
+
+            {/* The plain text itself: always selectable, so the flow survives a
+                broken clipboard. */}
+            {buyText && (
+              <div style={{ marginTop: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <textarea readOnly value={buyText} rows={6} aria-label={t('deck.buyDeck')}
+                  onFocus={e => e.target.select()}
+                  style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.75rem', padding: '0.6rem', borderRadius: 'var(--radius-sm)', background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.15)', resize: 'vertical', boxSizing: 'border-box' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-secondary" onClick={copyBuyList}
+                    style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Copy size={14} /> {t('deck.buyCopy')}
+                  </button>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('lists.buyLineCount', { count: buyLineCount })}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* One entry point for every way a deck can enter the vault. */}
       {showAddDeckModal && (

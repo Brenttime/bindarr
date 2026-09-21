@@ -165,9 +165,49 @@ function emptyDeckMinimumValue() {
   };
 }
 
+// The deck's OWN printing priced the same way the floor prices any printing:
+// cheapestEligiblePrice over the four price fields, and only when the row's
+// currency is USD (COALESCE semantics identical to the floor query's). A
+// printing with no eligible positive price, or one quoted in another currency,
+// yields null — "unpriced" rather than "$0.00", the same honesty rule behind
+// the floor's "+".
+function currentPrintingPrice(row) {
+  if (!row) return null;
+  const currency = row.price_currency == null ? 'USD' : String(row.price_currency).toUpperCase();
+  if (currency !== 'USD') return null;
+  return cheapestEligiblePrice(row);
+}
+
+// Deck totals for the current-printings axis, summed from per-card rows that
+// already carry {quantity, current_price}. Mirrors computeMinimumValues'
+// accounting exactly: unpriced counts COPIES (so the UI's "+" gate matches the
+// existing unpriced_cards), priced copies multiply in, and the sum rounds to
+// cents the same way.
+function deckCurrentPrintValues(rows) {
+  let value = 0;
+  let unpricedCopies = 0;
+  for (const row of rows || []) {
+    const quantity = Number(row.quantity) || 0;
+    if (quantity <= 0) continue;
+    const price = row.current_price;
+    if (price === null || price === undefined) {
+      unpricedCopies += quantity;
+    } else {
+      value += quantity * price;
+    }
+  }
+  return {
+    current_printing_value: Math.round((value + Number.EPSILON) * 100) / 100,
+    current_unpriced_cards: unpricedCopies,
+  };
+}
+
 module.exports = {
   getDeckMinimumValues,
   getListMinimumValues,
   getCheapestPrintings,
+  getCheapestPrices,
   emptyDeckMinimumValue,
+  currentPrintingPrice,
+  deckCurrentPrintValues,
 };
