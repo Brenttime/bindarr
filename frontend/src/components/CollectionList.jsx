@@ -6,6 +6,7 @@ import { CONDITIONS, PRINTING_OPTIONS } from '../utils/cardOptions';
 import { getPrintingBadgeLabel, getPrintingBadgeStyle, getFoilOverlayClass, getPrintingLabel } from '../utils/cardPrinting';
 import { getCardRarityBorder, getRarityBadgeLabel, getRarityBadgeStyle } from '../utils/cardRarity';
 import { sortCardsByOrder } from '../utils/cardSort';
+import { stackCollection } from '../utils/collectionStack';
 import { buildCardListText } from '../utils/cardList';
 import { fetchWithRetry } from '../utils/fetchWithRetry';
 import {
@@ -159,10 +160,10 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
   const liveFetchRef = useRef(0);
   const liveAbortRef = useRef(null);
 
-  // Stacking state (default to stacked)
+  // Stacking state (default to stacked). Printing is deliberately not a toggle:
+  // it is always part of the stack key, so foils never fold into non-foils.
   const [stackCards, setStackCards] = useState(true);
   const [stackByCondition, setStackByCondition] = useState(false);
-  const [stackByPrinting, setStackByPrinting] = useState(false);
 
   // Multi-select / bulk actions — shared long-press + /api/collection/bulk logic.
   const {
@@ -754,24 +755,12 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     return result;
   }, [baseCollection, searchFilter, scryfallPredicate, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, minPriceFilter, maxPriceFilter, sortBy, setsList]);
 
-  // Group duplicate cards if stack option is active
+  // Group duplicate cards if stack option is active. Printing is baked into the
+  // shared stack key, so foils and non-foils of one card always stay separate.
   const processedCollection = useMemo(() => {
     if (!stackCards) return filteredCollection;
-
-    const groups = {};
-    filteredCollection.forEach(item => {
-      let key = item.card_id;
-      if (stackByCondition) key += `-${item.condition}`;
-      if (stackByPrinting) key += `-${item.printing}`;
-
-      if (!groups[key]) {
-        groups[key] = { ...item };
-      } else {
-        groups[key].quantity += item.quantity;
-      }
-    });
-    return Object.values(groups);
-  }, [filteredCollection, stackCards, stackByCondition, stackByPrinting]);
+    return stackCollection(filteredCollection, { byCondition: stackByCondition });
+  }, [filteredCollection, stackCards, stackByCondition]);
 
   // In select mode, render the unstacked list so every entry is individually
   // selectable and bulk actions hit real entry_ids (stacking merges rows).
@@ -1335,13 +1324,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
                     <input type="checkbox" id="stackByConditionOpt" checked={stackByCondition} onChange={(e) => setStackByCondition(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                     <label htmlFor="stackByConditionOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                       {t('collection.splitByCondition')}
-                    </label>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <input type="checkbox" id="stackByPrintingOpt" checked={stackByPrinting} onChange={(e) => setStackByPrinting(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
-                    <label htmlFor="stackByPrintingOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      {t('collection.splitByPrinting')}
                     </label>
                   </div>
                 </>

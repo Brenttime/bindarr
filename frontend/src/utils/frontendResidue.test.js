@@ -57,6 +57,9 @@ for (const file of locales) {
   assert.ok(dict['deck.fullyOwnedCards'], `${file} is missing the neutral owned-card key`);
   assert.ok(keys.some(key => key.startsWith('deck.cardCount.')), `${file} is missing neutral card-count plurals`);
   assert.ok(dict['catalog.thLanguage'] && dict['catalog.notBuilt'], `${file} is missing neutral catalog keys`);
+  // Retained on purpose: the UI no longer offers a "split by printing" toggle --
+  // printing is always part of the stack key -- but this key is what proves each
+  // locale labels the finish as Foil, so deleting it would only blind this gate.
   assert.ok(dict['collection.splitByPrinting'].includes(foilTerms[locale]), `${file} does not label the finish as Foil`);
 
   for (const key of [
