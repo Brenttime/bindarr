@@ -205,7 +205,6 @@
   "deck.deleteDeckHint": "Delete this deck",
   "deck.deleteBlockedWhileOut": "Return the cards before deleting this deck",
   "deck.checkedOutSince": "held since {when}",
-  "deck.defaultDescription": "Custom deck build.",
   "deck.exportMissingCount.other": "Export {count} missing",
   "deck.exportMissingCount.one": "Export {count} missing",
   "deck.importDeckList": "Import deck list",

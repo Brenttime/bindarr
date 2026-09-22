@@ -1427,9 +1427,11 @@ function DeckBuilder({ showToast, onNavigate }) {
                 <p style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', margin: '4px 0 0', color: 'var(--text-secondary)', flexWrap: 'wrap', minWidth: 0 }}>
                   <span aria-hidden={'true'} style={{ width: '7px', height: '7px', borderRadius: '50%', background: statusColor, flex: 'none' }} />
                   <span style={{ color: statusColor, fontWeight: 650 }}>{deckStatus}</span>
-                  <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 auto', minWidth: 0 }}>
-                    {activeDeck.description || t('deck.defaultDescription')}
-                  </span>
+                  {!!activeDeck.description && (
+                    <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 auto', minWidth: 0 }}>
+                      {activeDeck.description}
+                    </span>
+                  )}
                   {!!isOut && activeDeck.checked_out_at && (
                     <span style={{ color: 'var(--text-muted)', flex: 'none' }}>
                       {t('deck.checkedOutSince', { when: new Date(activeDeck.checked_out_at).toLocaleString() })}
