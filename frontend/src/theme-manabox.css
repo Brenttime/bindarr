@@ -1,0 +1,412 @@
+/* ==========================================================================
+   MANABOX THEME  (data-theme="manabox")
+   --------------------------------------------------------------------------
+   A ManaBox-inspired skin: graphite surfaces, one orange accent, dense
+   list-first rows, flat (non-glass) panels, a left sidebar on desktop and a
+   bottom tab bar on phones.
+
+   RULES (see docs/THEME-MANABOX.md):
+   - Every selector here is scoped under :root[data-theme="manabox"]. Nothing
+     in this file may affect dark / light / lcars.
+   - Style only. No selector may hide a control, badge, count or stat
+     (no display:none on app content). Features live in JSX; this file only
+     re-skins the shared classes.
+   - Prefer token re-maps first, class overrides second, !important last
+     (only where a component uses inline styles).
+   ========================================================================== */
+
+:root[data-theme="manabox"] {
+  --font-main: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', Roboto, sans-serif;
+
+  /* ManaBox palette */
+  --mb-bg: #121417;
+  --mb-bg2: #1a1d22;
+  --mb-card: #1f2329;
+  --mb-card-hover: #252a31;
+  --mb-raised: #2a2f37;
+  --mb-line: #2b3038;
+  --mb-line-strong: #3a3f48;
+  --mb-accent: #ff7a1a;
+  --mb-accent-2: #ffa45c;
+  --mb-accent-ink: #1a0e04;
+  --mb-accent-soft: rgba(255, 122, 26, 0.13);
+  --mb-green: #35c47a;
+  --mb-red: #ef4f4f;
+  --mb-blue: #3d9cff;
+
+  /* Shared tokens, re-mapped */
+  --bg-primary: var(--mb-bg);
+  --bg-secondary: var(--mb-card);
+  --bg-glass: var(--mb-card);
+  --border-glass: var(--mb-line);
+  --border-glass-hover: var(--mb-line-strong);
+
+  --text-primary: #eef1f5;
+  --text-secondary: #8b93a1;
+  --text-muted: #6b7380;
+  --text-strong: #ffffff;
+  --text-on-accent: var(--mb-accent-ink);
+
+  /* accent-red is the app's "primary" accent (buttons, focus, spinners).
+     ManaBox's primary is orange; true "bad" states use --mb-red below. */
+  --accent-red: var(--mb-accent);
+  --accent-red-glow: rgba(255, 122, 26, 0.35);
+  --accent-blue: var(--mb-blue);
+  --accent-blue-glow: rgba(61, 156, 255, 0.35);
+  --accent-yellow: #e8c25b;
+  --accent-yellow-glow: rgba(232, 194, 91, 0.35);
+  --success: var(--mb-green);
+
+  --surface-1: rgba(255, 255, 255, 0.025);
+  --surface-2: var(--mb-card-hover);
+  --surface-3: var(--mb-raised);
+  --input-bg: var(--mb-raised);
+  --input-bg-focus: #30353d;
+  --bg-gradient: none;
+
+  --logo-cover: var(--mb-accent);
+  --logo-spine: #d45f0c;
+  --logo-page-left: #ffd9bd;
+  --logo-page-right: #ffffff;
+  --logo-ring-stroke: #111111;
+  --logo-ring-inner: #ffffff;
+
+  --shadow-glow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-accent: 0 6px 18px rgba(255, 122, 26, 0.35);
+  --transition-smooth: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="manabox"] body {
+  background: var(--mb-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------- panels */
+/* Flat cards instead of frosted glass. */
+:root[data-theme="manabox"] .glass-panel {
+  background: var(--mb-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+:root[data-theme="manabox"] .glass-panel:hover {
+  border-color: transparent;
+}
+
+:root[data-theme="manabox"] h1,
+:root[data-theme="manabox"] h2,
+:root[data-theme="manabox"] h3 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* ---------------------------------------------------------------- brand */
+:root[data-theme="manabox"] .logo-icon { animation: none; }
+:root[data-theme="manabox"] .logo-icon svg,
+:root[data-theme="manabox"] .logo-icon img { filter: none; }
+:root[data-theme="manabox"] .logo-text {
+  background: none;
+  -webkit-text-fill-color: var(--text-primary);
+  color: var(--text-primary);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+:root[data-theme="manabox"] .logo-text span {
+  -webkit-text-fill-color: var(--mb-accent);
+  color: var(--mb-accent);
+}
+
+/* ---------------------------------------------------------------- buttons */
+:root[data-theme="manabox"] .btn {
+  border-radius: 12px;
+  font-weight: 700;
+}
+:root[data-theme="manabox"] .btn:hover { transform: none; }
+:root[data-theme="manabox"] .btn-primary {
+  background: var(--mb-accent);
+  color: var(--mb-accent-ink);
+  box-shadow: none;
+}
+:root[data-theme="manabox"] .btn-primary:hover {
+  background: var(--mb-accent-2);
+  box-shadow: none;
+}
+:root[data-theme="manabox"] .btn-secondary {
+  background: var(--mb-raised);
+  border-color: transparent;
+}
+:root[data-theme="manabox"] .btn-secondary:hover {
+  background: #343a43;
+  border-color: transparent;
+}
+:root[data-theme="manabox"] .btn-danger {
+  background: rgba(239, 79, 79, 0.14);
+  border-color: transparent;
+  color: #ff8c8c;
+}
+:root[data-theme="manabox"] .btn-icon-only { border-radius: 50%; }
+
+/* ---------------------------------------------------------------- inputs */
+:root[data-theme="manabox"] .input-control,
+:root[data-theme="manabox"] .select-control {
+  background: var(--mb-raised);
+  border: 1px solid transparent;
+  border-radius: 12px;
+}
+:root[data-theme="manabox"] .input-control:focus,
+:root[data-theme="manabox"] .select-control:focus {
+  border-color: rgba(255, 122, 26, 0.6);
+  box-shadow: 0 0 0 3px rgba(255, 122, 26, 0.15);
+}
+:root[data-theme="manabox"] .form-group label {
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+}
+
+/* ---------------------------------------------------------------- segmented */
+/* .sub-nav-tabs -> ManaBox segmented control */
+:root[data-theme="manabox"] .sub-nav-tabs {
+  background: var(--mb-card);
+  border: 0;
+  border-radius: 12px;
+  padding: 3px;
+}
+:root[data-theme="manabox"] .sub-nav-tab { border-radius: 9px; }
+:root[data-theme="manabox"] .sub-nav-tab.active {
+  background: #343a43;
+  border-color: transparent;
+  box-shadow: none;
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------- nav */
+:root[data-theme="manabox"] .nav-tabs {
+  background: transparent;
+  border: 0;
+}
+:root[data-theme="manabox"] .nav-tab {
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+}
+:root[data-theme="manabox"] .nav-tab.active {
+  background: var(--mb-accent-soft);
+  color: var(--mb-accent-2);
+  border-color: transparent;
+  box-shadow: none;
+}
+@media (hover: hover) {
+  :root[data-theme="manabox"] .nav-tab:not(.active):hover {
+    background: #23272e;
+    color: var(--text-primary);
+  }
+}
+
+/* Phone: ManaBox bottom tab bar */
+@media (max-width: 768px) {
+  :root[data-theme="manabox"] .nav-tabs {
+    background: #1a1d22;
+    border-top: 1px solid var(--mb-line);
+  }
+  :root[data-theme="manabox"] .nav-tab {
+    min-width: 0;
+    padding-left: 1px;
+    padding-right: 1px;
+    font-size: 0.64rem;
+    letter-spacing: -0.01em;
+  }
+  :root[data-theme="manabox"] .nav-tab span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.1;
+  }
+  :root[data-theme="manabox"] .nav-tab.active {
+    background: transparent;
+    color: var(--mb-accent-2);
+  }
+  :root[data-theme="manabox"] .app-header {
+    background: var(--mb-bg);
+    border-bottom: 1px solid var(--mb-line);
+  }
+  /* Dense ManaBox stat tiles: keep big numbers inside 2-up cards. */
+  :root[data-theme="manabox"] .metric-card { padding: 12px; }
+  :root[data-theme="manabox"] .metric-value { font-size: 1.3rem; }
+  :root[data-theme="manabox"] .metric-card.accent-networth .metric-value { font-size: 1.45rem; }
+}
+
+/* Desktop: left sidebar. The header (logo + nav + user) becomes a sticky
+   column; content fills the rest. Same DOM, same buttons, same order. */
+@media (min-width: 1024px) {
+  :root[data-theme="manabox"] .app-container {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    column-gap: 0;
+    padding: 0;
+    align-items: start;
+  }
+  :root[data-theme="manabox"] .app-header {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    margin: 0;
+    padding: 18px 12px;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 14px;
+    background: var(--mb-bg2);
+    border-bottom: 0;
+    border-right: 1px solid var(--mb-line);
+    overflow-y: auto;
+  }
+  :root[data-theme="manabox"] .logo-section { padding: 2px 8px 10px; }
+  :root[data-theme="manabox"] .logo-icon { width: 32px; height: 32px; }
+  :root[data-theme="manabox"] .logo-text { font-size: 1.3rem; }
+  :root[data-theme="manabox"] .nav-tabs {
+    flex-direction: column;
+    gap: 2px;
+    padding: 0;
+    flex: 1;
+  }
+  :root[data-theme="manabox"] .nav-tab {
+    flex: none;
+    justify-content: flex-start;
+    padding: 10px 12px;
+    font-size: 0.92rem;
+    border-radius: 10px;
+  }
+  /* User / logout block pinned to the sidebar foot */
+  :root[data-theme="manabox"] .app-header > div:last-child {
+    border-top: 1px solid var(--mb-line);
+    padding: 12px 8px 0;
+    justify-content: space-between;
+    font-size: 0.8rem;
+  }
+  :root[data-theme="manabox"] .app-container > main {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    margin-top: 0 !important;
+    padding: 20px 28px 48px;
+  }
+}
+
+/* ---------------------------------------------------------------- dashboard */
+:root[data-theme="manabox"] .metric-card { padding: 14px 16px; }
+:root[data-theme="manabox"] .metric-card:hover { transform: none; }
+:root[data-theme="manabox"] .metric-card.accent-networth {
+  background: linear-gradient(135deg, #2a1a10, var(--mb-card) 60%);
+  border: 1px solid #3a2a1f;
+}
+:root[data-theme="manabox"] .metric-header {
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+}
+:root[data-theme="manabox"] .metric-icon { border-radius: 9px; }
+:root[data-theme="manabox"] .chart-title::before { background: var(--mb-accent); }
+:root[data-theme="manabox"] .chart-title { font-size: 1.02rem; font-weight: 750; }
+
+/* Top valuable / recently added -> ManaBox rows (inline styles, so !important) */
+:root[data-theme="manabox"] .dashboard-card-clickable {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--mb-line) !important;
+  border-radius: 0 !important;
+}
+:root[data-theme="manabox"] .dashboard-card-clickable:hover {
+  background: var(--mb-card-hover) !important;
+  transform: none;
+}
+
+:root[data-theme="manabox"] .set-progress-item {
+  background: transparent;
+  border-color: var(--mb-line);
+}
+:root[data-theme="manabox"] .set-progress-bar-bg { background: #30353d; }
+:root[data-theme="manabox"] .set-progress-bar-fill {
+  background: var(--mb-green);
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------- collection */
+:root[data-theme="manabox"] .collection-table-wrapper {
+  background: var(--mb-card);
+  border-radius: var(--radius-md);
+}
+:root[data-theme="manabox"] .collection-table th {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--mb-line);
+}
+:root[data-theme="manabox"] .collection-table td { border-bottom-color: var(--mb-line); }
+:root[data-theme="manabox"] .collection-table tr:hover td { background: var(--mb-card-hover); }
+:root[data-theme="manabox"] .collection-row-thumbnail {
+  width: 44px;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+
+/* Gallery tiles: flat, rounded art, no lift */
+:root[data-theme="manabox"] .tcg-card-inner {
+  border: 0;
+  border-radius: 9px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+}
+:root[data-theme="manabox"] .tcg-card:hover .tcg-card-inner {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="manabox"] .tcg-card-quantity-tag {
+  background: rgba(0, 0, 0, 0.8);
+  border-radius: 6px;
+  font-weight: 800;
+}
+
+/* ---------------------------------------------------------------- decks */
+/* Missing-card stats stay fully visible; only recoloured. */
+:root[data-theme="manabox"] .deck-missing-note { color: #ff8c8c; }
+:root[data-theme="manabox"] .deck-missing-chip {
+  background: rgba(239, 79, 79, 0.92);
+  color: #fff;
+  border-color: transparent;
+  border-radius: 6px;
+}
+:root[data-theme="manabox"] .deck-source-badge { border-radius: 6px; }
+
+/* ---------------------------------------------------------------- misc */
+:root[data-theme="manabox"] .toast {
+  background: var(--mb-raised);
+  border: 1px solid var(--mb-line-strong);
+  color: var(--text-primary);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="manabox"] .spinner {
+  border-color: rgba(255, 255, 255, 0.08);
+  border-left-color: var(--mb-accent);
+}
+:root[data-theme="manabox"] .scan-card-guide { border-color: var(--mb-accent); }
+:root[data-theme="manabox"] .scan-line {
+  background: var(--mb-accent);
+  box-shadow: 0 0 12px var(--mb-accent);
+}
+:root[data-theme="manabox"] .recharts-default-tooltip {
+  background: var(--mb-raised) !important;
+  border: 1px solid var(--mb-line-strong) !important;
+  border-radius: 10px;
+}
+:root[data-theme="manabox"] ::-webkit-scrollbar-thumb { background: #30353d; }

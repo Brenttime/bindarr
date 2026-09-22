@@ -776,6 +776,7 @@
   "theme.dark": "Dark",
   "theme.light": "Light",
   "theme.lcars": "LCARS",
+  "theme.manabox": "ManaBox",
   "scan.autoAddingIn": "Auto-adding to collection in {seconds}s...",
   "scan.notThisOne": "Not this one?",
   "scan.seeAllMatches": "See all {n} matches",

@@ -5,6 +5,7 @@ import './nativeInit.js' // Capacitor status-bar setup (no-op on web)
 import App from './App.jsx'
 import { I18nProvider } from './utils/i18n.jsx'
 import './index.css'
+import './theme-manabox.css' // opt-in skin; every rule scoped to [data-theme="manabox"]
 
 // Demo build (GitHub Pages): install the fixture-backed fetch shim and seed a
 // fake session BEFORE first render. Guard is a static env check, so a normal

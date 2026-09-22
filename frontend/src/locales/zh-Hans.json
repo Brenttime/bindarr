@@ -811,6 +811,7 @@
   "split.totalPaid": "支付总额",
   "theme.dark": "深色",
   "theme.lcars": "LCARS",
+  "theme.manabox": "ManaBox",
   "theme.light": "浅色",
   "toast.loggedOut": "已退出登录。",
   "toast.sessionExpired": "会话已过期，请重新登录。",

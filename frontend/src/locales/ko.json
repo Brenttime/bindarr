@@ -811,6 +811,7 @@
   "split.totalPaid": "총 지불액",
   "theme.dark": "다크",
   "theme.lcars": "LCARS",
+  "theme.manabox": "ManaBox",
   "theme.light": "라이트",
   "toast.loggedOut": "로그아웃되었습니다.",
   "toast.sessionExpired": "세션이 만료되었습니다. 다시 로그인해 주세요.",

@@ -813,6 +813,7 @@
   "split.totalPaid": "Total pagado",
   "theme.dark": "Oscuro",
   "theme.lcars": "LCARS",
+  "theme.manabox": "ManaBox",
   "theme.light": "Claro",
   "toast.loggedOut": "Sesión cerrada correctamente.",
   "toast.sessionExpired": "La sesión ha caducado. Vuelve a iniciar sesión.",
