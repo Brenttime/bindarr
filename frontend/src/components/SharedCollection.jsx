@@ -7,6 +7,7 @@ import { PRINTING_OPTIONS } from '../utils/cardOptions';
 import { getFoilOverlayClass, getPrintingBadgeLabel, getPrintingBadgeStyle, getPrintingLabel } from '../utils/cardPrinting';
 import { useBackGuard } from '../utils/useBackGuard';
 import { sortCardsByOrder } from '../utils/cardSort';
+import { stackCollection } from '../utils/collectionStack';
 import { displayName } from '../utils/languages';
 import CardImage from './CardImage';
 import { useT } from '../utils/i18n';
@@ -60,10 +61,10 @@ function SharedCollection({ shareToken }) {
   const [sortBy, setSortBy] = useState('added-newest');
   const [showFilters, setShowFilters] = useState(false);
 
-  // Stacking state (default to stacked)
+  // Stacking state (default to stacked). Printing is deliberately not a toggle:
+  // it is always part of the stack key, so foils never fold into non-foils.
   const [stackCards, setStackCards] = useState(true);
   const [stackByCondition, setStackByCondition] = useState(false);
-  const [stackByPrinting, setStackByPrinting] = useState(false);
 
   const [activeCard, setActiveCard] = useState(null);
   useBackGuard(!!activeCard, () => setActiveCard(null));
@@ -124,24 +125,13 @@ function SharedCollection({ shareToken }) {
     return sortCardsByOrder(result, SORT_CRITERIA[sortBy] || SORT_CRITERIA['added-newest']);
   }, [collection, searchFilter, rarityFilter, printingFilter, typeFilter, sortBy]);
 
-  // Group duplicate cards if stack option is active (default true)
+  // Group duplicate cards if stack option is active (default true). Printing is
+  // baked into the shared stack key, so foils and non-foils of one card always
+  // stay separate rows.
   const processedCollection = useMemo(() => {
     if (!stackCards) return filteredCollection;
-
-    const groups = {};
-    filteredCollection.forEach(item => {
-      let key = item.card_id;
-      if (stackByCondition) key += `-${item.condition}`;
-      if (stackByPrinting) key += `-${item.printing}`;
-
-      if (!groups[key]) {
-        groups[key] = { ...item };
-      } else {
-        groups[key].quantity = (groups[key].quantity || 1) + (item.quantity || 1);
-      }
-    });
-    return Object.values(groups);
-  }, [filteredCollection, stackCards, stackByCondition, stackByPrinting]);
+    return stackCollection(filteredCollection, { byCondition: stackByCondition });
+  }, [filteredCollection, stackCards, stackByCondition]);
 
   if (loading) {
     return (
@@ -373,12 +363,6 @@ function SharedCollection({ shareToken }) {
                     <input type="checkbox" id="stackByConditionSharedOpt" checked={stackByCondition} onChange={(e) => setStackByCondition(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                     <label htmlFor="stackByConditionSharedOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                       {t('shared.separateByCondition')}
-                    </label>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <input type="checkbox" id="stackByPrintingSharedOpt" checked={stackByPrinting} onChange={(e) => setStackByPrinting(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
-                    <label htmlFor="stackByPrintingSharedOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      {t('shared.separateByPrinting')}
                     </label>
                   </div>
                 </>
