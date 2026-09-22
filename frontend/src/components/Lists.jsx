@@ -79,6 +79,9 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   const [searching, setSearching] = useState(false);
 
   const searchDebounce = useRef(null);
+  const pendingEnterSearch = useRef(null);
+  const searchRequestRef = useRef(0);
+  const lastSearchedQueryRef = useRef('');
 
   // Detail view card filter: 'all' | 'missing' | 'owned'
   const [cardFilter, setCardFilter] = useState('all');
@@ -290,10 +293,15 @@ function Lists({ showToast, handoff, onHandoffDone }) {
 
   // --- Card search (debounced as the user types) ---
   const doSearch = async (query) => {
+    const normalized = query.trim();
+    const request = searchRequestRef.current + 1;
+    searchRequestRef.current = request;
+    lastSearchedQueryRef.current = normalized;
+    let cards = [];
     try {
       setSearching(true);
-      const q = query;
-      const res = await fetch(`/api/search?name=${encodeURIComponent(q)}&limit=24`);
+      const res = await fetch(`/api/search?name=${encodeURIComponent(normalized)}&limit=24`);
+      if (request !== searchRequestRef.current) return cards;
       if (res.ok) {
         const found = await res.json();
         const byCardName = new Map();
@@ -301,7 +309,8 @@ function Lists({ showToast, handoff, onHandoffDone }) {
           const key = cardKey(card);
           if (!byCardName.has(key)) byCardName.set(key, card);
         }
-        setSearchResults(Array.from(byCardName.values()));
+        cards = Array.from(byCardName.values());
+        setSearchResults(cards);
       } else if (res.status === 429) {
         showToast(t('lists.errLoad'));
       } else {
@@ -309,9 +318,18 @@ function Lists({ showToast, handoff, onHandoffDone }) {
       }
     } catch (err) {
       console.error(err);
+      if (request === searchRequestRef.current) setSearchResults([]);
     } finally {
-      setSearching(false);
+      if (request === searchRequestRef.current) setSearching(false);
     }
+    if (
+      request === searchRequestRef.current &&
+      pendingEnterSearch.current === normalized
+    ) {
+      pendingEnterSearch.current = null;
+      if (cards.length === 1) await addCard(cards[0]);
+    }
+    return cards;
   };
 
   const handleSearchChange = (value) => {
@@ -319,6 +337,32 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
     if (!value.trim()) { setSearchResults([]); return; }
     searchDebounce.current = setTimeout(() => doSearch(value), 350);
+  };
+
+  const handleSearchKeyDown = async (e) => {
+    if (e.key !== 'Enter' || savingCard) return;
+    e.preventDefault();
+    const query = searchQuery.trim();
+    if (!query) return;
+    if (searchDebounce.current) {
+      clearTimeout(searchDebounce.current);
+      searchDebounce.current = null;
+    }
+    if (
+      !searching &&
+      lastSearchedQueryRef.current === query &&
+      searchResults.length === 1
+    ) {
+      await addCard(searchResults[0]);
+      return;
+    }
+    if (searching) {
+      pendingEnterSearch.current = query;
+      return;
+    }
+    pendingEnterSearch.current = null;
+    const found = await doSearch(searchQuery);
+    if (found.length === 1) await addCard(found[0]);
   };
 
   // --- Card quantity management inside the open list ---
@@ -717,7 +761,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
           <div style={{ position: 'relative', flex: '1 1 240px', minWidth: '220px' }}>
             <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
             <input type="text" className="input-control" placeholder={t('lists.searchPlaceholder')}
-              value={searchQuery} onChange={e => handleSearchChange(e.target.value)}
+              value={searchQuery} onChange={e => handleSearchChange(e.target.value)} onKeyDown={handleSearchKeyDown}
               style={{ paddingLeft: '2.25rem', width: '100%', fontSize: '0.85rem' }} />
             {searching && <Search size={14} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', animation: 'spin 1s linear infinite' }} />}
           </div>
