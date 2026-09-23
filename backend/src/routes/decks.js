@@ -7,6 +7,7 @@ const { sqlCardKey, sqlIsBasicLand } = require('../utils/cardIdentity');
 const { withAllocationLock } = require('../utils/collectionHelpers');
 const { getDeckMinimumValues, emptyDeckMinimumValue, getCheapestPrices, currentPrintingPrice, deckCurrentPrintValues } = require('../utils/deckPricing');
 const { getDeckCommanders } = require('../utils/deckCommander');
+const { getDeckOwnership } = require('../utils/deckOwnership');
 
 const router = express.Router();
 
@@ -112,14 +113,20 @@ router.get('/', async (req, res) => {
     const rows = await db.all(query, [req.user.id]);
     // Value and commander art are both deck-wide scans that must stay one-pass,
     // but they are independent, so they run together.
-    const [values, commanders] = await Promise.all([
+    const [values, commanders, ownership] = await Promise.all([
       getDeckMinimumValues(db, rows.map(row => row.id)),
       getDeckCommanders(db, req.user.id),
+      getDeckOwnership(db, req.user.id),
     ]);
     res.json(rows.map(row => {
       const commander = commanders.get(Number(row.id));
+      const own = ownership.get(Number(row.id)) || { missing_card_types: 0, missing_copies: 0 };
       return {
         ...row,
+        // Same basics-exempt, printing-agnostic math as the editor's
+        // "N cards still missing" (utils/deckOwnership.js).
+        missing_card_types: own.missing_card_types,
+        missing_copies: own.missing_copies,
         ...(values.get(Number(row.id)) || emptyDeckMinimumValue()),
         commander_name: commander ? commander.commander_name : null,
         commander_image_url: commander ? commander.commander_image_url : null,

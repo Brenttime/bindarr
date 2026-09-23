@@ -1267,4 +1267,4 @@ async function resolveCollectionQuery({
 // adapter. `collectionQueryCache` is the in-process half of the durable
 // catalog-query cache — exposed so tests can age an entry to drive the
 // stale-while-revalidate paths (production code never reads it directly).
-module.exports = { searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow, resolveCollectionQuery, collectionQueryCache };
+module.exports = { scryPostRetried, searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow, resolveCollectionQuery, collectionQueryCache };

@@ -52,7 +52,7 @@ router.post('/import', async (req, res) => {
     const shape = defaultShape(list.type);
     const rows = list.cards
       .filter((c) => (includeCommander && c.section === 'commander') ? true : c.section === 'mainboard')
-      .map((c) => ({ set_id: c.setCode, number: c.number, quantity: c.count }));
+      .map((c) => ({ set_id: c.setCode, number: c.number, quantity: c.count, commander: c.section === 'commander' }));
 
     const result = await importPreconCardsIntoDeck({
       name: String(name || list.name || 'Preconstructed Deck'),

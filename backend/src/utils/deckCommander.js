@@ -22,6 +22,7 @@ const COMMANDER_PER_DECK_SQL = `
       d.id                          AS deck_id,
       dc.card_id,
       COALESCE(dc.quantity, 0)      AS quantity,
+      COALESCE(dc.is_commander, 0)  AS is_commander,
       cc.name,
       NULLIF(cc.image_url, '')      AS image_url,
       COALESCE(cc.cmc, 0)           AS cmc,
@@ -54,7 +55,8 @@ const COMMANDER_PER_DECK_SQL = `
   candidates AS (
     SELECT *
     FROM deck_rows
-    WHERE (${wordMatch('legendary')} > 0 AND ${wordMatch('creature')} > 0)
+    WHERE is_commander = 1
+       OR (${wordMatch('legendary')} > 0 AND ${wordMatch('creature')} > 0)
        OR ${wordMatch('companion')} > 0
        OR ${wordMatch('mate')}      > 0
        OR ${wordMatch('mandate')}   > 0
@@ -80,7 +82,10 @@ const COMMANDER_PER_DECK_SQL = `
         PARTITION BY c.deck_id
         -- An in-play commander outranks an identical zero-quantity row; the
         -- deck list still wants its art when the build is only sold-down.
-        ORDER BY CASE WHEN c.quantity > 0 THEN 0 ELSE 1 END,
+        -- A declared commander (Moxfield commanders board, precon commander)
+        -- beats any guess.
+        ORDER BY c.is_commander DESC,
+                 CASE WHEN c.quantity > 0 THEN 0 ELSE 1 END,
                  COALESCE(o.color_overlap, 0) DESC,
                  c.quantity DESC,
                  c.cmc,

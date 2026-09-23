@@ -170,7 +170,7 @@ async function importPreconCardsIntoDeck({
   const uniq = new Map();
   for (const r of rows) {
     const key = `${String(r.set_id).toLowerCase()}|${String(r.number).toLowerCase()}`;
-    if (uniq.has(key)) uniq.get(key).quantity += r.quantity;
+    if (uniq.has(key)) { const u = uniq.get(key); u.quantity += r.quantity; u.commander = u.commander || !!r.commander; }
     else uniq.set(key, { ...r });
   }
   const list = [...uniq.values()];
@@ -198,8 +198,8 @@ async function importPreconCardsIntoDeck({
       const key = String(card.name || '').trim().toLowerCase();
       if (!key) continue;
       const existing = cardIdsByName.get(key);
-      if (existing) existing.quantity += row.quantity;
-      else cardIdsByName.set(key, { cardId: card.id, quantity: row.quantity });
+      if (existing) { existing.quantity += row.quantity; existing.commander = existing.commander || !!row.commander; }
+      else cardIdsByName.set(key, { cardId: card.id, quantity: row.quantity, commander: !!row.commander });
     }
   }
   const cardIds = [...cardIdsByName.values()];
@@ -215,12 +215,13 @@ async function importPreconCardsIntoDeck({
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [name, description, format, category, accentColor, targetSize, userId, 'precon']
   );
-  for (const { cardId, quantity } of cardIds) {
+  for (const { cardId, quantity, commander } of cardIds) {
     await cardsRun(
-      `INSERT INTO deck_cards (deck_id, card_id, quantity)
-       VALUES (?, ?, ?)
-       ON CONFLICT(deck_id, card_id) DO UPDATE SET quantity = quantity + EXCLUDED.quantity`,
-      [deck.lastID, cardId, quantity]
+      `INSERT INTO deck_cards (deck_id, card_id, quantity, is_commander)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(deck_id, card_id) DO UPDATE SET quantity = quantity + EXCLUDED.quantity,
+         is_commander = MAX(is_commander, EXCLUDED.is_commander)`,
+      [deck.lastID, cardId, quantity, commander ? 1 : 0]
     );
   }
   return { deckId: deck.lastID, cards: cardIds.length, notFound };

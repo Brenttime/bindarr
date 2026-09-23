@@ -122,6 +122,22 @@ async function main() {
   assert.strictEqual(noArt.get(5).commander_image_url, null, 'an empty cached URL becomes null');
   assert.strictEqual(noArt.get(5).commander_name, 'theallocator', 'the name still comes through');
 
+  // A declared commander (Moxfield commanders board) wins even when it is not
+  // legendary (Pauper EDH uncommons) and a legendary creature sits in the 99.
+  await db.run('DELETE FROM deck_cards WHERE deck_id = 2');
+  await add(2, 'mtg-elf', 1); await add(2, 'mtg-hazoret', 1); await add(2, 'mtg-forest', 10);
+  await db.run("UPDATE deck_cards SET is_commander = 1 WHERE deck_id = 2 AND card_id = 'mtg-elf'");
+  const declared = await getDeckCommanders(db, USER);
+  assert.strictEqual(declared.get(2).commander_card_id, 'mtg-elf', 'the declared commander beats a legendary guess');
+
+  // markDeckCommanders sets and clears flags by logical card.
+  const { markDeckCommanders } = require('../src/moxfieldSync');
+  const { sqlCardKey } = require('../src/utils/cardIdentity');
+  const key = (await db.get(`SELECT ${sqlCardKey('card_cache')} AS k FROM card_cache WHERE id = 'mtg-hazoret'`)).k;
+  await markDeckCommanders(db, 2, new Set([key]));
+  const flags = await db.all('SELECT card_id, is_commander FROM deck_cards WHERE deck_id = 2 ORDER BY card_id');
+  assert.deepStrictEqual(flags.filter(f => f.is_commander).map(f => f.card_id), ['mtg-hazoret']);
+
   console.log('deckcommander.test.js passed');
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink, ShoppingCart } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, Layers, ListChecks, Copy, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink, ShoppingCart } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -70,7 +70,7 @@ function DeckBuilder({ showToast, onNavigate }) {
   const [deckSearchTerm, setDeckSearchTerm] = useState('');
   const [deckStatusFilter, setDeckStatusFilter] = useState('all'); // 'all' | 'ready' | 'in_progress' | 'in_play'
   const [deckSortBy, setDeckSortBy] = useState('created_desc'); // 'created_desc' | 'created_asc' | 'name_asc' | 'cards_desc'
-  const [deckSelectionViewMode, setDeckSelectionViewMode] = useState('table'); // 'grid' | 'table'
+  const [deckSelectionViewMode, setDeckSelectionViewMode] = useState('grid'); // 'grid' | 'table'
 
   // Draw Simulator States
   const [showSimulator, setShowSimulator] = useState(false);
@@ -234,7 +234,16 @@ function DeckBuilder({ showToast, onNavigate }) {
         const data = await response.json();
         // Also get checkout status from deck list
         const deckMeta = sourceRows.find(d => d.id === deckId);
-        setActiveDeck({ ...data, checked_out: deckMeta?.checked_out || 0, checked_out_at: deckMeta?.checked_out_at || null });
+        setActiveDeck({
+          ...data,
+          checked_out: deckMeta?.checked_out || 0,
+          checked_out_at: deckMeta?.checked_out_at || null,
+          // Commander art for the header banner (same one-pass value the deck
+          // grid uses; GET /api/decks/:id does not carry it).
+          commander_name: data.commander_name ?? deckMeta?.commander_name ?? null,
+          commander_image_url: data.commander_image_url ?? deckMeta?.commander_image_url ?? null,
+          commander_card_id: data.commander_card_id ?? deckMeta?.commander_card_id ?? null,
+        });
         setViewMode('detail');
         rememberOpen('deckbuilder', deckId);
       }
@@ -894,14 +903,17 @@ function DeckBuilder({ showToast, onNavigate }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           
           {/* Top Banner Header & Primary Action */}
-          <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', padding: '1.25rem 1.5rem', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+          <div className="glass-panel deck-vault-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', padding: '1.25rem 1.5rem', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
             <div>
               <h2 style={{ fontSize: '1.4rem', color: 'var(--text-strong)', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                 <Layers size={22} style={{ color: 'var(--accent-yellow)' }} />
                 {t('deck.vaultTitle')}
               </h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+              <p className="deck-vault-subtitle" style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
                 {t('deck.vaultSubtitle')}
+              </p>
+              <p className="deck-vault-counts" style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                {t('deck.vaultCounts', { count: decks.length, out: decks.filter(d => d.checked_out).length })}
               </p>
             </div>
             <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
@@ -914,6 +926,27 @@ function DeckBuilder({ showToast, onNavigate }) {
                 <Plus size={18} /> {t('deck.addDeck')}
               </button>
             </div>
+          </div>
+
+          {/* Status chips: one-tap shortcuts for the status filter below (same state). */}
+          <div className="deck-vault-chips" role="group" aria-label={t('deck.allStatuses')} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {[
+              ['all', t('deck.chipAll')],
+              ['in_progress', t('deck.statusBuilding')],
+              ['ready', t('deck.statusReady')],
+              ['in_play', t('deck.inPlay')],
+            ].map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                className={`btn btn-secondary btn-sm deck-vault-chip${deckStatusFilter === val ? ' active' : ''}`}
+                aria-pressed={deckStatusFilter === val}
+                onClick={() => setDeckStatusFilter(val)}
+                style={{ padding: '0.3rem 0.8rem', fontSize: '0.78rem', borderRadius: '999px' }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           {/* Search, Filters, Sorting & View Toolbar */}
@@ -1025,7 +1058,7 @@ function DeckBuilder({ showToast, onNavigate }) {
             </div>
           ) : deckSelectionViewMode === 'grid' ? (
             /* --- GRID VIEW --- */
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
+            <div className="deck-tiles" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
               {filteredDecks.map(deck => {
                 const targetSize = deck.target_size || 100;
                 const totalCards = deck.total_cards || 0;
@@ -1043,7 +1076,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 return (
                   <div
                     key={deck.id}
-                    className="glass-panel"
+                    className={`glass-panel deck-tile${commanderArt ? ' has-art' : ''}${deck.checked_out ? ' is-out' : ''}`}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
@@ -1070,7 +1103,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                     }}
                   >
                     {/* Top Accent Line */}
-                    <div style={{
+                    <div className="deck-tile-accent" style={{
                       position: 'absolute', top: 0, left: 0, right: 0, height: '3px',
                       background: deck.checked_out
                         ? 'linear-gradient(90deg, #eab308, #f59e0b)'
@@ -1079,7 +1112,7 @@ function DeckBuilder({ showToast, onNavigate }) {
 
                     {/* Commander Art Banner */}
                     {commanderArt ? (
-                      <div style={{ position: 'relative', marginTop: '3px' }}>
+                      <div className="deck-tile-art" style={{ position: 'relative', marginTop: '3px' }}>
                         <CardImage
                           // card-shaped object so CardImage resolves contributed
                           // art from the cache id before falling to the URL.
@@ -1090,12 +1123,12 @@ function DeckBuilder({ showToast, onNavigate }) {
                           decoding="async"
                           style={{ width: '100%', height: '170px', display: 'block', objectFit: 'cover' }}
                         />
-                        <div style={{
+                        <div className="deck-tile-scrim" style={{
                           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
                           background: 'linear-gradient(to bottom, rgba(15,23,42,0.35) 0%, rgba(15,23,42,0) 35%, rgba(15,23,42,0.85) 100%)',
                           pointerEvents: 'none'
                         }} />
-                        <h3 style={{
+                        <h3 className="deck-tile-name" style={{
                           position: 'absolute',
                           left: '1rem',
                           right: '1rem',
@@ -1112,7 +1145,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                       </div>
                     ) : null}
 
-                    <div style={commanderArt
+                    <div className="deck-tile-body" style={commanderArt
                       ? { display: 'flex', flexDirection: 'column', gap: '1rem', justifyContent: 'space-between', flex: 1, padding: '0 1.25rem 1.25rem' }
                       : { display: 'contents' }}>
                     {/* In Play Banner */}
@@ -1152,23 +1185,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                                 {deck.name}
                               </h3>
                             )}
-                            <span style={{
-                              fontSize: '0.6rem',
-                              fontWeight: 800,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.05em',
-                              padding: '0.1rem 0.45rem',
-                              borderRadius: '4px',
-                              background: 'rgba(239,68,68,0.15)',
-                              color: '#f87171',
-                              border: '1px solid rgba(239,68,68,0.3)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '3px'
-                            }}>
-                              <Swords size={10} />
-                              MTG
-                            </span>
 
                             {deck.format && (
                               <span style={{
@@ -1201,41 +1217,52 @@ function DeckBuilder({ showToast, onNavigate }) {
                           </div>
                         </div>
 
-                        {/* Status Badge */}
-                        <span style={{
+                        {/* Status Badge: only Building (incomplete) or Built (checked out). */}
+                        {(deck.checked_out || !isComplete) && (
+                        <span className={`deck-tile-status ${deck.checked_out ? 'ready' : 'building'}`} style={{
                           fontSize: '0.7rem',
                           fontWeight: 700,
                           padding: '0.2rem 0.5rem',
                           borderRadius: '12px',
-                          backgroundColor: isComplete ? 'rgba(74, 222, 128, 0.15)' : 'rgba(59, 130, 246, 0.15)',
-                          color: isComplete ? '#4ade80' : '#60a5fa',
-                          border: isComplete ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(59, 130, 246, 0.3)',
+                          backgroundColor: deck.checked_out ? 'rgba(74, 222, 128, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                          color: deck.checked_out ? '#4ade80' : '#60a5fa',
+                          border: deck.checked_out ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(59, 130, 246, 0.3)',
                           whiteSpace: 'nowrap'
                         }}>
-                          {t(isComplete ? 'deck.statusReady' : 'deck.statusBuilding')}
+                          {t(deck.checked_out ? 'deck.statusBuilt' : 'deck.statusBuilding')}
                         </span>
+                        )}
                       </div>
 
-                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '0.6rem', minHeight: '34px', lineHeight: '1.4' }}>
-                        {deck.description || 'No description provided.'}
+                      <p className="deck-tile-desc" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '0.6rem', minHeight: '34px', lineHeight: '1.4' }}>
+                        {deck.description || ''}
                       </p>
                     </div>
 
                     {/* Progress Bar & Details */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
+                    <div className="deck-tile-stats" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
                         <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{t('deck.cardCapacity')}</span>
                         <span style={{ color: isComplete ? '#4ade80' : 'var(--text-strong)', fontWeight: 700 }}>
                           {totalCards} / {targetSize} Cards ({percent}%)
                         </span>
                       </div>
-                      <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                        <div style={{
+                      {Number(deck.missing_card_types) > 0 ? (
+                        <div className="deck-tile-missing" style={{ fontSize: '0.72rem', fontWeight: 750, color: '#f87171' }}>
+                          {t('deck.statusMissing', { count: Number(deck.missing_card_types) })}
+                        </div>
+                      ) : totalCards > 0 ? (
+                        <div className="deck-tile-owned" style={{ fontSize: '0.72rem', fontWeight: 750, color: 'var(--success)' }}>
+                          {t('deck.allOwned')}
+                        </div>
+                      ) : null}
+                      <div className="deck-tile-prog" style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div className={`deck-tile-prog-fill${isComplete ? ' complete' : ''}`} style={{
                           height: '100%',
                           width: `${percent}%`,
                           background: isComplete
                             ? 'linear-gradient(90deg, #4ade80, #22c55e)'
-                            : 'linear-gradient(90deg, #3b82f6, #6366f1)',
+                            : 'linear-gradient(90deg, #facc15, #eab308)',
                           borderRadius: '3px',
                           transition: 'width 0.3s ease'
                         }} />
@@ -1249,7 +1276,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                         <span style={{ color: 'var(--text-secondary)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                           <DollarSign size={12} /> {t('deck.minimumValue')}
                         </span>
-                        <span style={{ color: 'var(--accent-yellow)', fontWeight: 800, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                           {deckMinimumValueText(deck)}
                           {Number(deck.unpriced_cards) > 0 && (
                             <small style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{deckUnpricedCountText(deck, t)}</small>
@@ -1261,7 +1288,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                     {/* Card footer — metadata only. The whole card is clickable, so
                         checkout/return/open/delete are not repeated here; they live in
                         the deck editor (the Delete control sits in its Deck tools). */}
-                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem', display: 'flex', alignItems: 'center' }}>
+                    <div className="deck-tile-foot" style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem', display: 'flex', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                         Created {new Date(deck.created_at).toLocaleDateString()}
                       </span>
@@ -1354,7 +1381,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                         <td style={{ padding: '0.75rem 1rem' }}>
                           {deck.checked_out ? (
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '10px', background: 'rgba(234,179,8,0.15)', color: '#eab308', border: '1px solid rgba(234,179,8,0.4)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                              <Gamepad2 size={11} /> In Play
+                              <Gamepad2 size={11} /> {t('deck.inPlay')}
                             </span>
                           ) : isComplete ? (
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '10px', background: 'rgba(74, 222, 128, 0.15)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.3)' }}>
@@ -1386,8 +1413,22 @@ function DeckBuilder({ showToast, onNavigate }) {
       {viewMode === 'detail' && activeDeck && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {/* Header */}
-          <div className="glass-panel deck-editor-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', position: 'relative', overflow: 'visible' }}>
-            
+          <div className={`glass-panel deck-editor-header${activeDeck.commander_image_url ? ' has-art' : ''}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', position: 'relative', overflow: 'visible' }}>
+            {/* Commander art banner. Hidden by default (index.css); themes that
+                want a hero header (ManaBox) reveal it. Decorative only. */}
+            {activeDeck.commander_image_url && (
+              <div className="deck-editor-header-art" aria-hidden="true">
+                <CardImage
+                  card={{ id: activeDeck.commander_card_id, name: activeDeck.commander_name }}
+                  src={activeDeck.commander_image_url.replace('/normal/front/', '/art_crop/front/')}
+                  fallbackSrc={activeDeck.commander_image_url}
+                  loading="lazy"
+                  decoding="async"
+                  alt=""
+                />
+              </div>
+            )}
+
             {/* Checked out banner */}
             {activeDeck.checked_out ? (
               <div style={{

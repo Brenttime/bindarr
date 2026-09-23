@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, Plus, Swords, ListChecks } from 'lucide-react';
+import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, Plus, Swords, ListChecks, Mountain } from 'lucide-react';
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
@@ -16,6 +16,7 @@ const SetupWizard = lazy(() => import('./components/SetupWizard'));
 const SharedCollection = lazy(() => import('./components/SharedCollection'));
 const DeckBuilder = lazy(() => import('./components/DeckBuilder'));
 const Lists = lazy(() => import('./components/Lists'));
+const LimitedLands = lazy(() => import('./components/LimitedLands'));
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -326,6 +327,8 @@ function App() {
         return <DeckBuilder showToast={showToast} onNavigate={goTab} />;
       case 'lists':
         return <Lists showToast={showToast} handoff={listsHandoff} onHandoffDone={() => setListsHandoff(null)} />;
+      case 'limited':
+        return <LimitedLands showToast={showToast} />;
       case 'settings':
         return <Settings user={user} onUpdateUser={handleUpdateUser} showToast={showToast} target={settingsTarget} />;
       default:
@@ -386,6 +389,14 @@ function App() {
           >
             <ListChecks size={18} />
             <span>{t('nav.lists')}</span>
+          </button>
+
+          <button
+            className={`nav-tab ${activeTab === 'limited' ? 'active' : ''}`}
+            onClick={() => goTab('limited')}
+          >
+            <Mountain size={18} />
+            <span>{t('nav.limited')}</span>
           </button>
 
           <button

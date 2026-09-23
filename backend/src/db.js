@@ -974,6 +974,11 @@ async function initDb() {
   if (!deckCardsCols.some(c => c.name === 'checked_out')) {
     await run(`ALTER TABLE deck_cards ADD COLUMN checked_out INTEGER DEFAULT 0`);
   }
+  // The deck's declared commander(s): set from Moxfield's commanders board and
+  // a precon's commander section. The deck list prefers these over guessing.
+  if (!deckCardsCols.some(c => c.name === 'is_commander')) {
+    await run(`ALTER TABLE deck_cards ADD COLUMN is_commander INTEGER NOT NULL DEFAULT 0`);
+  }
 
   // --- Moxfield sync ---
   // A Moxfield author whose public decks we mirror into this instance. The
