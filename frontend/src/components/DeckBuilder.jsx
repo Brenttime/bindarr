@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, Layers, ListChecks, Copy, Swords, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink, ShoppingCart } from 'lucide-react';
+import { Plus, Trash2, X, ChevronLeft, Play, BarChart2, Search, LogOut, PackageCheck, LayoutGrid, List, ClipboardList, PackagePlus, Download, Upload, Eye, Filter, Layers, ListChecks, Copy, Gamepad2, SlidersHorizontal, FolderPlus, FileText, Globe, PackageOpen, DollarSign, ExternalLink, ShoppingCart } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { shuffleArray } from '../utils/shuffle';
 import { displayName } from '../utils/languages';
@@ -70,7 +70,7 @@ function DeckBuilder({ showToast, onNavigate }) {
   const [deckSearchTerm, setDeckSearchTerm] = useState('');
   const [deckStatusFilter, setDeckStatusFilter] = useState('all'); // 'all' | 'ready' | 'in_progress' | 'in_play'
   const [deckSortBy, setDeckSortBy] = useState('created_desc'); // 'created_desc' | 'created_asc' | 'name_asc' | 'cards_desc'
-  const [deckSelectionViewMode, setDeckSelectionViewMode] = useState('table'); // 'grid' | 'table'
+  const [deckSelectionViewMode, setDeckSelectionViewMode] = useState('grid'); // 'grid' | 'table'
 
   // Draw Simulator States
   const [showSimulator, setShowSimulator] = useState(false);
@@ -1185,23 +1185,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                                 {deck.name}
                               </h3>
                             )}
-                            <span style={{
-                              fontSize: '0.6rem',
-                              fontWeight: 800,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.05em',
-                              padding: '0.1rem 0.45rem',
-                              borderRadius: '4px',
-                              background: 'rgba(239,68,68,0.15)',
-                              color: '#f87171',
-                              border: '1px solid rgba(239,68,68,0.3)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '3px'
-                            }}>
-                              <Swords size={10} />
-                              MTG
-                            </span>
 
                             {deck.format && (
                               <span style={{
@@ -1234,23 +1217,25 @@ function DeckBuilder({ showToast, onNavigate }) {
                           </div>
                         </div>
 
-                        {/* Status Badge */}
-                        <span className={`deck-tile-status ${isComplete ? 'ready' : 'building'}`} style={{
+                        {/* Status Badge: only Building (incomplete) or Built (checked out). */}
+                        {(deck.checked_out || !isComplete) && (
+                        <span className={`deck-tile-status ${deck.checked_out ? 'ready' : 'building'}`} style={{
                           fontSize: '0.7rem',
                           fontWeight: 700,
                           padding: '0.2rem 0.5rem',
                           borderRadius: '12px',
-                          backgroundColor: isComplete ? 'rgba(74, 222, 128, 0.15)' : 'rgba(59, 130, 246, 0.15)',
-                          color: isComplete ? '#4ade80' : '#60a5fa',
-                          border: isComplete ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(59, 130, 246, 0.3)',
+                          backgroundColor: deck.checked_out ? 'rgba(74, 222, 128, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                          color: deck.checked_out ? '#4ade80' : '#60a5fa',
+                          border: deck.checked_out ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(59, 130, 246, 0.3)',
                           whiteSpace: 'nowrap'
                         }}>
-                          {t(isComplete ? 'deck.statusReady' : 'deck.statusBuilding')}
+                          {t(deck.checked_out ? 'deck.statusBuilt' : 'deck.statusBuilding')}
                         </span>
+                        )}
                       </div>
 
                       <p className="deck-tile-desc" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '0.6rem', minHeight: '34px', lineHeight: '1.4' }}>
-                        {deck.description || 'No description provided.'}
+                        {deck.description || ''}
                       </p>
                     </div>
 
@@ -1272,12 +1257,12 @@ function DeckBuilder({ showToast, onNavigate }) {
                         </div>
                       ) : null}
                       <div className="deck-tile-prog" style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                        <div className="deck-tile-prog-fill" style={{
+                        <div className={`deck-tile-prog-fill${isComplete ? ' complete' : ''}`} style={{
                           height: '100%',
                           width: `${percent}%`,
                           background: isComplete
                             ? 'linear-gradient(90deg, #4ade80, #22c55e)'
-                            : 'linear-gradient(90deg, #3b82f6, #6366f1)',
+                            : 'linear-gradient(90deg, #facc15, #eab308)',
                           borderRadius: '3px',
                           transition: 'width 0.3s ease'
                         }} />
@@ -1291,7 +1276,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                         <span style={{ color: 'var(--text-secondary)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                           <DollarSign size={12} /> {t('deck.minimumValue')}
                         </span>
-                        <span style={{ color: 'var(--accent-yellow)', fontWeight: 800, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                           {deckMinimumValueText(deck)}
                           {Number(deck.unpriced_cards) > 0 && (
                             <small style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{deckUnpricedCountText(deck, t)}</small>
@@ -1396,7 +1381,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                         <td style={{ padding: '0.75rem 1rem' }}>
                           {deck.checked_out ? (
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '10px', background: 'rgba(234,179,8,0.15)', color: '#eab308', border: '1px solid rgba(234,179,8,0.4)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                              <Gamepad2 size={11} /> In Play
+                              <Gamepad2 size={11} /> {t('deck.inPlay')}
                             </span>
                           ) : isComplete ? (
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '10px', background: 'rgba(74, 222, 128, 0.15)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.3)' }}>

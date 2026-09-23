@@ -31,6 +31,19 @@ const { bulkFetchByIdentifier, cacheCards } = require('./scryfallApi');
 const { sqlCardKey } = require('./utils/cardIdentity');
 const { withAllocationLock } = require('./utils/collectionHelpers');
 
+// Flag deck rows whose logical card is in `commanderKeys`; clear the rest.
+async function markDeckCommanders(client, deckId, commanderKeys) {
+  const rows = await client.all(`
+    SELECT dc.card_id, ${sqlCardKey('cc')} AS card_key
+    FROM deck_cards dc LEFT JOIN card_cache cc ON cc.id = dc.card_id
+    WHERE dc.deck_id = ?`, [deckId]);
+  for (const row of rows) {
+    const flag = row.card_key && commanderKeys.has(row.card_key) ? 1 : 0;
+    await client.run(`UPDATE deck_cards SET is_commander = ? WHERE deck_id = ? AND card_id = ? AND is_commander IS NOT ?`,
+      [flag, deckId, row.card_id, flag]);
+  }
+}
+
 function allocationConflict(message) {
   const error = new Error(message);
   error.code = 'ALLOCATION_CONFLICT';
@@ -515,6 +528,14 @@ async function pullDeckContent(author, publicId, knownRow = null) {
     }
   }
 
+  // 2b. Record which rows are the deck's commander(s), by logical card so a
+  // reprint representative still carries the flag.
+  const commanderKeys = new Set(entries
+    .filter(e => e.board === 'commanders')
+    .map(e => keysById.get(bindarrCardId(e.card)))
+    .filter(Boolean));
+  await markDeckCommanders(tx, targetDeckId, commanderKeys);
+
   // 3. Refresh the tracking row: the stamp we just mirrored is now "current".
   const stamp = details.lastUpdatedAtUtc || null;
   await tx.run(
@@ -747,5 +768,4 @@ module.exports = {
   bindarrCardId,
   mfxFormatLabel,
   targetSizeForFormat,
-  MIRROR_BOARDS
-};
+  MIRROR_BOARDS, markDeckCommanders };

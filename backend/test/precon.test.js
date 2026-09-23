@@ -99,7 +99,7 @@ const DECKS = [
   assert.strictEqual(runs.length, 4, 'one deck insert + one row per card type');
   assert.strictEqual(runs[0].params[0], 'Test Precon');
   assert.strictEqual(runs[0].params[7], 'precon', 'deck source is stamped precon');
-  assert.deepStrictEqual(runs[3].params, [99, 'mtg-STX-373', 8], 'duplicate rows merged to 8');
+  assert.deepStrictEqual(runs[3].params, [99, 'mtg-STX-373', 8, 0], 'duplicate rows merged to 8');
 
   // Alternate printings with one canonical name collapse to one logical deck row.
   runs.length = 0;
@@ -114,7 +114,7 @@ const DECKS = [
   });
   assert.strictEqual(out.cards, 1, 'reprints become one logical card type');
   assert.strictEqual(runs.length, 2, 'one deck insert + one logical card insert');
-  assert.deepStrictEqual(runs[1].params, [99, 'mtg-C21-164', 3]);
+  assert.deepStrictEqual(runs[1].params, [99, 'mtg-C21-164', 3, 0]);
 
   // Everything unresolvable → 422, no deck written.
   runs.length = 0;

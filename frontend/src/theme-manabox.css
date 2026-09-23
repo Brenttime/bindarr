@@ -483,10 +483,10 @@
   border-radius: 5px !important;
 }
 :root[data-theme="manabox"] .deck-tile-prog-fill {
-  background: var(--mb-green) !important;
+  background: #e8c25b !important;
   border-radius: 5px !important;
 }
-:root[data-theme="manabox"] .deck-tile.is-out .deck-tile-prog-fill { background: var(--mb-blue) !important; }
+:root[data-theme="manabox"] .deck-tile-prog-fill.complete { background: var(--mb-green) !important; }
 :root[data-theme="manabox"] .deck-tile-foot {
   border-top-color: var(--mb-line) !important;
   padding-top: 8px !important;
