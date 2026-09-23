@@ -234,7 +234,16 @@ function DeckBuilder({ showToast, onNavigate }) {
         const data = await response.json();
         // Also get checkout status from deck list
         const deckMeta = sourceRows.find(d => d.id === deckId);
-        setActiveDeck({ ...data, checked_out: deckMeta?.checked_out || 0, checked_out_at: deckMeta?.checked_out_at || null });
+        setActiveDeck({
+          ...data,
+          checked_out: deckMeta?.checked_out || 0,
+          checked_out_at: deckMeta?.checked_out_at || null,
+          // Commander art for the header banner (same one-pass value the deck
+          // grid uses; GET /api/decks/:id does not carry it).
+          commander_name: data.commander_name ?? deckMeta?.commander_name ?? null,
+          commander_image_url: data.commander_image_url ?? deckMeta?.commander_image_url ?? null,
+          commander_card_id: data.commander_card_id ?? deckMeta?.commander_card_id ?? null,
+        });
         setViewMode('detail');
         rememberOpen('deckbuilder', deckId);
       }
@@ -1386,8 +1395,22 @@ function DeckBuilder({ showToast, onNavigate }) {
       {viewMode === 'detail' && activeDeck && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {/* Header */}
-          <div className="glass-panel deck-editor-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', position: 'relative', overflow: 'visible' }}>
-            
+          <div className={`glass-panel deck-editor-header${activeDeck.commander_image_url ? ' has-art' : ''}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', position: 'relative', overflow: 'visible' }}>
+            {/* Commander art banner. Hidden by default (index.css); themes that
+                want a hero header (ManaBox) reveal it. Decorative only. */}
+            {activeDeck.commander_image_url && (
+              <div className="deck-editor-header-art" aria-hidden="true">
+                <CardImage
+                  card={{ id: activeDeck.commander_card_id, name: activeDeck.commander_name }}
+                  src={activeDeck.commander_image_url.replace('/normal/front/', '/art_crop/front/')}
+                  fallbackSrc={activeDeck.commander_image_url}
+                  loading="lazy"
+                  decoding="async"
+                  alt=""
+                />
+              </div>
+            )}
+
             {/* Checked out banner */}
             {activeDeck.checked_out ? (
               <div style={{

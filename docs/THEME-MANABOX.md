@@ -24,6 +24,7 @@ desktop and a bottom tab bar on phones.
 | Set progress       | gradient fill                  | flat green bar on graphite track                 |
 | Segmented controls | glass track                    | ManaBox segmented pill (`.sub-nav-tabs`)         |
 | Deck grid          | glass tile, 170px art, boxed stats | concept deck card: 120px art fading into card, BUILDING/READY chip on the art, thin green bar (blue when in play) |
+| Deck editor header | plain glass header             | concept hero: commander art_crop fills the header, dark bottom fade, title/stats/verbs on top (`.deck-editor-header-art`, hidden in other themes) |
 | Lists overview     | grid of glass cards            | one card of rows: accent icon chip, name, value + card count on the right |
 | Toast              | green pill                     | graphite card, subtle border                     |
 

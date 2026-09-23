@@ -555,3 +555,51 @@
 }
 /* Head row shares the grid row: title left, delete right. */
 :root[data-theme="manabox"] .list-tile-head { display: flex !important; }
+
+
+/* ---------------------------------------------------------------- deck editor hero */
+/* Concept .dhead: commander art fills the header, dark scrim to the bottom,
+   title + stats + verbs sit on top. All header content still renders. */
+:root[data-theme="manabox"] .deck-editor-header.has-art {
+  min-height: 190px;
+  align-items: flex-end !important;
+  padding: 18px !important;
+  border-radius: 18px;
+  border: 0;
+}
+:root[data-theme="manabox"] .deck-editor-header.has-art .deck-editor-header-art {
+  display: block;
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+:root[data-theme="manabox"] .deck-editor-header-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
+  display: block;
+}
+:root[data-theme="manabox"] .deck-editor-header-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(18, 20, 23, 0.1) 0%, rgba(18, 20, 23, 0.55) 45%, rgba(18, 20, 23, 0.96) 100%);
+}
+:root[data-theme="manabox"] .deck-editor-header.has-art > *:not(.deck-editor-header-art) {
+  position: relative;
+  z-index: 1;
+}
+:root[data-theme="manabox"] .deck-editor-header.has-art h2 {
+  font-size: 1.75rem !important;
+  font-weight: 800;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+}
+:root[data-theme="manabox"] .deck-editor-header.has-art p { text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8); }
+@media (max-width: 720px) {
+  :root[data-theme="manabox"] .deck-editor-header.has-art { min-height: 220px; }
+  :root[data-theme="manabox"] .deck-editor-header.has-art h2 { font-size: 1.35rem !important; }
+}

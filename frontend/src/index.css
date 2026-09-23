@@ -1977,3 +1977,6 @@ button, input, select, textarea {
     min-height: 40px;
   }
 }
+
+/* Deck editor commander banner: off unless a theme opts in (see theme-manabox.css). */
+.deck-editor-header-art { display: none; }
