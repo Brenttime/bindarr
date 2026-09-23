@@ -4,7 +4,7 @@ const cardApi = require('../utils/cardApi');
 const { parseCardRow } = require('../utils/priceHelpers');
 const { buildCardListText } = require('../../../shared/cardListText.js');
 const { sqlCardKey } = require('../utils/cardIdentity');
-const { getListMinimumValues, getCheapestPrintings, emptyDeckMinimumValue } = require('../utils/deckPricing');
+const { getListMinimumValues, getCheapestPrintings, emptyDeckMinimumValue, currentPrintingPrice, deckCurrentPrintValues } = require('../utils/deckPricing');
 
 const router = express.Router();
 
@@ -167,9 +167,24 @@ router.get('/:id', async (req, res) => {
       [id, req.user.id]
     );
     const values = await getListMinimumValues(db, [Number(id)]);
+    // Current-printings total, row-level like the deck detail: each
+    // list_cards row pays its own printing's USD price (unpriced copies
+    // counted aside for the "+"), next to the cheapest-printings floor.
+    const currentRows = await db.all(`
+      SELECT lc.quantity,
+             cc.price_normal, cc.price_holofoil, cc.price_etched, cc.price_trend, cc.price_currency
+      FROM list_cards lc
+      JOIN card_cache cc ON cc.id = lc.card_id
+      WHERE lc.list_id = ? AND lc.quantity > 0
+    `, [id]);
+    const currentValues = deckCurrentPrintValues(currentRows.map(row => ({
+      quantity: row.quantity,
+      current_price: currentPrintingPrice(row),
+    })));
     res.json({
       ...list,
       ...(values.get(Number(id)) || emptyDeckMinimumValue()),
+      ...currentValues,
       cards: cards.map(parseCardRow),
     });
   } catch (error) {

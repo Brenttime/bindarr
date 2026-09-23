@@ -70,13 +70,6 @@ function SharedCollection({ shareToken }) {
   useBackGuard(!!activeCard, () => setActiveCard(null));
 
   useEffect(() => {
-    const urlTheme = new URLSearchParams(window.location.search).get('theme');
-    if (urlTheme) {
-      document.documentElement.setAttribute('data-theme', urlTheme);
-    }
-  }, []);
-
-  useEffect(() => {
     const fetchSharedData = async () => {
       try {
         setLoading(true);
@@ -168,9 +161,7 @@ function SharedCollection({ shareToken }) {
 
   const handleTabChange = (type) => {
     setListType(type);
-    const themeParam = new URLSearchParams(window.location.search).get('theme');
-    const qTheme = themeParam ? `&theme=${encodeURIComponent(themeParam)}` : '';
-    const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?list=${type}${qTheme}`;
+    const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?list=${type}`;
     window.history.pushState({ path: newUrl }, '', newUrl);
   };
 
@@ -210,7 +201,7 @@ function SharedCollection({ shareToken }) {
       <header className="app-header" style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-glass)' }}>
         <div className="logo-section">
           <div className="logo-icon"><Logo /></div>
-          <h1 className="logo-text">Bind<span>arr</span></h1>
+          <h1 className="logo-text">Scry<span>box</span></h1>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
           <Sparkles size={14} style={{ color: 'var(--accent-yellow)' }} />

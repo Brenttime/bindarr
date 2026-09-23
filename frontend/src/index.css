@@ -57,166 +57,6 @@
 /* Themes only re-map the tokens above; layout/structure is shared. Set via
    document.documentElement.dataset.theme (see index.html init + Settings). */
 
-/* Light */
-:root[data-theme="light"] {
-  --bg-primary: #eef2f7;
-  --bg-secondary: #ffffff;
-  --bg-glass: rgba(255, 255, 255, 0.75);
-  --border-glass: rgba(15, 23, 42, 0.1);
-  --border-glass-hover: rgba(15, 23, 42, 0.22);
-
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #64748b;
-  --text-strong: #0f172a;
-  --text-on-accent: #ffffff;
-
-  --logo-cover: #ef4444;
-  --logo-spine: #dc2626;
-  --logo-page-left: #fee2e2;
-  --logo-page-right: #ffffff;
-  --logo-ring-stroke: #1e293b;
-  --logo-ring-inner: #ffffff;
-
-  --surface-1: rgba(15, 23, 42, 0.03);
-  --surface-2: rgba(15, 23, 42, 0.06);
-  --surface-3: rgba(15, 23, 42, 0.09);
-  --input-bg: rgba(15, 23, 42, 0.04);
-  --input-bg-focus: rgba(15, 23, 42, 0.07);
-
-  --shadow-glow: 0 8px 32px 0 rgba(15, 23, 42, 0.12);
-  --bg-gradient:
-    radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.1) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(239, 68, 68, 0.07) 0px, transparent 50%),
-    radial-gradient(at 50% 50%, #ffffff 0px, var(--bg-primary) 100%);
-}
-
-/* LCARS (Star Trek) — palette + font reskin on the current layout. Amber text
-   on black, colored accents, condensed uppercase headings, pill radii. */
-:root[data-theme="lcars"] {
-  --font-main: 'Antonio', 'Outfit', system-ui, sans-serif;
-
-  --bg-primary: #000000;
-  --bg-secondary: #0d0d0d;
-  --bg-glass: rgba(18, 18, 18, 0.72);
-  --border-glass: rgba(255, 153, 0, 0.35);
-  --border-glass-hover: #ff9900;
-
-  --text-primary: #ff9900;
-  --text-secondary: #cc99cc;
-  --text-muted: #9999cc;
-  --text-strong: #ffcc99;
-  --text-on-accent: #000000;
-
-  --accent-red: #cc6666;
-  --accent-red-glow: rgba(204, 102, 102, 0.4);
-  --accent-blue: #9999ff;
-  --accent-blue-glow: rgba(153, 153, 255, 0.4);
-  --accent-yellow: #ffcc00;
-  --accent-yellow-glow: rgba(255, 204, 0, 0.4);
-
-  --logo-cover: #ff9900;
-  --logo-spine: #cc6633;
-  --logo-page-left: #ffcc99;
-  --logo-page-right: #ffcc99;
-  --logo-ring-stroke: #000000;
-  --logo-ring-inner: #ffcc00;
-
-  --surface-1: rgba(255, 153, 0, 0.06);
-  --surface-2: rgba(255, 153, 0, 0.1);
-  --surface-3: rgba(255, 153, 0, 0.16);
-  --input-bg: rgba(255, 153, 0, 0.06);
-  --input-bg-focus: rgba(255, 153, 0, 0.12);
-
-  --shadow-glow: 0 8px 32px 0 rgba(0, 0, 0, 0.6);
-  --radius-sm: 4px;
-  --radius-md: 10px;
-  --radius-lg: 999px;
-  --bg-gradient: none;
-}
-
-:root[data-theme="lcars"] .logo-icon svg,
-:root[data-theme="lcars"] .logo-icon img {
-  filter: drop-shadow(0 0 10px rgba(255, 153, 0, 0.6));
-}
-
-:root[data-theme="lcars"] .logo-text {
-  background: linear-gradient(135deg, #ffcc99 40%, #ff9900 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-:root[data-theme="lcars"] .logo-text span {
-  color: #ff9900;
-  -webkit-text-fill-color: #ff9900;
-}
-
-:root[data-theme="lcars"] h1,
-:root[data-theme="lcars"] h2,
-:root[data-theme="lcars"] h3 {
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-:root[data-theme="lcars"] select,
-:root[data-theme="lcars"] .select-control {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  font-family: var(--font-main);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-primary);
-  background-color: var(--bg-secondary);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23ff9900' d='M0 0l6 8 6-8z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-  padding-right: 2.2rem !important;
-  border: 1.5px solid var(--border-glass);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 0 8px rgba(255, 153, 0, 0.15);
-  transition: all 0.2s ease;
-}
-
-:root[data-theme="lcars"] select:focus,
-:root[data-theme="lcars"] .select-control:focus {
-  border-color: var(--border-glass-hover);
-  box-shadow: 0 0 12px rgba(255, 153, 0, 0.4);
-  background-color: var(--bg-primary);
-}
-
-:root[data-theme="lcars"] select option,
-:root[data-theme="lcars"] .select-control option {
-  background-color: #0d0d0d;
-  color: #ff9900;
-  font-family: var(--font-main);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 0.5rem;
-}
-
-:root[data-theme="lcars"] .dropdown-menu {
-  background-color: #0d0d0d;
-  border: 1.5px solid var(--border-glass-hover);
-  border-radius: var(--radius-md);
-  box-shadow: 0 0 16px rgba(255, 153, 0, 0.35);
-}
-
-:root[data-theme="lcars"] .dropdown-item {
-  font-family: var(--font-main);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-primary);
-}
-
-:root[data-theme="lcars"] .dropdown-item:hover {
-  background: rgba(255, 153, 0, 0.2);
-  color: var(--text-strong);
-}
-
 * {
   box-sizing: border-box;
   margin: 0;
@@ -1980,3 +1820,25 @@ button, input, select, textarea {
 
 /* Deck editor commander banner: off unless a theme opts in (see theme-manabox.css). */
 .deck-editor-header-art { display: none; }
+
+/* Overflow (...) menu: Apple-style liquid glass. Denser tint than
+   .glass-panel so items stay legible over busy card art, but still a real
+   blur/saturate backdrop with a specular top edge and soft depth. Tint mixes
+   off --bg-secondary so every theme (incl. manabox/light) follows along. */
+.overflow-menu-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 40%, rgba(255, 255, 255, 0) 100%),
+    color-mix(in srgb, var(--bg-secondary, #141c2f) 86%, transparent);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid color-mix(in srgb, var(--text-primary, #fff) 14%, transparent);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.05),
+    0 18px 45px rgba(0, 0, 0, 0.40),
+    0 2px 8px rgba(0, 0, 0, 0.22);
+}
+@supports not (background: color-mix(in srgb, red 50%, transparent)) {
+  .overflow-menu-panel { background: var(--bg-glass); }
+}

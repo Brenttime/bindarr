@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Trash2, X, ChevronLeft, Search, ListChecks, Copy, Pencil,
-  Layers, Minus, ShoppingCart, Wand2,
+  Layers, Minus, ShoppingCart, Wand2, DollarSign,
 } from 'lucide-react';
 import OverflowMenu from './OverflowMenu';
 import CardImage from './CardImage';
@@ -13,6 +13,7 @@ import { cardKey, findSameCard } from '../utils/cardIdentity';
 import { buildManapoolUrl } from '../utils/manapoolUrl';
 import { buildTcgMassEntryUrl } from '../utils/tcgMassEntryUrl';
 import { deckMinimumValueText, deckMinimumValueHint } from '../utils/deckMinimumValue';
+import { priceText } from '../utils/formatPrice';
 
 const ACCENTS = [
   { name: 'Emerald', hex: '#10b981' },
@@ -710,6 +711,36 @@ function Lists({ showToast, handoff, onHandoffDone }) {
           </OverflowMenu>
         </div>
       </div>
+
+      {/* Value: the list's own printings vs the cheapest-printings floor,
+          same two axes (and "+" honesty rule) as the deck detail. */}
+      {listDetail && (() => {
+        const currentUnpriced = Number(listDetail.current_unpriced_cards) || 0;
+        const currentText = `${priceText(Number(listDetail.current_printing_value) || 0, listDetail.minimum_value_currency || 'USD')}${currentUnpriced > 0 ? '+' : ''}`;
+        const currentHint = currentUnpriced === 1
+          ? t('lists.valueCurrentIncompleteOne')
+          : currentUnpriced > 0
+            ? t('lists.valueCurrentIncomplete', { count: currentUnpriced })
+            : t('lists.valueCurrentComplete');
+        // A sliver, not a card: one thin inline strip, both totals side by side.
+        const item = { display: 'inline-flex', alignItems: 'baseline', gap: '0.35rem', whiteSpace: 'nowrap' };
+        return (
+          <div className="glass-panel list-value-panel" role="group" aria-label={t('deck.valueTitle')}
+            style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.35rem 1rem', padding: '0.35rem 0.9rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            <DollarSign size={12} style={{ color: 'var(--accent-yellow)', flexShrink: 0 }} aria-hidden="true" />
+            <span style={item} title={currentHint} tabIndex={0} aria-label={`${t('deck.valueCurrent')}: ${currentText}. ${currentHint}`}>
+              {t('deck.valueCurrent')}
+              <strong className="list-value-current" style={{ color: 'var(--text-strong)' }}>{currentText}</strong>
+              {currentUnpriced > 0 && <small style={{ color: 'var(--text-muted)' }}>({t('deck.unpricedCount', { count: currentUnpriced })})</small>}
+            </span>
+            <span style={item} title={deckMinimumValueHint(listDetail, t)} tabIndex={0}
+              aria-label={`${t('deck.valueCheapest')}: ${deckMinimumValueText(listDetail)}. ${deckMinimumValueHint(listDetail, t)}`}>
+              {t('deck.valueCheapest')}
+              <strong className="list-value-cheapest" style={{ color: 'var(--accent-yellow)' }}>{deckMinimumValueText(listDetail)}</strong>
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Card search to add */}
       <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1rem 1.25rem' }}>

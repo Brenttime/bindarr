@@ -4,14 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>Bindarr</title>
+    <title>Scrybox</title>
     <!-- Apply saved theme before first paint so there's no flash of the wrong theme. -->
     <script>
       (function () {
         try {
-          const urlTheme = new URLSearchParams(window.location.search).get('theme');
-          document.documentElement.setAttribute('data-theme', urlTheme || localStorage.getItem('theme') || 'dark');
-        } catch (e) { /* private mode / storage blocked: stay on dark */ }
+          // ManaBox is the only theme now; drop any stale saved choice.
+          document.documentElement.setAttribute('data-theme', 'manabox');
+          localStorage.removeItem('theme');
+        } catch (e) { /* storage blocked: attribute already set */ }
       })();
     </script>
     <!-- Google Fonts -->
