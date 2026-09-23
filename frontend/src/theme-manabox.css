@@ -603,3 +603,37 @@
   :root[data-theme="manabox"] .deck-editor-header.has-art { min-height: 220px; }
   :root[data-theme="manabox"] .deck-editor-header.has-art h2 { font-size: 1.35rem !important; }
 }
+
+
+/* ---------------------------------------------------------------- deck vault (global) */
+/* Concept "Decks" screen: big bare title + "N decks · N in play" subline,
+   pill chips for status, then tiles with "owned / N missing" footers. */
+:root[data-theme="manabox"] .deck-vault-header {
+  background: transparent !important;
+  border: 0 !important;
+  padding: 4px 2px 0 !important;
+}
+:root[data-theme="manabox"] .deck-vault-header h2 {
+  font-size: 1.65rem !important;
+  letter-spacing: -0.02em;
+}
+:root[data-theme="manabox"] .deck-vault-header h2 svg { color: var(--mb-accent) !important; }
+:root[data-theme="manabox"] .deck-vault-header .btn-primary { box-shadow: none !important; }
+:root[data-theme="manabox"] .deck-vault-subtitle { font-size: 0.8rem !important; }
+:root[data-theme="manabox"] .deck-vault-counts {
+  color: var(--text-secondary) !important;
+  font-weight: 600;
+}
+:root[data-theme="manabox"] .deck-vault-chip {
+  background: var(--mb-card) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid transparent !important;
+  font-weight: 650 !important;
+}
+:root[data-theme="manabox"] .deck-vault-chip.active {
+  background: rgba(255, 122, 26, 0.18) !important;
+  border-color: rgba(255, 122, 26, 0.5) !important;
+  color: #fff !important;
+}
+:root[data-theme="manabox"] .deck-tile-missing { color: #ff8c8c !important; }
+:root[data-theme="manabox"] .deck-tile-owned { color: #5de09a !important; }

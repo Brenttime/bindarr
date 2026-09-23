@@ -903,14 +903,17 @@ function DeckBuilder({ showToast, onNavigate }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           
           {/* Top Banner Header & Primary Action */}
-          <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', padding: '1.25rem 1.5rem', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+          <div className="glass-panel deck-vault-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', padding: '1.25rem 1.5rem', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
             <div>
               <h2 style={{ fontSize: '1.4rem', color: 'var(--text-strong)', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                 <Layers size={22} style={{ color: 'var(--accent-yellow)' }} />
                 {t('deck.vaultTitle')}
               </h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+              <p className="deck-vault-subtitle" style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
                 {t('deck.vaultSubtitle')}
+              </p>
+              <p className="deck-vault-counts" style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                {t('deck.vaultCounts', { count: decks.length, out: decks.filter(d => d.checked_out).length })}
               </p>
             </div>
             <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
@@ -923,6 +926,27 @@ function DeckBuilder({ showToast, onNavigate }) {
                 <Plus size={18} /> {t('deck.addDeck')}
               </button>
             </div>
+          </div>
+
+          {/* Status chips: one-tap shortcuts for the status filter below (same state). */}
+          <div className="deck-vault-chips" role="group" aria-label={t('deck.allStatuses')} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {[
+              ['all', t('deck.chipAll')],
+              ['in_progress', t('deck.statusBuilding')],
+              ['ready', t('deck.statusReady')],
+              ['in_play', t('deck.inPlay')],
+            ].map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                className={`btn btn-secondary btn-sm deck-vault-chip${deckStatusFilter === val ? ' active' : ''}`}
+                aria-pressed={deckStatusFilter === val}
+                onClick={() => setDeckStatusFilter(val)}
+                style={{ padding: '0.3rem 0.8rem', fontSize: '0.78rem', borderRadius: '999px' }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           {/* Search, Filters, Sorting & View Toolbar */}
@@ -1238,6 +1262,15 @@ function DeckBuilder({ showToast, onNavigate }) {
                           {totalCards} / {targetSize} Cards ({percent}%)
                         </span>
                       </div>
+                      {Number(deck.missing_card_types) > 0 ? (
+                        <div className="deck-tile-missing" style={{ fontSize: '0.72rem', fontWeight: 750, color: '#f87171' }}>
+                          {t('deck.statusMissing', { count: Number(deck.missing_card_types) })}
+                        </div>
+                      ) : totalCards > 0 ? (
+                        <div className="deck-tile-owned" style={{ fontSize: '0.72rem', fontWeight: 750, color: 'var(--success)' }}>
+                          {t('deck.allOwned')}
+                        </div>
+                      ) : null}
                       <div className="deck-tile-prog" style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
                         <div className="deck-tile-prog-fill" style={{
                           height: '100%',
