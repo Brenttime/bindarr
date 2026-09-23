@@ -410,3 +410,148 @@
   border-radius: 10px;
 }
 :root[data-theme="manabox"] ::-webkit-scrollbar-thumb { background: #30353d; }
+
+
+/* ---------------------------------------------------------------- deck tiles */
+/* Mirrors the concept's .deck card: art cover fading into the card, status
+   chip over the art, flat body, thin green progress. Inline styles in
+   DeckBuilder.jsx need !important. Every stat stays rendered. */
+:root[data-theme="manabox"] .deck-tiles {
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)) !important;
+  gap: 12px !important;
+}
+:root[data-theme="manabox"] .deck-tile {
+  background: var(--mb-card) !important;
+  border: 1px solid transparent !important;
+  border-radius: 16px !important;
+  gap: 10px !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+:root[data-theme="manabox"] .deck-tile:hover { border-color: var(--mb-line-strong) !important; }
+:root[data-theme="manabox"] .deck-tile.is-out { border-color: rgba(61, 156, 255, 0.35) !important; }
+:root[data-theme="manabox"] .deck-tile-accent { background: transparent !important; }
+:root[data-theme="manabox"] .deck-tile-art { margin-top: 0 !important; }
+:root[data-theme="manabox"] .deck-tile-art img {
+  height: 120px !important;
+  object-position: center 25%;
+}
+:root[data-theme="manabox"] .deck-tile-scrim {
+  background: linear-gradient(180deg, transparent 30%, var(--mb-card) 100%) !important;
+}
+:root[data-theme="manabox"] .deck-tile-name {
+  font-size: 1rem !important;
+  bottom: 0.2rem !important;
+  left: 14px !important;
+  right: 14px !important;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.85) !important;
+}
+:root[data-theme="manabox"] .deck-tile-body {
+  gap: 10px !important;
+  padding: 0 14px 14px !important;
+}
+:root[data-theme="manabox"] .deck-tile.has-art .deck-tile-status {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+}
+:root[data-theme="manabox"] .deck-tile-status {
+  font-size: 0.66rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 0 !important;
+  border-radius: 6px !important;
+  padding: 3px 8px !important;
+}
+:root[data-theme="manabox"] .deck-tile-status.building { background: #3a2a10 !important; color: #ffb35c !important; }
+:root[data-theme="manabox"] .deck-tile-status.ready { background: #10331f !important; color: #5de09a !important; }
+:root[data-theme="manabox"] .deck-tile-desc {
+  min-height: 0 !important;
+  margin-top: 4px !important;
+  font-size: 0.78rem !important;
+}
+:root[data-theme="manabox"] .deck-tile-stats {
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+}
+:root[data-theme="manabox"] .deck-tile-prog {
+  height: 5px !important;
+  background: #30353d !important;
+  border-radius: 5px !important;
+}
+:root[data-theme="manabox"] .deck-tile-prog-fill {
+  background: var(--mb-green) !important;
+  border-radius: 5px !important;
+}
+:root[data-theme="manabox"] .deck-tile.is-out .deck-tile-prog-fill { background: var(--mb-blue) !important; }
+:root[data-theme="manabox"] .deck-tile-foot {
+  border-top-color: var(--mb-line) !important;
+  padding-top: 8px !important;
+}
+
+/* ---------------------------------------------------------------- list rows */
+/* Mirrors the concept's Lists view: one card, stacked rows with an icon
+   chip, name + card count on the left and list value on the right. */
+:root[data-theme="manabox"] .list-tiles {
+  grid-template-columns: 1fr !important;
+  gap: 0 !important;
+  background: var(--mb-card);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+:root[data-theme="manabox"] .list-tile {
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-areas: "icon head value";
+  align-items: center;
+  column-gap: 14px !important;
+  row-gap: 0 !important;
+  padding: 14px !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--mb-line) !important;
+  border-radius: 0 !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+:root[data-theme="manabox"] .list-tile:last-child { border-bottom: 0 !important; }
+:root[data-theme="manabox"] .list-tile:hover { background: var(--mb-card-hover) !important; }
+:root[data-theme="manabox"] .list-tile-accent {
+  grid-area: icon;
+  position: static !important;
+  width: 42px;
+  height: 42px !important;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--list-accent) 20%, #1a1d22) !important;
+  display: grid;
+  place-items: center;
+}
+:root[data-theme="manabox"] .list-tile-accent::after {
+  content: "\2605";
+  color: var(--list-accent);
+  font-size: 18px;
+}
+:root[data-theme="manabox"] .list-tile-head { grid-area: head; min-width: 0; }
+:root[data-theme="manabox"] .list-tile-title > div:first-child { font-size: 0.95rem !important; font-weight: 650 !important; }
+:root[data-theme="manabox"] .list-tile-delete {
+  background: transparent !important;
+  color: var(--text-muted) !important;
+}
+:root[data-theme="manabox"] .list-tile-delete:hover { color: #ff8c8c !important; }
+:root[data-theme="manabox"] .list-tile-stats {
+  grid-area: value;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 2px !important;
+  text-align: right;
+}
+:root[data-theme="manabox"] .list-tile-value {
+  color: var(--text-primary);
+  font-weight: 750;
+  font-size: 0.95rem;
+}
+/* Head row shares the grid row: title left, delete right. */
+:root[data-theme="manabox"] .list-tile-head { display: flex !important; }

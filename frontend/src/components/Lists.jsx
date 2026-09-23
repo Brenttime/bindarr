@@ -579,12 +579,12 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             <div style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>{t('lists.emptyHint')}</div>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+          <div className="list-tiles" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
             {filteredLists.map(list => {
               const accent = list.accent_color || '#10b981';
               return (
-                <div key={list.id} className="glass-panel"
-                  style={{
+                <div key={list.id} className="glass-panel list-tile"
+                  style={{ '--list-accent': accent,
                     display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1.25rem',
                     position: 'relative', overflow: 'hidden', cursor: 'pointer',
                     border: `1px solid ${accent}40`,
@@ -595,25 +595,25 @@ function Lists({ showToast, handoff, onHandoffDone }) {
                   onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = `0 12px 30px ${accent}25`; }}
                   onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
                 >
-                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '3px', background: `linear-gradient(90deg, ${accent}, ${accent}cc)` }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-                    <div style={{ minWidth: 0 }}>
+                  <div className="list-tile-accent" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '3px', background: `linear-gradient(90deg, ${accent}, ${accent}cc)` }} />
+                  <div className="list-tile-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                    <div className="list-tile-title" style={{ minWidth: 0 }}>
                       <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{list.name}</div>
                       {list.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.2rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{list.description}</div>}
                     </div>
-                    <button className="btn btn-danger btn-icon-only" title={t('deck.deleteDeck')}
+                    <button className="btn btn-danger btn-icon-only list-tile-delete" title={t('deck.deleteDeck')}
                       onClick={e => { e.stopPropagation(); window.confirm(t('lists.confirmDelete', { name: list.name })) && fetch(`/api/lists/${list.id}`, { method: 'DELETE' }).then(() => { showToast(t('lists.deleted')); fetchLists(); }); }}
                       style={{ width: '1.6rem', height: '1.6rem', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Trash2 size={14} />
                     </button>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  <div className="list-tile-stats" style={{ display: 'flex', gap: '0.75rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                       <Layers size={13} /> {t('lists.cards', { count: list.total_card_types || 0 })}
                     </span>
                     {/* deckMinimumValueText already carries the currency symbol —
                         a DollarSign icon beside it rendered a duplicated "$ $12.35". */}
-                    <span title={deckMinimumValueHint(list, t)}>
+                    <span className="list-tile-value" title={deckMinimumValueHint(list, t)}>
                       {deckMinimumValueText(list)}
                     </span>
                   </div>

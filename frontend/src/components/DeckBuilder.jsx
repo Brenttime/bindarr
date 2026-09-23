@@ -1025,7 +1025,7 @@ function DeckBuilder({ showToast, onNavigate }) {
             </div>
           ) : deckSelectionViewMode === 'grid' ? (
             /* --- GRID VIEW --- */
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
+            <div className="deck-tiles" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
               {filteredDecks.map(deck => {
                 const targetSize = deck.target_size || 100;
                 const totalCards = deck.total_cards || 0;
@@ -1043,7 +1043,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 return (
                   <div
                     key={deck.id}
-                    className="glass-panel"
+                    className={`glass-panel deck-tile${commanderArt ? ' has-art' : ''}${deck.checked_out ? ' is-out' : ''}`}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
@@ -1070,7 +1070,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                     }}
                   >
                     {/* Top Accent Line */}
-                    <div style={{
+                    <div className="deck-tile-accent" style={{
                       position: 'absolute', top: 0, left: 0, right: 0, height: '3px',
                       background: deck.checked_out
                         ? 'linear-gradient(90deg, #eab308, #f59e0b)'
@@ -1079,7 +1079,7 @@ function DeckBuilder({ showToast, onNavigate }) {
 
                     {/* Commander Art Banner */}
                     {commanderArt ? (
-                      <div style={{ position: 'relative', marginTop: '3px' }}>
+                      <div className="deck-tile-art" style={{ position: 'relative', marginTop: '3px' }}>
                         <CardImage
                           // card-shaped object so CardImage resolves contributed
                           // art from the cache id before falling to the URL.
@@ -1090,12 +1090,12 @@ function DeckBuilder({ showToast, onNavigate }) {
                           decoding="async"
                           style={{ width: '100%', height: '170px', display: 'block', objectFit: 'cover' }}
                         />
-                        <div style={{
+                        <div className="deck-tile-scrim" style={{
                           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
                           background: 'linear-gradient(to bottom, rgba(15,23,42,0.35) 0%, rgba(15,23,42,0) 35%, rgba(15,23,42,0.85) 100%)',
                           pointerEvents: 'none'
                         }} />
-                        <h3 style={{
+                        <h3 className="deck-tile-name" style={{
                           position: 'absolute',
                           left: '1rem',
                           right: '1rem',
@@ -1112,7 +1112,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                       </div>
                     ) : null}
 
-                    <div style={commanderArt
+                    <div className="deck-tile-body" style={commanderArt
                       ? { display: 'flex', flexDirection: 'column', gap: '1rem', justifyContent: 'space-between', flex: 1, padding: '0 1.25rem 1.25rem' }
                       : { display: 'contents' }}>
                     {/* In Play Banner */}
@@ -1202,7 +1202,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                         </div>
 
                         {/* Status Badge */}
-                        <span style={{
+                        <span className={`deck-tile-status ${isComplete ? 'ready' : 'building'}`} style={{
                           fontSize: '0.7rem',
                           fontWeight: 700,
                           padding: '0.2rem 0.5rem',
@@ -1216,21 +1216,21 @@ function DeckBuilder({ showToast, onNavigate }) {
                         </span>
                       </div>
 
-                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '0.6rem', minHeight: '34px', lineHeight: '1.4' }}>
+                      <p className="deck-tile-desc" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '0.6rem', minHeight: '34px', lineHeight: '1.4' }}>
                         {deck.description || 'No description provided.'}
                       </p>
                     </div>
 
                     {/* Progress Bar & Details */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
+                    <div className="deck-tile-stats" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
                         <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{t('deck.cardCapacity')}</span>
                         <span style={{ color: isComplete ? '#4ade80' : 'var(--text-strong)', fontWeight: 700 }}>
                           {totalCards} / {targetSize} Cards ({percent}%)
                         </span>
                       </div>
-                      <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                        <div style={{
+                      <div className="deck-tile-prog" style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div className="deck-tile-prog-fill" style={{
                           height: '100%',
                           width: `${percent}%`,
                           background: isComplete
@@ -1261,7 +1261,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                     {/* Card footer — metadata only. The whole card is clickable, so
                         checkout/return/open/delete are not repeated here; they live in
                         the deck editor (the Delete control sits in its Deck tools). */}
-                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem', display: 'flex', alignItems: 'center' }}>
+                    <div className="deck-tile-foot" style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem', display: 'flex', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                         Created {new Date(deck.created_at).toLocaleDateString()}
                       </span>

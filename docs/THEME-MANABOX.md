@@ -23,6 +23,8 @@ desktop and a bottom tab bar on phones.
 | Net worth tile     | green accent                   | warm orange-brown "hero" gradient                |
 | Set progress       | gradient fill                  | flat green bar on graphite track                 |
 | Segmented controls | glass track                    | ManaBox segmented pill (`.sub-nav-tabs`)         |
+| Deck grid          | glass tile, 170px art, boxed stats | concept deck card: 120px art fading into card, BUILDING/READY chip on the art, thin green bar (blue when in play) |
+| Lists overview     | grid of glass cards            | one card of rows: accent icon chip, name, value + card count on the right |
 | Toast              | green pill                     | graphite card, subtle border                     |
 
 Semantic colors keep their meaning: green = owned/complete/gain,
@@ -45,7 +47,10 @@ future edits have to keep it that way.
 3. The DOM is shared. The desktop sidebar is the existing `<header class="app-header">`
    re-laid out with CSS grid. No component has a ManaBox-specific branch, so every
    new feature appears in this theme automatically.
-4. Precedence: re-map tokens first, override classes second, and use `!important`
+4. Hook classes. Decks and lists carry style-only hook classes (`deck-tile*`,
+   `list-tile*`) so the theme can reach elements that use inline styles. Keep
+   them when you edit those components; the theme targets nothing else there.
+5. Precedence: re-map tokens first, override classes second, and use `!important`
    only where a component sets inline styles (currently the dashboard rows and the
    Recharts tooltip).
 
