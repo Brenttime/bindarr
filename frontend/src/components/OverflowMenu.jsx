@@ -87,6 +87,7 @@ export default function OverflowMenu({ label, children }) {
         <div
           ref={panelRef}
           role="menu"
+          className="overflow-menu-panel"
           onClick={(e) => { if (e.target.closest('[role="menuitem"]')) setOpen(false); }}
           style={{
             position: 'fixed',
@@ -94,10 +95,6 @@ export default function OverflowMenu({ label, children }) {
             minWidth: '218px',
             maxWidth: 'calc(100vw - 16px)',
             padding: '0.3rem',
-            background: 'var(--surface-glass)',
-            border: '1px solid var(--border-glass)',
-            borderRadius: '12px',
-            boxShadow: '0 18px 45px rgba(0, 0, 0, 0.45)',
             display: 'flex',
             flexDirection: 'column',
             gap: '2px',

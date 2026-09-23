@@ -6,13 +6,13 @@
 import { Capacitor } from '@capacitor/core';
 import { StatusBar, Style } from '@capacitor/status-bar';
 
-const BG = { dark: '#0a0f1d', light: '#eef2f7', lcars: '#000000' };
+const BG = { manabox: '#121417' };
 
 function applyStatusBar() {
-  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const theme = document.documentElement.getAttribute('data-theme') || 'manabox';
   StatusBar.setOverlaysWebView({ overlay: false }).catch(() => {});
-  StatusBar.setStyle({ style: theme === 'light' ? Style.Light : Style.Dark }).catch(() => {});
-  StatusBar.setBackgroundColor({ color: BG[theme] || BG.dark }).catch(() => {});
+  StatusBar.setStyle({ style: Style.Dark }).catch(() => {});
+  StatusBar.setBackgroundColor({ color: BG[theme] || BG.manabox }).catch(() => {});
 }
 
 if (Capacitor.isNativePlatform()) {

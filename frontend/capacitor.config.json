@@ -1,6 +1,6 @@
 {
   "appId": "com.bindarr.app",
-  "appName": "Bindarr",
+  "appName": "Scrybox",
   "webDir": "dist",
   "plugins": {
     "CapacitorHttp": {

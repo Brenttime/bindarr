@@ -3,7 +3,7 @@ import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, 
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
-import { getRememberedTab, rememberView, clearRememberedView } from './utils/viewMemory';
+import { getRememberedTab, rememberView, clearRememberedView, forgetOpenSubviews } from './utils/viewMemory';
 import { useT } from './utils/i18n';
 
 // View components are code-split so heavy deps (recharts in the chart views)
@@ -122,9 +122,11 @@ function App() {
     const prev = activeTab;
     tabGuardRef.current = pushBackGuard(() => {
       tabGuardRef.current = null;
+      forgetOpenSubviews();
       setActiveTab(prev);
       rememberView(prev); // back is a real navigation; the memory follows it
     });
+    forgetOpenSubviews(); // deep reopen is for refresh only, not tab hops
     setActiveTab(tab);
     rememberView(tab);
     setSettingsTarget(tab === 'settings' ? target : null);
@@ -349,7 +351,7 @@ function App() {
           <div className="logo-icon">
             <Logo />
           </div>
-          <h1 className="logo-text">Bind<span>arr</span></h1>
+          <h1 className="logo-text">Scry<span>box</span></h1>
         </div>
 
         {/* Navigation Tabs (Nested inside header for unified layout) */}
@@ -411,7 +413,7 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
             <Sparkles size={14} style={{ color: 'var(--accent-yellow)' }} />
-            <span>{t('header.greeting')} <strong style={{ color: 'var(--text-strong)' }}>{user.username}</strong> ({t(`role.${user.role}`)})</span>
+            <span><strong style={{ color: 'var(--text-strong)' }}>{user.username}</strong></span>
           </div>
           <button
             onClick={handleLogout}

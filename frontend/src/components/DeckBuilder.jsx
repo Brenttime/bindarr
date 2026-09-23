@@ -928,27 +928,6 @@ function DeckBuilder({ showToast, onNavigate }) {
             </div>
           </div>
 
-          {/* Status chips: one-tap shortcuts for the status filter below (same state). */}
-          <div className="deck-vault-chips" role="group" aria-label={t('deck.allStatuses')} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {[
-              ['all', t('deck.chipAll')],
-              ['in_progress', t('deck.statusBuilding')],
-              ['ready', t('deck.statusReady')],
-              ['in_play', t('deck.inPlay')],
-            ].map(([val, label]) => (
-              <button
-                key={val}
-                type="button"
-                className={`btn btn-secondary btn-sm deck-vault-chip${deckStatusFilter === val ? ' active' : ''}`}
-                aria-pressed={deckStatusFilter === val}
-                onClick={() => setDeckStatusFilter(val)}
-                style={{ padding: '0.3rem 0.8rem', fontSize: '0.78rem', borderRadius: '999px' }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
           {/* Search, Filters, Sorting & View Toolbar */}
           <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1rem 1.25rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
@@ -1285,14 +1264,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                       </div>
                     </div>
 
-                    {/* Card footer — metadata only. The whole card is clickable, so
-                        checkout/return/open/delete are not repeated here; they live in
-                        the deck editor (the Delete control sits in its Deck tools). */}
-                    <div className="deck-tile-foot" style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem', display: 'flex', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                        Created {new Date(deck.created_at).toLocaleDateString()}
-                      </span>
-                    </div>
                     </div>
 
                   </div>

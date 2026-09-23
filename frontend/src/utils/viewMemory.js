@@ -55,6 +55,16 @@ export function getRememberedView() {
   return base;
 }
 
+// Tab switch: the open deck/list is only restored across a REFRESH. Moving
+// Lists -> Deck Builder -> Lists should land on the index, not reopen the last
+// list, so every deliberate tab change forgets both open ids first.
+export function forgetOpenSubviews() {
+  try {
+    localStorage.setItem(deckKey, '');
+    localStorage.setItem(listKey, '');
+  } catch { /* best effort */ }
+}
+
 // Called on every tab switch and at login. Deck/list entries carry the id the
 // sub-view last opened so a refresh mid-edit reopens the same deck, not just
 // the same tab.

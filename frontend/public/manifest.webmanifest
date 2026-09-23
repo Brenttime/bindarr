@@ -1,5 +1,8 @@
 {
-  "background_color": "#0a0f1d",
+  "name": "Scrybox",
+  "short_name": "Scrybox",
+  "background_color": "#121417",
+  "theme_color": "#121417",
   "icons": [
     {
       "src": "../icons/icon-48.webp",

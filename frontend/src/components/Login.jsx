@@ -157,7 +157,7 @@ function Login({ onLoginSuccess }) {
             <Logo />
           </div>
           <h2 style={{ fontSize: '1.8rem', color: 'var(--text-strong)', fontWeight: 800 }}>
-            Bind<span style={{ color: 'var(--accent-red)' }}>arr</span>
+            Scry<span style={{ color: 'var(--accent-red)' }}>box</span>
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
             {t(setupRequired ? 'login.setupTagline' : isRegister ? 'login.taglineRegister' : 'login.taglineLogin')}

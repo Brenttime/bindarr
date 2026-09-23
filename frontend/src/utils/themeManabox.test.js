@@ -30,9 +30,12 @@ test('manabox theme never hides content', () => {
   assert.doesNotMatch(css, /opacity\s*:\s*0\s*[;}!]/i);
 });
 
-test('manabox is selectable and translated', () => {
+test('manabox is the only theme and is forced at boot', () => {
+  const html = readFileSync(join(SRC, '..', 'index.html'), 'utf8');
+  assert.match(html, /setAttribute\('data-theme', 'manabox'\)/);
   const settings = readFileSync(join(SRC, 'components', 'Settings.jsx'), 'utf8');
-  assert.match(settings, /<option value="manabox">/);
+  assert.doesNotMatch(settings, /settings-theme/);
+  assert.doesNotMatch(readFileSync(join(SRC, 'index.css'), 'utf8'), /data-theme="(light|lcars)"/);
   assert.match(readFileSync(join(SRC, 'main.jsx'), 'utf8'), /theme-manabox\.css/);
   for (const f of readdirSync(join(SRC, 'locales')).filter(f => f.endsWith('.json'))) {
     const dict = JSON.parse(readFileSync(join(SRC, 'locales', f), 'utf8'));

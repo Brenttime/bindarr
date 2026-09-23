@@ -1,5 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Languages, Globe, ShoppingCart } from 'lucide-react';
+import { ChevronDown, ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Languages, Globe, ShoppingCart } from 'lucide-react';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 import { buildCardListText } from '../utils/cardList';
 import { REPO_URL } from '../utils/repo';
@@ -9,6 +9,25 @@ import MarketplaceAccountsPanel from './MarketplaceAccountsPanel';
 // Admin-only surface, code-split like the view components so its heavy deps
 // (catalog management, backups) only load for admins on the Settings tab.
 const AdminPanel = lazy(() => import('./AdminPanel'));
+
+// Collapsible settings section: the header is a real button (keyboard +
+// aria-expanded), the body only mounts when open so collapsed sections cost
+// nothing (their fetches run on first expand).
+function SettingsSection({ id, icon, title, open, onToggle, children }) {
+  const bodyId = `${id}-body`;
+  return (
+    <div id={id} className="glass-panel settings-section" style={{ display: 'flex', flexDirection: 'column', gap: open ? '1.25rem' : 0, scrollMarginTop: '1rem', padding: open ? undefined : '0.85rem 1.25rem' }}>
+      <button type="button" className="settings-section-toggle" onClick={onToggle}
+        aria-expanded={open ? 'true' : 'false'} aria-controls={bodyId}
+        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', background: 'none', border: 'none', padding: 0, paddingBottom: open ? '0.75rem' : 0, borderBottom: open ? '1px solid var(--border-glass)' : 'none', cursor: 'pointer', textAlign: 'left', color: 'inherit', font: 'inherit' }}>
+        {icon}
+        <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem', margin: 0, flex: 1 }}>{title}</h3>
+        <ChevronDown size={18} aria-hidden="true" style={{ color: 'var(--text-muted)', transition: 'transform 0.2s ease', transform: open ? 'rotate(180deg)' : 'none' }} />
+      </button>
+      {open && <div id={bodyId} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>{children}</div>}
+    </div>
+  );
+}
 
 function Settings({ user, onUpdateUser, showToast, target }) {
   const { locale, setLocale, t } = useT();
@@ -22,24 +41,26 @@ function Settings({ user, onUpdateUser, showToast, target }) {
 
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
 
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
 
   const [versionInfo, setVersionInfo] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [backendReachable, setBackendReachable] = useState(true);
 
-  // Deep link: a jump from another tab (e.g. the deck list's Moxfield Sync
-  // button) asks us to scroll to a panel once we have rendered.
+  // Every section starts collapsed so the page reads as a short index; a deep
+  // link from another tab (Moxfield Sync, marketplace) opens its section first.
+  const targetSection = target === 'moxfield' ? 'moxfield-panel'
+    : target === 'marketplace' ? 'marketplace-panel' : null;
+  const [openSections, setOpenSections] = useState(() => (targetSection ? { [targetSection]: true } : {}));
+  const toggleSection = (id) => setOpenSections(prev => ({ ...prev, [id]: !prev[id] }));
+
   useEffect(() => {
-    if (!target) return;
-    const id = target === 'moxfield' ? 'moxfield-panel'
-      : target === 'marketplace' ? 'marketplace-panel' : null;
-    if (!id) return;
+    if (!targetSection) return;
+    setOpenSections(prev => ({ ...prev, [targetSection]: true }));
     const timer = setTimeout(() => {
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById(targetSection)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 80);
     return () => clearTimeout(timer);
-  }, [target]);
+  }, [targetSection]);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -108,8 +129,8 @@ function Settings({ user, onUpdateUser, showToast, target }) {
       '2. ',
       '',
       '### Environment',
-      `- Bindarr (app): ${shownVersion || 'unknown'}`,
-      `- Bindarr (server): ${versionInfo?.version || (backendReachable ? 'unknown' : 'unreachable')}`,
+      `- Scrybox (app): ${shownVersion || 'unknown'}`,
+      `- Scrybox (server): ${versionInfo?.version || (backendReachable ? 'unknown' : 'unreachable')}`,
       `- Platform: ${navigator.platform || 'unknown'}`,
       `- Browser: ${navigator.userAgent}`,
       `- Screen: ${window.screen?.width}x${window.screen?.height}`,
@@ -121,13 +142,13 @@ function Settings({ user, onUpdateUser, showToast, target }) {
 
   const featureRequestUrl = () => {
     const body = [
-      '### What would you like Bindarr to do?',
+      '### What would you like Scrybox to do?',
       '',
       '',
       '### Why would that help?',
       '',
       '',
-      `<!-- Bindarr ${shownVersion || 'unknown'} -->`,
+      `<!-- Scrybox ${shownVersion || 'unknown'} -->`,
     ].join('\n');
     return `${REPO_URL}/issues/new?labels=enhancement&title=${encodeURIComponent('[Feature] ')}&body=${encodeURIComponent(body)}`;
   };
@@ -321,10 +342,8 @@ function Settings({ user, onUpdateUser, showToast, target }) {
   };
 
   const origin = publicBaseUrl || `${window.location.protocol}//${window.location.host}`;
-  const activeTheme = theme || localStorage.getItem('theme') || 'dark';
-  const themeQuery = activeTheme !== 'dark' ? `&theme=${encodeURIComponent(activeTheme)}` : '';
-  const shareUrl = `${origin}/share/${user?.share_token}${activeTheme !== 'dark' ? `?theme=${encodeURIComponent(activeTheme)}` : ''}`;
-  const tradeUrl = `${origin}/share/${user?.share_token}?list=trade${themeQuery}`;
+  const shareUrl = `${origin}/share/${user?.share_token}`;
+  const tradeUrl = `${origin}/share/${user?.share_token}?list=trade`;
 
   const [copiedType, setCopiedType] = useState(''); // 'collection', 'trade'
 
@@ -348,11 +367,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }} className="settings-grid">
         {/* Sharing Panel */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <Share2 size={20} style={{ color: 'var(--accent-red)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.sharingTitle')}</h3>
-          </div>
+        <SettingsSection id="settings.sharingTitle" icon={<Share2 size={20} style={{ color: 'var(--accent-red)' }} />} title={t('settings.sharingTitle')} open={!!openSections['settings.sharingTitle']} onToggle={() => toggleSection('settings.sharingTitle')}>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
             <div>
@@ -426,18 +441,6 @@ function Settings({ user, onUpdateUser, showToast, target }) {
                 </div>
               </div>
 
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                {/* The three query strings go in as placeholders rather than as
-                    <code> elements: that keeps the sentence one translatable unit
-                    and stops a translator from accidentally localising a URL. */}
-                💡 <strong>{t('settings.tipLabel')}</strong> {t('settings.themeTip', {
-                  theme: activeTheme,
-                  lcars: '?theme=lcars',
-                  light: '?theme=light',
-                  dark: '?theme=dark',
-                })}
-              </div>
-
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
                 <button
                   className="btn btn-secondary"
@@ -458,14 +461,10 @@ function Settings({ user, onUpdateUser, showToast, target }) {
               <span>{t('settings.privateNotice')}</span>
             </div>
           )}
-        </div>
+        </SettingsSection>
 
         {/* Change Password Panel */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <KeyRound size={20} style={{ color: 'var(--accent-yellow)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.securityTitle')}</h3>
-          </div>
+        <SettingsSection id="settings.securityTitle" icon={<KeyRound size={20} style={{ color: 'var(--accent-yellow)' }} />} title={t('settings.securityTitle')} open={!!openSections['settings.securityTitle']} onToggle={() => toggleSection('settings.securityTitle')}>
 
           <form onSubmit={handlePasswordChange} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -527,37 +526,25 @@ function Settings({ user, onUpdateUser, showToast, target }) {
               ) : t('settings.updatePassword')}
             </button>
           </form>
-        </div>
+        </SettingsSection>
 
         {/* Moxfield Sync Panel */}
-        <div id="moxfield-panel" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', scrollMarginTop: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <Globe size={20} style={{ color: 'var(--success, #4ade80)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('mfx.title')}</h3>
-          </div>
+        <SettingsSection id="moxfield-panel" icon={<Globe size={20} style={{ color: 'var(--success, #4ade80)' }} />} title={t('mfx.title')} open={!!openSections['moxfield-panel']} onToggle={() => toggleSection('moxfield-panel')}>
 
           <MoxfieldPanel user={user} showToast={showToast} />
-        </div>
+        </SettingsSection>
 
         {/* Marketplace Accounts: credentials for importing cards from a ManaPool
             or TCGplayer order you already placed (the Add Cards -> From order tab).
             Per-user, unlike the instance settings above: a member imports against
             their own marketplace account, and a TCGplayer cookie jar is a
             session-grade secret that must never be echoed back to another user. */}
-        <div id="marketplace-panel" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', scrollMarginTop: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <ShoppingCart size={20} style={{ color: 'var(--accent-yellow)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('marketplace.title')}</h3>
-          </div>
+        <SettingsSection id="marketplace-panel" icon={<ShoppingCart size={20} style={{ color: 'var(--accent-yellow)' }} />} title={t('marketplace.title')} open={!!openSections['marketplace-panel']} onToggle={() => toggleSection('marketplace-panel')}>
           <MarketplaceAccountsPanel showToast={showToast} />
-        </div>
+        </SettingsSection>
 
         {/* Collection Backup & Data Options Panel */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <Database size={20} style={{ color: 'var(--accent-red)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.backupTitle')}</h3>
-          </div>
+        <SettingsSection id="settings.backupTitle" icon={<Database size={20} style={{ color: 'var(--accent-red)' }} />} title={t('settings.backupTitle')} open={!!openSections['settings.backupTitle']} onToggle={() => toggleSection('settings.backupTitle')}>
 
           <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-glass)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
             {t('settings.backupHint')}
@@ -620,14 +607,10 @@ function Settings({ user, onUpdateUser, showToast, target }) {
               />
             </label>
           </div>
-        </div>
+        </SettingsSection>
 
         {/* Preferences Panel */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <SlidersHorizontal size={20} style={{ color: 'var(--accent-yellow)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('prefs.title')}</h3>
-          </div>
+        <SettingsSection id="prefs.title" icon={<SlidersHorizontal size={20} style={{ color: 'var(--accent-yellow)' }} />} title={t('prefs.title')} open={!!openSections['prefs.title']} onToggle={() => toggleSection('prefs.title')}>
 
           {/* Interface language. The picker only appears once a second locale file
               exists to switch to — dropping one into src/locales is what makes it
@@ -673,48 +656,21 @@ function Settings({ user, onUpdateUser, showToast, target }) {
             </div>
           </div>
 
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="settings-theme">{t('prefs.theme')}</label>
-            <select
-              id="settings-theme"
-              className="select-control"
-              value={theme}
-              onChange={(e) => {
-                const val = e.target.value;
-                setTheme(val);
-                localStorage.setItem('theme', val);
-                document.documentElement.setAttribute('data-theme', val);
-                showToast(t('prefs.themeSet', { theme: t(`theme.${val}`) }));
-              }}
-            >
-              <option value="dark">{t('theme.dark')}</option>
-              <option value="light">{t('theme.light')}</option>
-              <option value="lcars">{t('theme.lcars')}</option>
-              <option value="manabox">{t('theme.manabox')}</option>
-            </select>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
-              {t('prefs.themeHint')}
-            </div>
-          </div>
-        </div>
+        </SettingsSection>
 
         {/* About / version */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-            <Info size={20} style={{ color: 'var(--accent-yellow)' }} />
-            <h3 style={{ color: 'var(--text-strong)', fontSize: '1.1rem' }}>{t('settings.aboutTitle')}</h3>
-          </div>
+        <SettingsSection id="settings.aboutTitle" icon={<Info size={20} style={{ color: 'var(--accent-yellow)' }} />} title={t('settings.aboutTitle')} open={!!openSections['settings.aboutTitle']} onToggle={() => toggleSection('settings.aboutTitle')}>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
             <div>
               <div style={{ fontWeight: 700, color: 'var(--text-strong)', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <span>{shownVersion ? `Bindarr v${shownVersion}` : t('settings.versionUnknown')}</span>
+                <span>{shownVersion ? `Scrybox v${shownVersion}` : t('settings.versionUnknown')}</span>
                 <button
                   type="button"
                   className="btn btn-secondary"
                   title={t('settings.copyVersionHint')}
                   onClick={() => {
-                    const text = `Bindarr app v${shownVersion || 'unknown'} | server v${versionInfo?.version || (backendReachable ? 'unknown' : 'unreachable')} | ${navigator.platform || 'unknown'} | ${navigator.userAgent}`;
+                    const text = `Scrybox app v${shownVersion || 'unknown'} | server v${versionInfo?.version || (backendReachable ? 'unknown' : 'unreachable')} | ${navigator.platform || 'unknown'} | ${navigator.userAgent}`;
                     navigator.clipboard?.writeText(text)
                       .then(() => showToast(t('settings.versionCopied')))
                       .catch(() => showToast(t('settings.errCopyShort')));
@@ -803,14 +759,16 @@ function Settings({ user, onUpdateUser, showToast, target }) {
               Brenttime/bindarr
             </a>
           </div>
-        </div>
+        </SettingsSection>
 
         {/* Admin section: lives inside Settings (no separate tab). Rendered only
             for admin users; the panel itself is code-split behind Suspense. */}
         {user?.role === 'admin' && (
-          <Suspense fallback={null}>
-            <AdminPanel showToast={showToast} />
-          </Suspense>
+          <SettingsSection id="admin" icon={<ShieldAlert size={20} style={{ color: 'var(--accent-red)' }} />} title={t('admin.title')} open={!!openSections.admin} onToggle={() => toggleSection('admin')}>
+            <Suspense fallback={null}>
+              <AdminPanel showToast={showToast} />
+            </Suspense>
+          </SettingsSection>
         )}
       </div>
     </div>
