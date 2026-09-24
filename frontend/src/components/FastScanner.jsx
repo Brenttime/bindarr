@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Zap, ZapOff, ScanLine, Check, X, SwitchCamera, Camera, Sparkles, Trash2, Send } from 'lucide-react';
+import { Zap, ZapOff, ScanLine, Check, X, SwitchCamera, Camera, Sparkles, Trash2, Send, Undo2 } from 'lucide-react';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
 import { priceText } from '../utils/formatPrice';
 import { displayName } from '../utils/languages';
@@ -71,6 +71,10 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   // Change printing: tap a scanned card -> every physical printing of that
   // name (same search the manual add uses) -> tap one to swap it in place.
   const [editKey, setEditKey] = useState(null);
+  // Last send, kept briefly so a wrong destination can be reversed.
+  const [undo, setUndo] = useState(null);   // {rows, dest, where, entryIds?}
+  const undoTimer = useRef(null);
+  useEffect(() => () => clearTimeout(undoTimer.current), []);
   const [prints, setPrints] = useState(null);   // null = loading, [] = none
 
   useEffect(() => {
@@ -316,9 +320,16 @@ export default function FastScanner({ onAddSuccess, showToast }) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || 'send failed');
       const failed = new Set((j.failed || []).map(f => (typeof f === 'object' ? f.card_id : f)));
-      const keys = new Set(rows.filter(row => !failed.has(row.card.id)).map(row => row.key));
-      setResults(prev => prev.map(x => (keys.has(x.key) ? { ...x, sent: true } : x)));
+      const sentRows = rows.filter(row => !failed.has(row.card.id));
+      const keys = new Set(sentRows.map(row => row.key));
+      // Sent cards leave the tray; failures stay so they can be retried.
+      setResults(prev => prev.filter(x => !keys.has(x.key)));
       const where = dest === 'collection' ? t('fastscan.destCollection') : (lists.find(l => String(l.id) === dest)?.name || t('fastscan.destList'));
+      clearTimeout(undoTimer.current);
+      if (sentRows.length) {
+        setUndo({ rows: sentRows, dest, where, entryIds: dest === 'collection' ? (j.entries || []).map(e => e.id).filter(Boolean) : null });
+        undoTimer.current = setTimeout(() => setUndo(null), 15000);
+      }
       showToast?.(t('fastscan.sent', { count: keys.size, where }));
       if (dest === 'collection') onAddSuccess?.();
     } catch (e) {
@@ -343,6 +354,29 @@ export default function FastScanner({ onAddSuccess, showToast }) {
     setEditKey(null); setPrints(null);
   };
   const editing = results.find(r => r.key === editKey);
+
+  const undoSend = async () => {
+    const u = undo;
+    if (!u || sending) return;
+    clearTimeout(undoTimer.current); setUndo(null); setSending(true);
+    try {
+      if (u.dest === 'collection') {
+        const res = await Promise.all(u.entryIds.map(id => fetch(`/api/collection/${id}`, { method: 'DELETE' }).then(r => r.ok)));
+        if (res.some(ok => !ok)) throw new Error('undo partial');
+        onAddSuccess?.();
+      } else {
+        const r = await fetch(`/api/lists/${encodeURIComponent(u.dest)}/cards/bulk-remove`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cards: u.rows.map(row => ({ card_id: row.card.id, quantity: 1 })) }),
+        });
+        if (!r.ok) throw new Error('undo failed');
+      }
+      setResults(prev => [...u.rows.map(row => ({ ...row, sent: false })), ...prev]);
+      showToast?.(t('fastscan.undone', { where: u.where }));
+    } catch (e) {
+      console.error(e); showToast?.(t('fastscan.undoFailed'));
+    } finally { setSending(false); }
+  };
 
   if (service === false) {
     return <div className="fs-offline glass-panel">{t('fastscan.unavailable')}</div>;
@@ -479,6 +513,11 @@ export default function FastScanner({ onAddSuccess, showToast }) {
             )}
             <option value="__new">{t('fastscan.newList')}</option>
           </select>
+          {undo && (
+            <button type="button" className="fs-ghost fs-undo" onClick={undoSend} disabled={sending}>
+              <Undo2 size={14} /> {t('fastscan.undo')}
+            </button>
+          )}
           <button type="button" className="fs-cta fs-cta-sm" disabled={!pending || sending} onClick={sendAll}>
             <Send size={14} /> {pending ? t('fastscan.sendCount', { count: pending }) : t('fastscan.allSent')}
           </button>

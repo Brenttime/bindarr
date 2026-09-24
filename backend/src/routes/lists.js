@@ -461,6 +461,44 @@ router.post('/:id/cards/bulk', async (req, res) => {
   }
 });
 
+// Exact inverse of /cards/bulk (Scan Cards' Undo): DECREMENT the same
+// printing-equivalent row by the quantity that was added, deleting it at 0.
+// The single-card DELETE below removes every copy, which would also erase
+// copies that were on the list before the send.
+router.post('/:id/cards/bulk-remove', async (req, res) => {
+  const { id } = req.params;
+  const entries = Array.isArray(req.body?.cards) ? req.body.cards : [];
+  if (!entries.length || entries.length > 250) return res.status(400).json({ error: 'cards must be 1-250 entries' });
+  try {
+    const list = await db.get(`SELECT id FROM card_lists WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    if (!list) return res.status(404).json({ error: 'List not found or unauthorized' });
+    let removed = 0;
+    for (const entry of entries) {
+      const cardId = entry?.card_id;
+      const qty = Math.max(1, parseInt(entry?.quantity, 10) || 1);
+      if (!cardId) continue;
+      const row = await db.get(`
+        SELECT lc.card_id, lc.quantity FROM list_cards lc
+        JOIN card_cache existing_cc ON existing_cc.id = lc.card_id
+        JOIN card_cache target_cc ON target_cc.id = ?
+        WHERE lc.list_id = ? AND ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+        ORDER BY (lc.card_id = ?) DESC, lc.card_id LIMIT 1
+      `, [cardId, id, cardId]);
+      if (!row) continue;
+      if (row.quantity > qty) {
+        await db.run(`UPDATE list_cards SET quantity = quantity - ? WHERE list_id = ? AND card_id = ?`, [qty, id, row.card_id]);
+      } else {
+        await db.run(`DELETE FROM list_cards WHERE list_id = ? AND card_id = ?`, [id, row.card_id]);
+      }
+      removed += Math.min(qty, row.quantity);
+    }
+    res.json({ removed });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to remove cards from list' });
+  }
+});
+
 // Remove a card from the list.
 router.delete('/:id/cards/:card_id', async (req, res) => {
   const { id, card_id } = req.params;

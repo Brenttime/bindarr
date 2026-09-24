@@ -587,6 +587,9 @@ router.post('/collection/bulk-add', async (req, res) => {
       ? `Added ${added.length} of ${card_ids.length} cards; ${failed.length} failed.`
       : `Added ${added.length} card${added.length === 1 ? '' : 's'}${qty > 1 ? ` (x${qty} each)` : ''} to collection.`,
     added: added.length,
+    // Row ids per card, so a caller (Scan Cards' Undo) can remove exactly the
+    // copies it just added and nothing older.
+    entries: added,
     failed
   });
 });
