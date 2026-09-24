@@ -68,6 +68,10 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   const [error, setError] = useState('');
   const [results, setResults] = useState([]);
   const [onDevice, setOnDevice] = useState(false);
+  // Change printing: tap a scanned card -> every physical printing of that
+  // name (same search the manual add uses) -> tap one to swap it in place.
+  const [editKey, setEditKey] = useState(null);
+  const [prints, setPrints] = useState(null);   // null = loading, [] = none
 
   useEffect(() => {
     fetch('/api/lists').then(r => (r.ok ? r.json() : [])).then(d => setLists(Array.isArray(d) ? d : (d.lists || []))).catch(() => {});
@@ -323,6 +327,23 @@ export default function FastScanner({ onAddSuccess, showToast }) {
     } finally { setSending(false); }
   };
 
+  const openPrintings = async (row) => {
+    if (row.sent) return;
+    setEditKey(row.key); setPrints(null);
+    try {
+      const qs = new URLSearchParams({ name: row.card.name, prints: '1', scope: 'internet', limit: '250' });
+      const r = await fetch(`/api/search?${qs}`);
+      const list = r.ok ? await r.json() : [];
+      const same = (Array.isArray(list) ? list : []).filter(c => c.name === row.card.name);
+      setPrints(same.length ? same : [row.card]);
+    } catch { setPrints([row.card]); }
+  };
+  const choosePrinting = (card) => {
+    setResults(prev => prev.map(x => (x.key === editKey ? { ...x, card } : x)));
+    setEditKey(null); setPrints(null);
+  };
+  const editing = results.find(r => r.key === editKey);
+
   if (service === false) {
     return <div className="fs-offline glass-panel">{t('fastscan.unavailable')}</div>;
   }
@@ -403,6 +424,9 @@ export default function FastScanner({ onAddSuccess, showToast }) {
               <li key={row.key} className={`fs-card${row.sent ? ' is-added' : ''}`}>
                 <div className="fs-card-art">
                   {row.card.image_url ? <img src={row.card.image_url} alt="" loading="lazy" /> : null}
+                  {!row.sent && (
+                    <button type="button" className="fs-card-edit" onClick={() => openPrintings(row)} aria-label={t('fastscan.changePrinting')} />
+                  )}
                   <button type="button" className="fs-card-x" onClick={() => setResults(prev => prev.filter(r => r.key !== row.key))} aria-label={t('fastscan.dismiss')}><X size={12} /></button>
                   <span className="fs-card-price">{priceText(priceOf(row.card), row.card.price_currency)}</span>
                   {row.sent && <span className="fs-card-badge"><Check size={14} /></span>}
@@ -412,6 +436,38 @@ export default function FastScanner({ onAddSuccess, showToast }) {
               </li>
             ))}
           </ul>
+        )}
+        {editing && (
+          <div className="fs-sheet-backdrop" onClick={() => setEditKey(null)}>
+            <div className="fs-sheet glass-panel" role="dialog" aria-modal="true" aria-label={t('fastscan.changePrinting')} onClick={e => e.stopPropagation()}>
+              <div className="fs-sheet-head">
+                <div>
+                  <div className="fs-tray-title">{displayName(editing.card)}</div>
+                  <div className="fs-card-meta">{t('fastscan.changePrinting')}{prints ? ` · ${prints.length}` : ''}</div>
+                </div>
+                <button type="button" className="fs-ghost" onClick={() => setEditKey(null)} aria-label={t('fastscan.dismiss')}><X size={16} /></button>
+              </div>
+              {prints == null ? (
+                <div className="fs-tray-empty">{t('fastscan.loadingPrintings')}</div>
+              ) : (
+                <ul className="fs-cards fs-sheet-grid">
+                  {prints.map(c => (
+                    <li key={c.id} className={`fs-card${c.id === editing.card.id ? ' is-current' : ''}`}>
+                      <button type="button" className="fs-print" onClick={() => choosePrinting(c)} aria-pressed={c.id === editing.card.id}>
+                        <div className="fs-card-art">
+                          {c.image_url ? <img src={c.image_url} alt="" loading="lazy" /> : null}
+                          <span className="fs-card-price">{priceText(priceOf(c), c.price_currency)}</span>
+                          {c.id === editing.card.id && <span className="fs-card-badge"><Check size={14} /></span>}
+                        </div>
+                        <div className="fs-card-name">{c.set_name || String(c.set_id || '').toUpperCase()}</div>
+                        <div className="fs-card-meta">{String(c.set_id || '').toUpperCase()} · #{c.number}</div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
         )}
         <div className="fs-send">
           <select className="fs-select" value={destValid ? dest : 'collection'} onChange={(e) => chooseDest(e.target.value)} aria-label={t('fastscan.sendTo')}>

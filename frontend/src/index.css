@@ -1908,6 +1908,16 @@ button, input, select, textarea {
 .fs-card-art { position: relative; aspect-ratio: 0.716; border-radius: 7px; overflow: hidden; background: rgba(255,255,255,.05); box-shadow: 0 6px 18px -8px rgba(0,0,0,.8); }
 .fs-card-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .fs-card.is-added .fs-card-art { box-shadow: 0 0 0 2px #34d399, 0 6px 18px -8px rgba(0,0,0,.8); }
+.fs-card-edit { position: absolute; inset: 0; border: 0; padding: 0; background: transparent; cursor: pointer; }
+.fs-card-edit:focus-visible { outline: 2px solid #fbbf24; outline-offset: -2px; }
+.fs-card-art .fs-card-x, .fs-card-art .fs-card-price, .fs-card-art .fs-card-badge { z-index: 1; }
+.fs-sheet-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; }
+.fs-sheet { width: min(720px, 100%); max-height: 78vh; overflow: auto; border-radius: 22px 22px 0 0; padding: 16px; }
+@media (min-width: 769px) { .fs-sheet-backdrop { align-items: center; } .fs-sheet { border-radius: 22px; } }
+.fs-sheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.fs-print { all: unset; display: block; width: 100%; cursor: pointer; }
+.fs-print:focus-visible .fs-card-art { outline: 2px solid #fbbf24; }
+.fs-card.is-current .fs-card-art { box-shadow: 0 0 0 2px #fbbf24, 0 6px 18px -8px rgba(0,0,0,.8); }
 .fs-card-x { position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; border-radius: 50%; border: 0; display: grid; place-items: center; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; opacity: 0; transition: opacity .15s ease; }
 .fs-card:hover .fs-card-x, .fs-card:focus-within .fs-card-x { opacity: 1; }
 @media (hover: none) { .fs-card-x { opacity: .85; } }

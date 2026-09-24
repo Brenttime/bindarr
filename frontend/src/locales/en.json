@@ -1385,6 +1385,8 @@
   "fastscan.autoShort": "Auto",
   "fastscan.autoOn": "Auto on",
   "fastscan.single": "Single",
+  "fastscan.changePrinting": "Change printing",
+  "fastscan.loadingPrintings": "Loading printings…",
   "fastscan.modeToggle": "Switch scan mode (Single / Auto)",
   "fastscan.autoStart": "Start auto scanning",
   "fastscan.autoStop": "Stop auto scanning",
