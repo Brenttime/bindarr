@@ -1,10 +1,11 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { ChevronDown, ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Languages, Globe, ShoppingCart } from 'lucide-react';
+import { ChevronDown, ShieldAlert, Share2, Clipboard, RefreshCw, KeyRound, Check, Database, Download, Upload, SlidersHorizontal, Info, Bug, Lightbulb, MessagesSquare, ScrollText, Github, Languages, Globe, ShoppingCart, RefreshCcw } from 'lucide-react';
 import { LOCALES, localeName, useT } from '../utils/i18n';
 import { buildCardListText } from '../utils/cardList';
 import { REPO_URL } from '../utils/repo';
 import MoxfieldPanel from './MoxfieldPanel';
 import MarketplaceAccountsPanel from './MarketplaceAccountsPanel';
+import ManaboxSyncPanel from './ManaboxSyncPanel';
 
 // Admin-only surface, code-split like the view components so its heavy deps
 // (catalog management, backups) only load for admins on the Settings tab.
@@ -541,6 +542,12 @@ function Settings({ user, onUpdateUser, showToast, target }) {
             session-grade secret that must never be echoed back to another user. */}
         <SettingsSection id="marketplace-panel" icon={<ShoppingCart size={20} style={{ color: 'var(--accent-yellow)' }} />} title={t('marketplace.title')} open={!!openSections['marketplace-panel']} onToggle={() => toggleSection('marketplace-panel')}>
           <MarketplaceAccountsPanel showToast={showToast} />
+        </SettingsSection>
+
+        {/* Sync from ManaBox: reconcile the collection (and ManaBox lists) with a
+            ManaBox CSV export. Preview first, apply second, record kept. */}
+        <SettingsSection id="manabox-sync" icon={<RefreshCcw size={20} style={{ color: 'var(--accent-yellow)' }} />} title={t('mbsync.title')} open={!!openSections['manabox-sync']} onToggle={() => toggleSection('manabox-sync')}>
+          <ManaboxSyncPanel showToast={showToast} />
         </SettingsSection>
 
         {/* Collection Backup & Data Options Panel */}

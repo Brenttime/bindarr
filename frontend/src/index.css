@@ -1923,3 +1923,27 @@ button, input, select, textarea {
 .fs-select { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); color: var(--text-strong, #f3f4f6); font-size: 13px; }
 .fs-select option, .fs-select optgroup { background: #111827; color: #f3f4f6; }
 .fs-cta:disabled { opacity: .5; cursor: default; box-shadow: none; }
+
+/* Settings -> Sync from ManaBox */
+.mbsync { display: flex; flex-direction: column; gap: 14px; }
+.mbsync-lead { margin: 0; color: var(--text-secondary); }
+.mbsync-steps { margin: 0; padding-left: 20px; color: var(--text-secondary); font-size: 0.9rem; line-height: 1.6; }
+.mbsync-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.mbsync-pick .btn-primary, .mbsync-actions button { display: inline-flex; align-items: center; gap: 8px; }
+.mbsync-file { font-size: 0.85rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+.mbsync-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer; }
+.mbsync-error { display: flex; align-items: center; gap: 8px; color: var(--accent-red); font-size: 0.9rem; }
+.mbsync-preview { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--border-glass); }
+.mbsync-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.mbsync-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.04); }
+.mbsync-stats span { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+.mbsync-stats strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.mbsync-stats .add strong { color: var(--success, #4ade80); }
+.mbsync-stats .remove strong { color: var(--accent-red); }
+.mbsync-notes { margin: 0; padding-left: 18px; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; }
+.mbsync-notes .warn { color: var(--accent-yellow); }
+.mbsync-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.mbsync-runs h4 { margin: 4px 0 8px; font-size: 0.9rem; }
+.mbsync-run { display: flex; gap: 12px; align-items: center; font-size: 0.85rem; padding: 6px 0; border-top: 1px solid var(--border-glass); }
+.mbsync-run span:first-child { flex: 1; color: var(--text-secondary); }
+.mbsync-run span:nth-child(2) { font-variant-numeric: tabular-nums; }

@@ -618,6 +618,26 @@ async function initDb() {
   if (!collectionCols.some(c => c.name === 'notes')) {
     await run(`ALTER TABLE collection ADD COLUMN notes TEXT DEFAULT ''`);
   }
+  // Where a copy came from: 'manabox' for rows written by ManaBox sync (or the
+  // original ManaBox migration), NULL for anything added in Scrybox. Sync only
+  // ever removes 'manabox' rows, so a card scanned or searched in Scrybox is
+  // never taken away by a later ManaBox export.
+  if (!collectionCols.some(c => c.name === 'source')) {
+    await run(`ALTER TABLE collection ADD COLUMN source TEXT`);
+  }
+  const listCols = await all(`PRAGMA table_info(card_lists)`);
+  if (listCols.length && !listCols.some(c => c.name === 'source')) {
+    await run(`ALTER TABLE card_lists ADD COLUMN source TEXT`);
+  }
+  await run(`
+    CREATE TABLE IF NOT EXISTS manabox_sync_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      summary TEXT NOT NULL,
+      report TEXT NOT NULL
+    )
+  `);
 
   // --- Pokemon and grading removal (2026-08) ---
   // The app was Pokemon-agnostic in schema but Pokemon-flavoured in code; the
@@ -757,17 +777,18 @@ async function initDb() {
             added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             notes TEXT DEFAULT '',
             user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            source TEXT,
             FOREIGN KEY(card_id) REFERENCES card_cache(id)
           )
         `);
         await run(`
           INSERT INTO collection_new
             (id, card_id, quantity, condition, printing, language, purchase_price,
-             favorite, is_trade, list_type, added_at, notes, user_id)
+             favorite, is_trade, list_type, added_at, notes, user_id, source)
           SELECT id, card_id, quantity, condition,
                  CASE WHEN printing = 'Holofoil' THEN 'Holofoil' ELSE 'Normal' END,
                  language, purchase_price, favorite, is_trade, list_type,
-                 added_at, notes, user_id
+                 added_at, notes, user_id, source
           FROM collection
         `);
         await run(`DROP TABLE collection`);
@@ -904,6 +925,7 @@ async function initDb() {
               added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               notes TEXT DEFAULT '',
               user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+              source TEXT,
               FOREIGN KEY(card_id) REFERENCES card_cache(id)
             )
           `);
