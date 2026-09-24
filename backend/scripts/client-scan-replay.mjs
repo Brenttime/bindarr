@@ -69,7 +69,9 @@ for (const f of files) {
   // Every frame is independent here: the saved stream has gaps, and the
   // identity cache would turn later frames into free hits. Reset per frame so
   // each number below is a cold read.
-  reader.reset();
+  // --stream keeps cross-frame evidence (consecutive frames of one card), still
+  // clearing the identity cache so every frame is a real read.
+  if (args.includes('--stream')) reader.resetCache(); else reader.reset();
   const before = { ...reader.stats };
   const t0 = performance.now();
   const out = await reader.read(

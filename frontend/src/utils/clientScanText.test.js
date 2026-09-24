@@ -4,7 +4,7 @@ import { needsServer } from './fastScan.js';
 import {
   normName, normalizeCollector, ratio, extractTop2, footerNumbers, retroNumber,
   ctcDecode, buildCharset, loadIndex, findCardByOcr, resolveFooter, footerCodes,
-  strongNumbers, looksLikeCopyright,
+  strongNumbers, looksLikeCopyright, voteFooter,
 } from '../../../shared/clientScan/text.mjs';
 
 // Expected values come from the cardscan sidecar (server.py / rapidfuzz 3.14)
@@ -140,4 +140,18 @@ test('"N/T" only resolves in a set that runs to #T', () => {
   assert.equal(resolveFooter(dm, 'damn', [], footerNumbers(raws), strongNumbers(raws)), null);
   const good = ['080/303'];
   assert.equal(resolveFooter(dm, 'damn', [], footerNumbers(good), strongNumbers(good)), 0);
+});
+
+test('voteFooter: multi-frame vote needs 2 frames and one candidate', () => {
+  const ix = {
+    byTitle: { damn: [0, 1, 2] },
+    printings: [['a', 'mh2', '80'], ['b', 'mh2', '403'], ['c', 'sld', '1011']],
+    setLookup: new Set(['mh2', 'sld']), setLengths: [3], setRank: new Map([['mh2', 0], ['sld', 1]]),
+    setMax: new Map([['mh2', 303], ['sld', 2000]]),
+  };
+  // Garbled 080/303 on three frames; "303" (the set total) must not vote.
+  assert.equal(voteFooter(ix, 'damn', [['0807303', 'M2～N'], ['080305'], ['080/505']]), 0);
+  assert.equal(voteFooter(ix, 'damn', [['0807303']]), null);             // one frame
+  assert.equal(voteFooter(ix, 'damn', [['080'], ['403 080']]), null);    // two candidates
+  assert.equal(voteFooter(ix, 'damn', [['x'], ['y']]), null);
 });
