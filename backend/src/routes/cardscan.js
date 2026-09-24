@@ -10,6 +10,8 @@
 //   GET  /api/cardscan/status   sidecar health (the UI hides itself if down)
 //   POST /api/cardscan/detect   image/jpeg overview -> candidate quads
 //   POST /api/cardscan/scan     { cards:[{number,image,box,quad}] } -> results
+//   POST /api/cardscan/cards    { results:[{number,scryfallId,title,via}] } -> hydrated
+//                               (cards the phone read on-device)
 const express = require('express');
 const axios = require('axios');
 const scryfallApi = require('../scryfallApi');
@@ -72,6 +74,21 @@ router.post('/frame', express.raw({ type: ['image/jpeg', 'application/octet-stre
       results, timings: { ...r.data.timings, proxy_ms: Date.now() - t0 },
     });
   } catch (e) { upstreamError(res, e); }
+});
+
+// Results the phone read itself (on-device pipeline): the client proves the
+// printing, this only turns Scryfall ids into card_cache rows so prices and the
+// Send flow behave exactly as for server scans.
+router.post('/cards', async (req, res) => {
+  const items = req.body?.results;
+  if (!Array.isArray(items) || items.length < 1 || items.length > 8) return res.status(400).json({ ok: false, error: 'Expected 1-8 results' });
+  const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (items.some(x => !x || !ID.test(String(x.scryfallId || '')))) return res.status(400).json({ ok: false, error: 'Invalid card id' });
+  const results = await Promise.all(items.map(x => hydrate({
+    ok: true, scene_number: x.number, title: x.title, card: { id: x.scryfallId },
+    footer_ocr: { resolved_by: x.via },
+  })));
+  res.json({ ok: true, results });
 });
 
 router.post('/scan', async (req, res) => {

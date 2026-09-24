@@ -20,3 +20,20 @@ export function quadPath(cand, { s, ox, oy }) {
     : (() => { const [x, y, w, h] = cand.box; return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]; })();
   return pts.map(([x, y]) => [ox + x * s, oy + y * s]);
 }
+
+// Pure: should this on-device outcome go to the server instead? Unit-tested.
+//   - pipeline error / worker failure: yes.
+//   - a still, in-frame card the client read but could not prove: yes, the
+//     server's wider sweeps and multi-card detection may.
+//   - shutter press with no usable card: yes (maybe several cards, which the
+//     single-card detector does not handle).
+//   - auto pass with no card, or a moving/clipped/blurred one: no — that is
+//     the stillness gate doing its job; the next pass retries.
+export function needsServer(out, { autoPass }) {
+  if (!out || out.error) return true;
+  const cand = out.candidates?.[0];
+  const res = out.results?.[0];
+  if (res) return !res.ok;
+  if (!cand || !cand.eligible) return !autoPass;
+  return true;
+}

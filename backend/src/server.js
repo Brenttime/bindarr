@@ -441,6 +441,22 @@ app.get('/models/cornelius.onnx', (req, res) => {
   });
 });
 
+// On-device Scan Cards assets: the OCR recognizer, its dictionary and the
+// compact title/printing index (cardscan tools/build_client_index.py writes
+// them, content-hashed, plus manifest.json). Hashed names are immutable;
+// manifest.json is the one file that must revalidate so a regenerated index is
+// picked up. Missing directory = 404s = the client quietly keeps using the
+// server scanner.
+const clientScanDir = process.env.CLIENT_SCAN_DIR
+  || path.join(require('./utils/modelAssets').MODEL_DIR, 'client-scan');
+app.use('/scan-assets', express.static(clientScanDir, {
+  index: false, dotfiles: 'deny', fallthrough: false,
+  setHeaders(res, file) {
+    res.setHeader('Cache-Control', file.endsWith('manifest.json')
+      ? 'no-cache' : 'public, max-age=31536000, immutable');
+  },
+}));
+
 // (compression() is registered early, before the API routes — see above.)
 const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
 // A year, immutable. Vite content-hashes every asset filename, so a changed file

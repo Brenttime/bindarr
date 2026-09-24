@@ -51,6 +51,8 @@ export default defineConfig({
       // outline crawls in dev and nowhere else.
       '/models': { target: 'http://localhost:3001', changeOrigin: true },
       '/ort': { target: 'http://localhost:3001', changeOrigin: true },
+      // On-device Scan Cards models + index (backend CLIENT_SCAN_DIR).
+      '/scan-assets': { target: 'http://localhost:3001', changeOrigin: true },
     }
   }
 })

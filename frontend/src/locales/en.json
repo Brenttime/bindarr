@@ -1402,6 +1402,8 @@
   "fastscan.allSent": "All sent",
   "fastscan.sent": "Sent {count} card(s) to {where}",
   "fastscan.sendFailed": "Could not send cards",
+  "fastscan.onDevice": "On-device",
+  "fastscan.onDeviceHint": "Cards are read on this phone; the server is only asked when it cannot prove the printing.",
   "mbsync.title": "Sync from ManaBox",
   "mbsync.lead": "Bring your collection in line with a ManaBox export. Cards you added in Scrybox are never removed.",
   "mbsync.step1": "In ManaBox: Collection → ⋯ → Export → CSV, and save the file.",
