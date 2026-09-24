@@ -1877,6 +1877,8 @@ button, input, select, textarea {
 .fs-hint.is-error { color: #fecaca; background: rgba(127,29,29,.6); }
 .fs-dock { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; display: flex; align-items: center; justify-content: center; gap: 36px; padding: 18px 0 22px; background: linear-gradient(to top, rgba(0,0,0,.55), transparent); }
 .fs-dock-side { width: 46px; height: 46px; }
+.fs-dock .fs-icon.fs-dock-side:last-child { width: auto; min-width: 46px; padding: 0 14px; gap: 6px; border-radius: 23px; }
+.fs-dock-label { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em; }
 .fs-shutter { position: relative; width: 74px; height: 74px; border-radius: 50%; border: 4px solid rgba(255,255,255,.92); background: transparent; padding: 0; cursor: pointer; transition: transform .15s ease; }
 .fs-shutter span { position: absolute; inset: 5px; border-radius: 50%; background: #fff; transition: transform .15s ease, background .2s ease; }
 .fs-shutter:active:not(:disabled) span { transform: scale(.88); }
