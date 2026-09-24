@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, Plus, Swords, ListChecks, Mountain } from 'lucide-react';
+import { LayoutDashboard, Database, Sparkles, Settings as SettingsIcon, LogOut, Plus, Swords, ListChecks } from 'lucide-react';
 import Login from './components/Login';
 import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
@@ -17,6 +17,7 @@ const SharedCollection = lazy(() => import('./components/SharedCollection'));
 const DeckBuilder = lazy(() => import('./components/DeckBuilder'));
 const Lists = lazy(() => import('./components/Lists'));
 const LimitedLands = lazy(() => import('./components/LimitedLands'));
+const Rules = lazy(() => import('./components/Rules'));
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -110,6 +111,18 @@ function App() {
   const [listsHandoff, setListsHandoff] = useState(null);
 
   const tabGuardRef = useRef(null);
+
+  // Every tab is a fresh page: start it at the top. Without this the window
+  // keeps the previous tab's scrollY (clamped to the new, shorter document),
+  // so on mobile a page often opened partway down. The browser's own restore
+  // is off too: our pushState guards share one URL, so 'auto' re-applied
+  // stale offsets on reload/back.
+  useEffect(() => {
+    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+  }, []);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [activeTab]);
 
   // Navigate tabs through here so each change pushes a history entry: a back
   // gesture then returns to the PREVIOUS tab (not always dashboard), and modals
@@ -330,7 +343,9 @@ function App() {
       case 'lists':
         return <Lists showToast={showToast} handoff={listsHandoff} onHandoffDone={() => setListsHandoff(null)} />;
       case 'limited':
-        return <LimitedLands showToast={showToast} />;
+        return <LimitedLands showToast={showToast} onNavigate={goTab} />;
+      case 'rules':
+        return <Rules onNavigate={goTab} />;
       case 'settings':
         return <Settings user={user} onUpdateUser={handleUpdateUser} showToast={showToast} target={settingsTarget} />;
       default:
@@ -393,28 +408,23 @@ function App() {
             <span>{t('nav.lists')}</span>
           </button>
 
-          <button
-            className={`nav-tab ${activeTab === 'limited' ? 'active' : ''}`}
-            onClick={() => goTab('limited')}
-          >
-            <Mountain size={18} />
-            <span>{t('nav.limited')}</span>
-          </button>
-
-          <button
-            className={`nav-tab ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => goTab('settings')}
-          >
-            <SettingsIcon size={18} />
-            <span>{t('nav.settings')}</span>
-          </button>
         </nav>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
             <Sparkles size={14} style={{ color: 'var(--accent-yellow)' }} />
             <span><strong style={{ color: 'var(--text-strong)' }}>{user.username}</strong></span>
           </div>
+          <button
+            onClick={() => goTab('settings')}
+            className={`btn ${activeTab === 'settings' ? 'btn-primary' : 'btn-secondary'} btn-icon-only`}
+            title={t('nav.settings')}
+            aria-label={t('nav.settings')}
+            aria-current={activeTab === 'settings' ? 'page' : undefined}
+            style={{ padding: '0.4rem 0.5rem', borderRadius: 'var(--radius-sm)' }}
+          >
+            <SettingsIcon size={14} />
+          </button>
           <button
             onClick={handleLogout}
             className="btn btn-secondary btn-icon-only"

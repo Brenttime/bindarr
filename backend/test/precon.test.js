@@ -38,6 +38,13 @@ const DECKS = [
   hits = rankPrecons(DECKS, 'c21').map((d) => d.name);
   assert.deepStrictEqual(hits, ['Lorehold Legacies', 'Silverquill Statement']);
 
+  // Set name in the search: a deck whose name never mentions its set is found
+  // by the set it was made for.
+  const withSets = [...DECKS, { name: 'Lorehold Spirit', code: 'SOC', setName: 'Secrets of Strixhaven Commander', type: 'Commander Deck', releaseDate: '2026-04-24', fileName: 'LoreholdSpirit_SOC' }];
+  hits = rankPrecons(withSets, 'strixhaven').map((d) => d.name);
+  assert.deepStrictEqual(hits, ['Lorehold Spirit']);
+  assert.deepStrictEqual(require('../src/utils/preconData').setNameMap({ data: [{ code: 'soc', name: 'X' }] }), { SOC: 'X' });
+
   // No match is an empty list, not an error.
   assert.deepStrictEqual(rankPrecons(DECKS, 'zzzqq'), []);
 

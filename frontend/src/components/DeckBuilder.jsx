@@ -903,20 +903,17 @@ function DeckBuilder({ showToast, onNavigate }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           
           {/* Top Banner Header & Primary Action */}
-          <div className="glass-panel deck-vault-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', padding: '1.25rem 1.5rem', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
-            <div>
+          <div className="glass-panel deck-vault-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'nowrap', gap: '1rem', padding: '1.25rem 1.5rem', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+            <div style={{ minWidth: 0 }}>
               <h2 style={{ fontSize: '1.4rem', color: 'var(--text-strong)', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                 <Layers size={22} style={{ color: 'var(--accent-yellow)' }} />
                 {t('deck.vaultTitle')}
               </h2>
-              <p className="deck-vault-subtitle" style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                {t('deck.vaultSubtitle')}
-              </p>
               <p className="deck-vault-counts" style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
                 {t('deck.vaultCounts', { count: decks.length, out: decks.filter(d => d.checked_out).length })}
               </p>
             </div>
-            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '0.6rem', flexShrink: 0, marginLeft: 'auto' }}>
               <button 
                 ref={addDeckButtonRef}
                 className="btn btn-primary" 
@@ -1145,11 +1142,6 @@ function DeckBuilder({ showToast, onNavigate }) {
                       }}>
                         <Gamepad2 size={12} />
                         <span>{t('deck.inPlay')}</span>
-                        {deck.checked_out_at && (
-                          <span style={{ marginLeft: 'auto', opacity: 0.8, fontWeight: 600 }}>
-                            since {new Date(deck.checked_out_at).toLocaleDateString()}
-                          </span>
-                        )}
                       </div>
                     ) : null}
 

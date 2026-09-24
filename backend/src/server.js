@@ -33,6 +33,7 @@ const cardArtRoutes = require('./routes/cardArt');
 const { authenticateToken } = require('./middleware/auth');
 const moxfieldRoutes = require('./routes/moxfield');
 const limitedRoutes = require('./routes/limited');
+const rulesRoutes = require('./routes/rules');
 const { startHttps, selfSignedTls } = require('./utils/tls');
 
 
@@ -413,6 +414,7 @@ app.use('/api/marketplace', marketplaceOrdersRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/moxfield', moxfieldRoutes);
 app.use('/api/limited', limitedRoutes);
+app.use('/api/rules', rulesRoutes);
 
 // The live overlay runs the SAME corner model the scan does, in the browser, so
 // what the user aims with and what the server matches cannot disagree. That
