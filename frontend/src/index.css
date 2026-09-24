@@ -1865,7 +1865,7 @@ button, input, select, textarea {
 .fs-icon:hover:not(:disabled) { background: rgba(30,38,56,.7); }
 .fs-icon:active:not(:disabled) { transform: scale(.92); }
 .fs-icon:disabled { opacity: .4; cursor: default; }
-.fs-icon.is-on { background: #fbbf24; color: #111827; border-color: transparent; }
+.fs-icon.is-on { background: rgba(251,191,36,.22); color: #fde68a; border-color: #fbbf24; }
 .fs-empty { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; color: #e5e7eb; }
 .fs-empty-icon { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; background: linear-gradient(145deg, rgba(251,191,36,.22), rgba(251,191,36,.05)); border: 1px solid rgba(251,191,36,.3); color: #fbbf24; }
 .fs-empty-title { font: 700 20px/1.2 -apple-system, system-ui, sans-serif; letter-spacing: -.01em; }

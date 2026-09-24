@@ -56,7 +56,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   // Mode switch (like a camera app's photo/video): the side button picks
   // Single or Auto; the shutter acts in that mode. In Auto the shutter starts
   // and stops the continuous loop.
-  const [mode, setMode] = useState(() => (localStorage.getItem('fastscan.mode') === 'auto' ? 'auto' : 'single'));
+  const [mode, setMode] = useState('auto');   // always opens in Auto
   const [auto, setAuto] = useState(false);   // auto loop running
   const [lists, setLists] = useState([]);
   const [dest, setDest] = useState(() => localStorage.getItem('fastscan.dest') || 'collection');
@@ -267,7 +267,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   const toggleMode = () => {
     const next = mode === 'auto' ? 'single' : 'auto';
     if (auto) setAutoRunning(false);
-    setMode(next); localStorage.setItem('fastscan.mode', next);
+    setMode(next);
   };
   const onShutter = () => {
     if (mode === 'auto') setAutoRunning(!auto);
