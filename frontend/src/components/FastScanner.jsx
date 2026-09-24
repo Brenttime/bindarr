@@ -53,7 +53,11 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   const [cameraOn, setCameraOn] = useState(false);
   const [torch, setTorch] = useState(false);
   const [torchOk, setTorchOk] = useState(false);
-  const [auto, setAuto] = useState(false);
+  // Mode switch (like a camera app's photo/video): the side button picks
+  // Single or Auto; the shutter acts in that mode. In Auto the shutter starts
+  // and stops the continuous loop.
+  const [mode, setMode] = useState(() => (localStorage.getItem('fastscan.mode') === 'auto' ? 'auto' : 'single'));
+  const [auto, setAuto] = useState(false);   // auto loop running
   const [lists, setLists] = useState([]);
   const [dest, setDest] = useState(() => localStorage.getItem('fastscan.dest') || 'collection');
   const [sending, setSending] = useState(false);
@@ -181,6 +185,21 @@ export default function FastScanner({ onAddSuccess, showToast }) {
     const t0 = performance.now();
     try {
       let out = null;
+      // Shutter press: hedge. The server read starts now, alongside the
+      // on-device one, instead of only after the phone gives up — the old
+      // sequential fallback is where the 2 s+ scans came from (a ~1.2 s local
+      // miss, then a full server read). Auto passes stay sequential so the
+      // 60 ms loop does not flood the 2-core sidecar.
+      const abort = new AbortController();
+      const serverRead = async (blobP) => {
+        const r = await fetch('/api/cardscan/frame', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await blobP, signal: abort.signal });
+        if (r.status === 429) return { busy: true };
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || t('fastscan.serviceError'));
+        return j;
+      };
+      const hedged = onDeviceRef.current && !autoPass ? serverRead(grabJpeg(source, sw, sh, canvasRef)) : null;
+      hedged?.catch(() => {});
       if (onDeviceRef.current) {
         const local = await readOnDevice(source, sw, sh, { requireStill: autoPass });
         if (local?.error) console.warn('[fastscan] on-device read failed:', local.error);
@@ -192,13 +211,10 @@ export default function FastScanner({ onAddSuccess, showToast }) {
           if (!out.results) out = null;
         }
       }
-      if (!out) {
-        const blob = (onDeviceRef.current && await lastFrameJpeg().catch(() => null)) || await grabJpeg(source, sw, sh, canvasRef);
-        const r = await fetch('/api/cardscan/frame', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
-        if (r.status === 429) return { busy: true };
-        out = await r.json();
-        if (!r.ok || !out.ok) throw new Error(out.error || t('fastscan.serviceError'));
-      }
+      if (out) abort.abort();
+      else if (hedged) out = await hedged;
+      else out = await serverRead((async () => (onDeviceRef.current && await Promise.resolve(lastFrameJpeg()).catch(() => null)) || grabJpeg(source, sw, sh, canvasRef))());
+      if (out.busy) return { busy: true };
       const ms = Math.round(performance.now() - t0);
       const byNumber = new Map(out.results.map(x => [x.number, x]));
       drawOverlay(out.frame, out.candidates, byNumber);
@@ -243,11 +259,19 @@ export default function FastScanner({ onAddSuccess, showToast }) {
     timerRef.current = setTimeout(autoLoop, r.none || r.error ? AUTO_IDLE_MS : AUTO_GAP_MS);
   }, [scan]);
 
-  const toggleAuto = () => {
-    const next = !auto;
+  const setAutoRunning = (next) => {
     setAuto(next); autoRef.current = next;
     clearTimeout(timerRef.current);
     if (next) { seenIdsRef.current.clear(); autoLoop(); }
+  };
+  const toggleMode = () => {
+    const next = mode === 'auto' ? 'single' : 'auto';
+    if (auto) setAutoRunning(false);
+    setMode(next); localStorage.setItem('fastscan.mode', next);
+  };
+  const onShutter = () => {
+    if (mode === 'auto') setAutoRunning(!auto);
+    else scan(videoRef.current);
   };
 
 
@@ -349,14 +373,14 @@ export default function FastScanner({ onAddSuccess, showToast }) {
           <span className="fs-dock-side" aria-hidden="true" />
           <button
             type="button"
-            className={`fs-shutter${busy ? ' is-busy' : ''}${auto ? ' is-auto' : ''}`}
-            disabled={!cameraOn || auto}
-            onClick={() => scan(videoRef.current)}
-            aria-label={t('fastscan.scan')}
+            className={`fs-shutter${busy ? ' is-busy' : ''}${mode === 'auto' ? ' is-auto-mode' : ''}${auto ? ' is-auto' : ''}`}
+            disabled={!cameraOn}
+            onClick={onShutter}
+            aria-label={mode === 'auto' ? t(auto ? 'fastscan.autoStop' : 'fastscan.autoStart') : t('fastscan.scan')}
           ><span /></button>
-          <button type="button" className={`fs-icon fs-dock-side${auto ? ' is-on' : ''}`} disabled={!cameraOn} onClick={toggleAuto} aria-pressed={auto} aria-label={t('fastscan.auto')}>
-            <ScanLine size={20} />
-            <span className="fs-dock-label">{t('fastscan.autoShort')}</span>
+          <button type="button" className={`fs-icon fs-dock-side${mode === 'auto' ? ' is-on' : ''}`} onClick={toggleMode} aria-pressed={mode === 'auto'} aria-label={t('fastscan.modeToggle')}>
+            {mode === 'auto' ? <ScanLine size={20} /> : <Camera size={20} />}
+            <span className="fs-dock-label">{mode === 'auto' ? t('fastscan.autoShort') : t('fastscan.single')}</span>
           </button>
         </div>
       </div>

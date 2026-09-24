@@ -1883,6 +1883,8 @@ button, input, select, textarea {
 .fs-shutter span { position: absolute; inset: 5px; border-radius: 50%; background: #fff; transition: transform .15s ease, background .2s ease; }
 .fs-shutter:active:not(:disabled) span { transform: scale(.88); }
 .fs-shutter:disabled { opacity: .45; cursor: default; }
+.fs-shutter.is-auto-mode { border-color: #fbbf24; }
+.fs-shutter.is-auto-mode span { background: #fbbf24; }
 .fs-shutter.is-auto { border-color: #fbbf24; opacity: 1; }
 .fs-shutter.is-auto span { background: #fbbf24; transform: scale(.42); border-radius: 8px; }
 .fs-shutter.is-busy::after { content: ''; position: absolute; inset: -8px; border-radius: 50%; border: 2px solid transparent; border-top-color: #fbbf24; animation: fs-spin .7s linear infinite; }
