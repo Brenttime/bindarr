@@ -75,6 +75,7 @@ async function searchSecretLair(q, opts = {}) {
       // drops fall back to their foil file, which is the only one that exists).
       fileName: (slot.base || slot.foil).fileName,
       code: rep.code || '',
+      setName: rep.setName || '',
       releaseDate: rep.releaseDate || null,
       hasFoil: Boolean(slot.foil),
       foilOnly: !slot.base && Boolean(slot.foil),

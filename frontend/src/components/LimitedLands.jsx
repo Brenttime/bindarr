@@ -51,7 +51,7 @@ const panelTitle = { margin: 0, fontSize: '1.05rem', fontWeight: 800, color: 'va
 const eyebrow = { fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase', margin: '0 0 0.25rem' };
 const helper = { color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: 1.45, margin: '0.5rem 0 0' };
 
-export default function LimitedLands({ showToast }) {
+export default function LimitedLands({ showToast, onNavigate }) {
   const { t } = useT();
   const [state, setState] = useState(load);
   const [undo, setUndo] = useState(null);
@@ -154,6 +154,7 @@ export default function LimitedLands({ showToast }) {
           <p style={{ ...helper, marginTop: '0.25rem' }}>{t('limited.subtitle')}</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {onNavigate && <button type="button" className="btn btn-secondary" onClick={() => onNavigate('dashboard')}>{t('common.back')}</button>}
           {undo && <button type="button" className="btn btn-secondary" onClick={() => { setState(undo); setUndo(null); }}><RotateCcw size={15} /> {t('limited.undo')}</button>}
           <button type="button" className={`btn ${showImport ? 'btn-primary' : 'btn-secondary'}`} aria-expanded={showImport} onClick={() => setShowImport(v => !v)}><ClipboardPaste size={15} /> {t('limited.pasteList')}</button>
           <button type="button" className="btn btn-secondary" onClick={reset}>{t('limited.reset')}</button>

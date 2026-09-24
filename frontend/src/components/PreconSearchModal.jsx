@@ -110,7 +110,7 @@ export default function PreconSearchModal({ open, onClose, onImported, showToast
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}
       onClick={(e) => { if (e.target === e.currentTarget && !importing) onClose(); }}
     >
-      <div ref={dialogRef} className="glass-panel" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="precon-search-title" aria-describedby="precon-search-subtitle precon-fast-path-body" style={{ width: '100%', maxWidth: '560px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '1.5rem', position: 'relative' }}>
+      <div ref={dialogRef} className="glass-panel" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="precon-search-title" aria-describedby="precon-search-subtitle precon-fast-path-body" style={{ width: '100%', maxWidth: '680px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '1.5rem', position: 'relative' }}>
         <button
           className="btn btn-secondary btn-icon-only"
           onClick={onClose}
@@ -179,16 +179,16 @@ export default function PreconSearchModal({ open, onClose, onImported, showToast
           {!searching && !error && results.map((d) => (
             <div
               key={d.fileName}
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', padding: '0.7rem 0.85rem', border: '1px solid var(--border-glass)', borderRadius: '10px', background: 'rgba(255,255,255,0.02)' }}
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', padding: '0.7rem 0.85rem', border: '1px solid var(--border-glass)', borderRadius: '10px', background: 'rgba(255,255,255,0.02)' }}
             >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div title={d.name} style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-strong)', lineHeight: 1.3, overflowWrap: 'anywhere' }}>
                   {d.name}
                 </div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                   {[
                     TYPE_LABEL[d.type] || d.type,
-                    d.code,
+                    d.setName ? `${d.setName} (${d.code})` : d.code,
                     yearOf(d.releaseDate),
                   ].filter(Boolean).join(' · ')}
                 </div>

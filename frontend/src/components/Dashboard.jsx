@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { TrendingUp, Coins, Library, Trophy, Plus, ArrowUpRight } from 'lucide-react';
+import { TrendingUp, Coins, Library, Trophy, Plus, ArrowUpRight, Mountain, BookOpen } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { formatPrice, priceText } from '../utils/formatPrice';
 import { getPrintingBadgeLabel, getPrintingBadgeStyle } from '../utils/cardPrinting';
@@ -146,6 +146,14 @@ function Dashboard({ statsTrigger, onNavigate, onUpdate, showToast }) {
 
   return (
     <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <button type="button" className="btn btn-secondary" onClick={() => onNavigate && onNavigate('rules')}>
+          <BookOpen size={16} /> {t('rules.title')}
+        </button>
+        <button type="button" className="btn btn-secondary" onClick={() => onNavigate && onNavigate('limited')}>
+          <Mountain size={16} /> {t('nav.limited')}
+        </button>
+      </div>
       {/* Metrics Summary Grid */}
       <div className="metrics-grid">
         {/* Net Worth Card with historical switcher */}

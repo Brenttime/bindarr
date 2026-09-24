@@ -33,6 +33,10 @@ const { cacheNormalizedCards } = require('./cardCache');
 
 const MTGJSON = 'https://mtgjson.com/api/v5';
 const INDEX_URL = `${MTGJSON}/DeckList.json`;
+// Set code -> set name ("SOC" -> "Secrets of Strixhaven Commander"), so a
+// search for the set a precon was made for finds it even when the deck name
+// never mentions it (e.g. "Lorehold Spirit").
+const SETLIST_URL = `${MTGJSON}/SetList.json`;
 const DECKS_URL = `${MTGJSON}/decks/`;
 const client = axios.create({ timeout: 60000, headers: { 'User-Agent': 'Bindarr/1.0' } });
 // The index changes with the daily MTGJSON build; once a day is the right
@@ -55,10 +59,19 @@ function readIndex() {
   return null;
 }
 
-function writeIndex(payload) {
+function setNameMap(payload) {
+  const map = {};
+  for (const s of (payload && payload.data) || []) {
+    if (s && s.code && s.name) map[String(s.code).toUpperCase()] = s.name;
+  }
+  return map;
+}
+
+function writeIndex(payload, setNames = {}) {
   const decks = (payload.data || []).map((d) => ({
     name: d.name || '',
     code: d.code || '',
+    setName: setNames[String(d.code || '').toUpperCase()] || '',
     type: d.type || '',
     releaseDate: d.releaseDate || '',
     fileName: d.fileName || '',
@@ -80,12 +93,19 @@ function writeIndex(payload) {
 // "fresh", "stale", or "cache".
 async function getPreconIndex() {
   const cached = readIndex();
-  const fresh = !cached || (Date.now() - Date.parse(cached.fetchedAt) >= INDEX_MAX_AGE_MS);
+  // Mirrors written before set names existed are refreshed once so set-name
+  // search works immediately rather than after the next daily cycle.
+  const hasSetNames = cached && cached.decks.some((d) => d.setName);
+  const fresh = !cached || !hasSetNames || (Date.now() - Date.parse(cached.fetchedAt) >= INDEX_MAX_AGE_MS);
   if (!fresh) return { ...cached, source: 'cache' };
 
   try {
-    const resp = await client.get(INDEX_URL);
-    const doc = writeIndex(resp.data);
+    const [resp, sets] = await Promise.all([
+      client.get(INDEX_URL),
+      // Set names are an enhancement: a SetList failure must not block search.
+      client.get(SETLIST_URL).catch(() => null),
+    ]);
+    const doc = writeIndex(resp.data, sets ? setNameMap(sets.data) : {});
     return { ...doc, source: 'fresh' };
   } catch (err) {
     if (cached) return { ...cached, source: 'stale' };
@@ -94,7 +114,7 @@ async function getPreconIndex() {
   }
 }
 
-// Name + set + type, case-insensitive: exact-name first, then substring,
+// Name + set code + set name + type, case-insensitive: exact-name first, then substring,
 // then subsequence — the same ranking feel as the deck vault's search box.
 function rankPrecons(decks, q) {
   const needle = q.toLowerCase();
@@ -110,7 +130,7 @@ function rankPrecons(decks, q) {
   const scored = [];
   for (const d of decks) {
     const name = String(d.name || '').toLowerCase();
-    const hay = `${name} ${String(d.code || '').toLowerCase()} ${String(d.type || '').toLowerCase()}`;
+    const hay = `${name} ${String(d.code || '').toLowerCase()} ${String(d.setName || '').toLowerCase()} ${String(d.type || '').toLowerCase()}`;
     let score = -1;
     if (name.includes(needle)) score = 0;
     else if (hay.includes(needle)) score = 1;
@@ -232,6 +252,8 @@ module.exports = {
   getPreconCardList,
   rankPrecons,
   importPreconCardsIntoDeck,
+  setNameMap,
   INDEX_URL,
+  SETLIST_URL,
   MTGJSON,
 };
