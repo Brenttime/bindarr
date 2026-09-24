@@ -5,12 +5,18 @@ import { priceText } from '../utils/formatPrice';
 import { displayName } from '../utils/languages';
 import { useT } from '../utils/i18n';
 import { FRAME_MAX, fitContain, quadPath } from '../utils/fastScan';
+import { loadClientScan, readOnDevice, lastFrameJpeg, hydrateResults, needsServer } from '../utils/clientScan';
 
 // Fast scan. One request per scan: the frame goes up once, the cardscan
 // sidecar detects, warps and OCRs every card from the same decoded pixels, and
 // cards already identified on the table come back from its identity cache.
 // Identity is text-proven (title + collector footer) against Scryfall's full
 // printing index, so an answer is an exact printing or nothing.
+//
+// On-device first: when the phone can run it (utils/clientScan.js), the same
+// title + collector-number proof runs locally on a still, in-frame card and
+// only the Scryfall id goes to the backend for prices. Anything it cannot
+// prove, or a device that cannot load it, uses the server path unchanged.
 
 const AUTO_GAP_MS = 60;
 const AUTO_IDLE_MS = 350;
@@ -39,6 +45,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   const autoRef = useRef(false);
   const timerRef = useRef(null);
   const seenIdsRef = useRef(new Map()); // card.id -> last seen ms (auto de-dupe)
+  const onDeviceRef = useRef(false);
 
   const [service, setService] = useState(null);
   const [devices, setDevices] = useState([]);
@@ -56,10 +63,23 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   const [hint, setHint] = useState('');
   const [error, setError] = useState('');
   const [results, setResults] = useState([]);
+  const [onDevice, setOnDevice] = useState(false);
 
   useEffect(() => {
     fetch('/api/lists').then(r => (r.ok ? r.json() : [])).then(d => setLists(Array.isArray(d) ? d : (d.lists || []))).catch(() => {});
   }, []);
+  // One-time on-device download, started once the camera is on so opening the
+  // tab alone costs nothing. Failure just leaves the server path in charge.
+  useEffect(() => {
+    if (!cameraOn || onDeviceRef.current) return;
+    let live = true;
+    loadClientScan().then(r => {
+      if (!live) return;
+      onDeviceRef.current = r.ok; setOnDevice(r.ok);
+      if (!r.ok) console.info('[fastscan] on-device reader unavailable:', r.error);
+    });
+    return () => { live = false; };
+  }, [cameraOn]);
   useEffect(() => {
     fetch('/api/cardscan/status').then(r => setService(r.ok)).catch(() => setService(false));
   }, []);
@@ -160,11 +180,25 @@ export default function FastScanner({ onAddSuccess, showToast }) {
     if (!autoPass) setError('');
     const t0 = performance.now();
     try {
-      const blob = await grabJpeg(source, sw, sh, canvasRef);
-      const r = await fetch('/api/cardscan/frame', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
-      if (r.status === 429) return { busy: true };
-      const out = await r.json();
-      if (!r.ok || !out.ok) throw new Error(out.error || t('fastscan.serviceError'));
+      let out = null;
+      if (onDeviceRef.current) {
+        const local = await readOnDevice(source, sw, sh, { requireStill: autoPass });
+        if (local?.error) console.warn('[fastscan] on-device read failed:', local.error);
+        // Proven on the phone (or an auto pass the stillness gate held back):
+        // done. Anything else — unproven card, no card on a shutter press,
+        // failure — goes to the server with the same frame.
+        if (!needsServer(local, { autoPass })) {
+          out = { ...local, results: await hydrateResults(local.results).catch(() => null) };
+          if (!out.results) out = null;
+        }
+      }
+      if (!out) {
+        const blob = (onDeviceRef.current && await lastFrameJpeg().catch(() => null)) || await grabJpeg(source, sw, sh, canvasRef);
+        const r = await fetch('/api/cardscan/frame', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+        if (r.status === 429) return { busy: true };
+        out = await r.json();
+        if (!r.ok || !out.ok) throw new Error(out.error || t('fastscan.serviceError'));
+      }
       const ms = Math.round(performance.now() - t0);
       const byNumber = new Map(out.results.map(x => [x.number, x]));
       drawOverlay(out.frame, out.candidates, byNumber);
@@ -286,6 +320,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
           {results.length > 0 && <span className="fs-pill fs-pill-value">{priceText(total, currency)} · {results.length}</span>}
           {latency != null && <span className="fs-pill"><Sparkles size={12} /> {latency} ms</span>}
           {auto && <span className="fs-pill fs-pill-live"><span className="fs-dot" /> {t('fastscan.autoOn')}</span>}
+          {onDevice && <span className="fs-pill" title={t('fastscan.onDeviceHint')}>{t('fastscan.onDevice')}</span>}
           <span className="fs-spacer" />
           {torchOk && (
             <button type="button" className="fs-icon" onClick={toggleTorch} aria-label={t('fastscan.torch')}>
