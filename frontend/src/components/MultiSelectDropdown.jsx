@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Search } from 'lucide-react';
+import { looseFilter } from '../utils/looseMatch';
 import { useT } from '../utils/i18n';
 
 // A reusable checklist dropdown, standing in for a native <select> wherever
@@ -9,6 +10,10 @@ import { useT } from '../utils/i18n';
 export default function MultiSelectDropdown({ label, options, value, onChange, allLabel }) {
   const { t } = useT();
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchable = options.length > 6;
+  const shown = searchable ? looseFilter(options, query) : options;
+  useEffect(() => { if (!open) setQuery(''); }, [open]);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -66,9 +71,31 @@ export default function MultiSelectDropdown({ label, options, value, onChange, a
               {t('bulk.clear')}
             </button>
           )}
+          {searchable && (
+            <div style={{ position: 'sticky', top: '-0.35rem', zIndex: 1, background: 'var(--bg-secondary)', padding: '0.1rem 0 0.35rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Search size={13} style={{ flexShrink: 0, opacity: 0.6 }} />
+              <input
+                autoFocus
+                type="text"
+                className="input-control"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') setOpen(false);
+                  if (e.key === 'Enter' && shown[0]) { e.preventDefault(); toggle(shown[0].value); setQuery(''); }
+                }}
+                placeholder={t('collection.typeToSearch')}
+                aria-label={t('collection.typeToSearch')}
+                style={{ padding: '0.3rem 0.45rem', fontSize: '0.8rem', width: '100%' }}
+              />
+            </div>
+          )}
+          {searchable && shown.length === 0 && (
+            <div style={{ padding: '0.4rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{t('collection.noMatches')}</div>
+          )}
           {/* Native checkboxes rather than a styled div: keyboard reachable and
               announced without a roving-tabindex listbox of our own. */}
-          {options.map(opt => (
+          {shown.map(opt => (
             <label
               key={opt.value}
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.35rem 0.4rem', borderRadius: '5px', cursor: 'pointer', fontSize: '0.82rem' }}

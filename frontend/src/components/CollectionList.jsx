@@ -24,6 +24,7 @@ import {
 } from '../utils/collectionSessionCache';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
+import { inDayRange } from '../utils/looseMatch';
 import {
   ANCHOR_CONVERGENCE_MAX_FRAMES,
   INITIAL_RENDER_COUNT,
@@ -138,6 +139,8 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
   const [languageFilter, setLanguageFilter] = useState([]);
   const [minPriceFilter, setMinPriceFilter] = useState('');
   const [maxPriceFilter, setMaxPriceFilter] = useState('');
+  const [addedFromFilter, setAddedFromFilter] = useState('');
+  const [addedToFilter, setAddedToFilter] = useState('');
   const [sortBy, setSortBy] = useState('added-newest');
 
   // Live-catalog mode: the query contains an operator only Scryfall's
@@ -473,6 +476,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     + (searchFilter.trim() ? 1 : 0)
     + (minPriceFilter !== '' ? 1 : 0)
     + (maxPriceFilter !== '' ? 1 : 0)
+    + (addedFromFilter || addedToFilter ? 1 : 0)
     + (tradeOnly ? 1 : 0);
 
   const clearAllFilters = () => {
@@ -480,7 +484,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     setRarityFilter([]); setConditionFilter([]);
     setPrintingFilter([]); setSetFilter([]); setTypeFilter([]); setSupertypeFilter([]);
     setCmcFilter([]); setLanguageFilter([]);
-    setMinPriceFilter(''); setMaxPriceFilter('');
+    setMinPriceFilter(''); setMaxPriceFilter(''); setAddedFromFilter(''); setAddedToFilter('');
     setTradeOnly(false);
   };
 
@@ -733,12 +737,13 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       const matchesLanguage = languageFilter.length === 0 ? true : languageFilter.includes(item.language);
 
       const price = item.price_trend || 0;
+      const matchesAdded = inDayRange(item.added_at, addedFromFilter, addedToFilter);
       const matchesMinPrice = minPriceFilter === '' ? true : price >= parseFloat(minPriceFilter);
       const matchesMaxPrice = maxPriceFilter === '' ? true : price <= parseFloat(maxPriceFilter);
 
       return matchesSearch && matchesScryfall && matchesRarity && matchesCondition &&
              matchesPrinting && matchesSet && matchesType && matchesSupertype &&
-             matchesCmc && matchesLanguage && matchesMinPrice && matchesMaxPrice;
+             matchesCmc && matchesLanguage && matchesMinPrice && matchesMaxPrice && matchesAdded;
     });
 
     if (sortBy === 'qty-desc') {
@@ -749,7 +754,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       sortCardsByOrder(result, SORT_CRITERIA[sortBy] || SORT_CRITERIA['added-newest'], undefined, setsList);
     }
     return result;
-  }, [baseCollection, searchFilter, scryfallPredicate, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, minPriceFilter, maxPriceFilter, sortBy, setsList]);
+  }, [baseCollection, searchFilter, scryfallPredicate, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, minPriceFilter, maxPriceFilter, addedFromFilter, addedToFilter, sortBy, setsList]);
 
   // Group duplicate cards if stack option is active. Printing is baked into the
   // shared stack key, so foils and non-foils of one card always stay separate.
@@ -1302,6 +1307,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
 
               <Field label={t('collection.fMaxPrice')}>
                 <input type="number" className="input-control" placeholder={t('collection.maxPricePlaceholder')} value={maxPriceFilter} onChange={(e) => setMaxPriceFilter(e.target.value)} />
+              </Field>
+
+              <Field label={t('collection.fAddedFrom')}>
+                <input type="date" className="input-control" aria-label={t('collection.fAddedFrom')} value={addedFromFilter} max={addedToFilter || undefined} onChange={(e) => setAddedFromFilter(e.target.value)} />
+              </Field>
+
+              <Field label={t('collection.fAddedTo')}>
+                <input type="date" className="input-control" aria-label={t('collection.fAddedTo')} value={addedToFilter} min={addedFromFilter || undefined} onChange={(e) => setAddedToFilter(e.target.value)} />
               </Field>
             </div>
 
