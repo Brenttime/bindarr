@@ -23,8 +23,9 @@ function testLanguageScheme() {
   console.log('PASS: language filing scheme orders by language then name');
 }
 
-// Pure test (no DB): favorite as primary sort key floats starred cards to the
-// front while the secondary key (name) still sub-orders within each group.
+// Pure test (no DB): favoriting was removed, so a stale 'favorite' criterion
+// (e.g. an old saved sort) must be a no-op and fall through to the next key,
+// even when legacy rows still carry the column.
 function testFavoriteScheme() {
   const cards = [
     { name: 'Bravo', favorite: 0 },
@@ -33,9 +34,9 @@ function testFavoriteScheme() {
     { name: 'Charlie', favorite: 1 },
   ];
   const sorted = sortCards(cards, [{ by: 'favorite', dir: 'desc' }, { by: 'name', dir: 'asc' }], 'normals_first');
-  assert.deepStrictEqual(sorted.map(c => c.name), ['Alpha', 'Charlie', 'Bravo', 'Delta'],
-    'favorites must sort to the front, sub-ordered by name');
-  console.log('PASS: favorite sort key floats starred cards to the front');
+  assert.deepStrictEqual(sorted.map(c => c.name), ['Alpha', 'Bravo', 'Charlie', 'Delta'],
+    'a legacy favorite criterion must not reorder cards');
+  console.log('PASS: legacy favorite sort key is ignored');
 }
 
 // Pure test (no DB): the default name scheme is stable and alphabetical.

@@ -41,8 +41,8 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
           borderRadius: 'var(--radius-sm)'
         }}
       >
-        <div style={{ width: '34px', height: '46px', flexShrink: 0, borderRadius: '4px', overflow: 'hidden', background: 'rgba(0,0,0,0.3)' }}>
-          {c.image_url && <CardImage card={{ image_url: c.image_url, name: c.name }} />}
+        <div className="cw-thumb" style={{ width: '40px', aspectRatio: '488 / 680', flexShrink: 0, borderRadius: '4px', overflow: 'hidden', background: 'rgba(0,0,0,0.3)' }}>
+          {c.image_url && <CardImage card={{ image_url: c.image_url, name: c.card_name || c.name }} loading="lazy" decoding="async" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ color: 'var(--text-strong)', fontSize: '0.9rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -138,8 +138,8 @@ const CheckoutWizardModal = ({ locationsData, mode = 'checkout', onClose, onCanc
                     opacity: 0.75
                   }}
                 >
-                  <div style={{ width: '34px', height: '46px', flexShrink: 0, borderRadius: '4px', overflow: 'hidden', background: 'rgba(0,0,0,0.3)' }}>
-                    {c.image_url && <CardImage card={{ image_url: c.image_url, name: c.name }} />}
+                  <div className="cw-thumb" style={{ width: '40px', aspectRatio: '488 / 680', flexShrink: 0, borderRadius: '4px', overflow: 'hidden', background: 'rgba(0,0,0,0.3)' }}>
+                    {c.image_url && <CardImage card={{ image_url: c.image_url, name: c.card_name || c.name }} loading="lazy" decoding="async" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { X, Trash2, Star, Maximize2, ExternalLink, Search } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Trash2, Maximize2, ExternalLink, Search } from 'lucide-react';
 import { getCardDisplayName } from '../utils/langHelper';
 import { translatedName, setCode, isEnglish } from '../utils/languages';
 import { formatPrice, priceText } from '../utils/formatPrice';
@@ -10,7 +10,6 @@ import CardImage from './CardImage';
 import CardImageZoom from './CardImageZoom';
 import CardEntryFields from './CardEntryFields';
 import PriceHistoryChart from './PriceHistoryChart';
-import AddToDeckSelect from './AddToDeckSelect';
 import CardArtEditor from './CardArtEditor';
 import { useBackGuard } from '../utils/useBackGuard';
 import { useT } from '../utils/i18n';
@@ -36,10 +35,23 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
   const [language, setLanguage] = useState('English');
   const [purchasePrice, setPurchasePrice] = useState(0);
   const [isTrade, setIsTrade] = useState(0);
-  const [favorite, setFavorite] = useState(0);
   const [notes, setNotes] = useState('');
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const hasToggledRef = useRef(false);
+  // Rules text, fetched per card (not per collection row) so the list payload
+  // stays lean. null = not loaded / none.
+  const [oracle, setOracle] = useState(null);
+  const oracleCardId = card?.card_id || null;
+
+  useEffect(() => {
+    setOracle(null);
+    if (!oracleCardId) return undefined;
+    let cancelled = false;
+    fetch(`/api/cards/${encodeURIComponent(oracleCardId)}/oracle`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled) setOracle(d); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [oracleCardId]);
 
   useBackGuard(isFullScreen, () => setIsFullScreen(false));
 
@@ -47,7 +59,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
 
   useEffect(() => {
     if (!card) return;
-    hasToggledRef.current = false;
     setMode(startInEdit ? 'edit' : 'view');
     setQ(card.quantity ?? 1);
     setCondition(card.condition || 'Near Mint');
@@ -55,15 +66,11 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
     setLanguage(card.language || 'English');
     setPurchasePrice(card.purchase_price || 0);
     setIsTrade(card.is_trade ? 1 : 0);
-    setFavorite(card.favorite ? 1 : 0);
     setNotes(card.notes || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset form only when the entry changes, not on every card mutation
   }, [targetEntryId, startInEdit]);
 
   const handleClose = () => {
-    if (hasToggledRef.current && onUpdate) {
-      onUpdate();
-    }
     onClose && onClose();
   };
 
@@ -91,7 +98,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
           language,
           purchase_price: parseFloat(purchasePrice) || 0,
           is_trade: isTrade ? 1 : 0,
-          favorite: favorite ? 1 : 0,
           notes
         })
       });
@@ -102,7 +108,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
         card.language = language;
         card.purchase_price = parseFloat(purchasePrice) || 0;
         card.is_trade = isTrade ? 1 : 0;
-        card.favorite = favorite ? 1 : 0;
         card.notes = notes;
         // The server resolves this per printing on the next fetch; mirror it here so
         // a screen still holding this object does not show the old printing's price.
@@ -117,62 +122,6 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
     } catch (err) {
       console.error(err);
       showToast && showToast(t('inspector.errEdit'));
-    }
-  };
-
-  const handleQuickToggle = async (field, value) => {
-    if (!targetEntryId) return;
-    const nextFavorite = field === 'favorite' ? (value ? 1 : 0) : (favorite ? 1 : 0);
-    const nextIsTrade = field === 'is_trade' ? (value ? 1 : 0) : (isTrade ? 1 : 0);
-
-    // Optimistic UI & prop object updates
-    if (field === 'is_trade') { setIsTrade(nextIsTrade); card.is_trade = nextIsTrade; }
-    if (field === 'favorite') { setFavorite(nextFavorite); card.favorite = nextFavorite; }
-
-    // Only the toggled flags. Quantity and placement are deliberately absent:
-    // a favourite/trade toggle must never change how many copies you own or
-    // where they live, and sending quantity here reconciles the whole stack.
-    const payload = {
-      is_trade: nextIsTrade,
-      favorite: nextFavorite
-    };
-
-    try {
-      const res = await fetch(`/api/collection/${targetEntryId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        hasToggledRef.current = true;
-        showToast && showToast(t('inspector.cardUpdated'));
-      } else {
-        // revert on fail
-        if (field === 'is_trade') { setIsTrade(isTrade); card.is_trade = isTrade; }
-        if (field === 'favorite') { setFavorite(favorite); card.favorite = favorite; }
-        showToast && showToast(t('inspector.errUpdate'));
-      }
-    } catch (err) {
-      console.error(err);
-      if (field === 'is_trade') { setIsTrade(isTrade); card.is_trade = isTrade; }
-      if (field === 'favorite') { setFavorite(favorite); card.favorite = favorite; }
-      showToast && showToast(t('inspector.errUpdateGeneric'));
-    }
-  };
-
-  const handleAddToDeck = async (deckId) => {
-    if (!targetEntryId || !deckId) return;
-    try {
-      const res = await fetch('/api/collection/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entry_ids: [targetEntryId], action: 'add_to_deck', value: deckId })
-      });
-      const data = await res.json().catch(() => ({}));
-      showToast && showToast(res.ok ? (data.message || t('inspector.addedToDeck')) : (data.error || t('inspector.errAddDeck')));
-    } catch (err) {
-      console.error(err);
-      showToast && showToast(t('inspector.errAddDeckGeneric'));
     }
   };
 
@@ -334,6 +283,24 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
             )}
           </div>
 
+          {mode !== 'edit' && oracle && (oracle.faces?.length || oracle.oracle_text) ? (
+            <div className="ci-oracle" style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-sm)', padding: '0.7rem 0.85rem' }}>
+              {(oracle.faces?.length ? oracle.faces : [{ oracle_text: oracle.oracle_text }]).map((face, i) => (
+                <div key={i}>
+                  {face.name && (
+                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-strong)', marginBottom: '0.15rem' }}>
+                      {face.name}{face.mana_cost ? <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}> {face.mana_cost}</span> : null}
+                      {face.type_line ? <span style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 500, fontSize: '0.72rem' }}>{face.type_line}</span> : null}
+                    </div>
+                  )}
+                  {face.oracle_text && (
+                    <p style={{ margin: 0, fontSize: '0.82rem', lineHeight: 1.45, color: 'var(--text-secondary)', whiteSpace: 'pre-line' }}>{face.oracle_text}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           {mode === 'edit' ? (
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
@@ -462,26 +429,10 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
                 </div>
               )}
 
-              {/* Main Actions Row: Edit Card + Icon buttons for Favorite & Delete */}
+              {/* Main Actions Row: a compact Edit button + Delete. */}
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setMode('edit')}>
+                <button className="btn btn-primary ci-edit-btn" style={{ padding: '0.4rem 0.9rem', fontSize: '0.8rem' }} onClick={() => setMode('edit')}>
                   {t('inspector.editCard')}
-                </button>
-
-                <AddToDeckSelect
-                  onAdd={handleAddToDeck}
-                  placeholder={t('inspector.addToDeck')}
-                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.5rem', maxWidth: '140px' }}
-                />
-
-                <button
-                  type="button"
-                  className={`btn ${favorite === 1 ? 'btn-primary' : 'btn-secondary'} btn-icon-only`}
-                  style={{ borderRadius: 'var(--radius-sm)', padding: '0.6rem', ...(favorite === 1 ? { backgroundColor: 'rgba(250,204,21,0.2)', color: '#facc15', border: '1px solid rgba(250,204,21,0.3)' } : {}) }}
-                  onClick={() => handleQuickToggle('favorite', favorite === 1 ? 0 : 1)}
-                  title={t(favorite === 1 ? 'inspector.unfavorite' : 'inspector.favorite')}
-                >
-                  <Star size={16} fill={favorite === 1 ? '#facc15' : 'none'} />
                 </button>
 
                 <button

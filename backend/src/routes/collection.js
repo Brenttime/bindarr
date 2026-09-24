@@ -342,7 +342,6 @@ router.get('/collection', async (req, res) => {
         c.purchase_price,
         c.added_at,
         c.is_trade,
-        c.favorite,
         c.notes,
         cc.name,
         -- The localized name for a non-English printing, so every view that
@@ -597,7 +596,7 @@ router.put('/collection/:id', async (req, res) => {
   const { id } = req.params;
   const {
     quantity, condition, printing, language, purchase_price,
-    is_trade, favorite, notes
+    is_trade, notes
   } = req.body;
 
   try {
@@ -623,7 +622,6 @@ router.put('/collection/:id', async (req, res) => {
     if (language !== undefined) { updates.push('language = ?'); params.push(language); }
     if (purchase_price !== undefined) { updates.push('purchase_price = ?'); params.push(purchase_price); }
     if (is_trade !== undefined) { updates.push('is_trade = ?'); params.push(is_trade ? 1 : 0); }
-    if (favorite !== undefined) { updates.push('favorite = ?'); params.push(favorite ? 1 : 0); }
     if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
 
     const touchesPhysicalStack = requestedQty !== null

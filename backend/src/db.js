@@ -506,6 +506,16 @@ async function initDb() {
   if (!cardCacheCols.some(c => c.name === 'price_etched')) {
     await run(`ALTER TABLE card_cache ADD COLUMN price_etched REAL`);
   }
+  // Rules text. NULL means "not fetched yet" (rows cached before this column
+  // existed); '' means the card genuinely has none (vanilla creatures, basics).
+  // oracle_faces holds [{name, mana_cost, type_line, oracle_text}] for
+  // multi-face cards (DFC, split, adventure), NULL otherwise.
+  if (!cardCacheCols.some(c => c.name === 'oracle_text')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN oracle_text TEXT`);
+  }
+  if (!cardCacheCols.some(c => c.name === 'oracle_faces')) {
+    await run(`ALTER TABLE card_cache ADD COLUMN oracle_faces TEXT`);
+  }
   if (!cardCacheCols.some(c => c.name === 'tcgplayer_product_id')) {
     await run(`ALTER TABLE card_cache ADD COLUMN tcgplayer_product_id INTEGER`);
     // Backfill from the URLs already cached, rather than re-fetching 100k+ rows

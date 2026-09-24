@@ -12,6 +12,7 @@ const COLUMNS = [
   'cmc', 'color_identity', 'language', 'printed_name',
   'tcgplayer_url', 'cardmarket_url', 'tcgplayer_product_id',
   'price_currency', 'price_source',
+  'oracle_text', 'oracle_faces',
 ];
 
 // A page of results can be 250 cards and one round trip per card cost more than
@@ -28,7 +29,7 @@ const SET_CLAUSE = COLUMNS
   .filter(c => c !== 'id' && c !== 'name')
   // Partial set/catalog rows may not carry identity or layout eligibility.
   // Never erase durable values learned from a complete Scryfall card response.
-  .map(c => (c === 'oracle_id' || c === 'scryfall_search_eligible')
+  .map(c => (c === 'oracle_id' || c === 'scryfall_search_eligible' || c === 'oracle_text' || c === 'oracle_faces')
     ? `${c} = COALESCE(excluded.${c}, card_cache.${c})`
     : `${c} = excluded.${c}`)
   .join(', ');
@@ -71,6 +72,8 @@ async function cacheNormalizedCards(cards, opts = {}) {
         c.tcgplayer_url || null, c.cardmarket_url || null,
         num(c.tcgplayer_product_id),
         c.price_currency || 'USD', c.price_source || null,
+        c.oracle_text == null ? null : String(c.oracle_text),
+        c.oracle_faces == null ? null : (typeof c.oracle_faces === 'string' ? c.oracle_faces : JSON.stringify(c.oracle_faces)),
       );
     }
     await db.run(

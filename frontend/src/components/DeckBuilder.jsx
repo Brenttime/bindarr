@@ -31,7 +31,14 @@ function DeckBuilder({ showToast, onNavigate }) {
   const [viewMode, setViewMode] = useState('list'); // 'list' or 'detail'
   
   // Deck View & Display Modes
-  const [cardDisplayMode, setCardDisplayMode] = useState('list'); // 'list' | 'grid'
+  // Grid by default; the user's last explicit choice is remembered.
+  const [cardDisplayMode, setCardDisplayModeState] = useState(() => {
+    try { return localStorage.getItem('bindarr.deckCardDisplayMode') === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
+  }); // 'list' | 'grid'
+  const setCardDisplayMode = (mode) => {
+    setCardDisplayModeState(mode);
+    try { localStorage.setItem('bindarr.deckCardDisplayMode', mode); } catch { /* storage unavailable */ }
+  };
   const [previewCard, setPreviewCard] = useState(null);
 
   // Deck Creation States & Constants
@@ -1699,8 +1706,8 @@ function DeckBuilder({ showToast, onNavigate }) {
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.75rem' }}>
                               {list.map(card => (
                                 <div key={card.id} style={{ position: 'relative', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', transition: 'transform 0.15s' }}>
-                                  <div style={{ position: 'relative', width: '100%', aspectRatio: 0.718, cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
-                                    <CardImage card={card} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  <div className="deck-grid-card" style={{ position: 'relative', width: '100%', aspectRatio: '488 / 680', overflow: 'hidden', cursor: 'pointer' }} onClick={() => setPreviewCard(card)}>
+                                    <CardImage card={card} loading="lazy" decoding="async" style={{ position: 'absolute', inset: 0, display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />
                                     <span style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.85)', color: 'var(--accent-yellow)', fontSize: '0.75rem', fontWeight: 800, padding: '1px 6px', borderRadius: '10px', border: '1px solid var(--accent-yellow)' }}>
                                       x{card.quantity}
                                     </span>

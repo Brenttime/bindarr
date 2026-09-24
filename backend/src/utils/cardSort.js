@@ -95,9 +95,6 @@ function sortCards(cards, sortOrder, foilSorting) {
       const dirMult = c.dir === 'desc' ? -1 : 1;
       let cmp = 0;
       switch (c.by) {
-        case 'favorite':
-          cmp = (a.favorite ? 1 : 0) - (b.favorite ? 1 : 0);
-          break;
         case 'name':
           cmp = (a.name || '').localeCompare(b.name || '');
           break;

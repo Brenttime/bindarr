@@ -272,7 +272,6 @@ function compileCollectionQuery({ ast, userId, limit = 60, offset = 0 }) {
     c.purchase_price,
     c.added_at,
     c.is_trade,
-    c.favorite,
     c.notes,
     cc.oracle_id,
     cc.name,
