@@ -420,6 +420,47 @@ router.post('/:id/cards', async (req, res) => {
   }
 });
 
+// Bulk add, INCREMENTING quantities (the scanner sends a whole scan here; the
+// single-card route above sets a quantity instead). Printing-equivalent rows
+// merge the same way the single-card route does.
+router.post('/:id/cards/bulk', async (req, res) => {
+  const { id } = req.params;
+  const entries = Array.isArray(req.body?.cards) ? req.body.cards : [];
+  if (!entries.length || entries.length > 250) return res.status(400).json({ error: 'cards must be 1-250 entries' });
+  try {
+    const list = await db.get(`SELECT id FROM card_lists WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    if (!list) return res.status(404).json({ error: 'List not found or unauthorized' });
+    let added = 0;
+    const failed = [];
+    for (const entry of entries) {
+      const cardId = entry?.card_id;
+      const qty = Math.max(1, parseInt(entry?.quantity, 10) || 1);
+      if (!cardId) continue;
+      try {
+        let card = await db.get(`SELECT id FROM card_cache WHERE id = ?`, [cardId]);
+        if (!card && !(await cardApi.getCardById(cardId))) { failed.push(cardId); continue; }
+        const equivalent = await db.get(`
+          SELECT lc.card_id FROM list_cards lc
+          JOIN card_cache existing_cc ON existing_cc.id = lc.card_id
+          JOIN card_cache target_cc ON target_cc.id = ?
+          WHERE lc.list_id = ? AND ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+          ORDER BY (lc.card_id = ?) DESC, lc.card_id LIMIT 1
+        `, [cardId, id, cardId]);
+        if (equivalent) {
+          await db.run(`UPDATE list_cards SET quantity = quantity + ? WHERE list_id = ? AND card_id = ?`, [qty, id, equivalent.card_id]);
+        } else {
+          await db.run(`INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, ?, ?)`, [id, cardId, qty]);
+        }
+        added += qty;
+      } catch (e) { console.error('list bulk add', cardId, e.message); failed.push(cardId); }
+    }
+    res.status(failed.length && !added ? 500 : 200).json({ added, failed });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to add cards to list' });
+  }
+});
+
 // Remove a card from the list.
 router.delete('/:id/cards/:card_id', async (req, res) => {
   const { id, card_id } = req.params;

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Camera, PackageOpen, Search, ShoppingCart } from 'lucide-react';
-import CameraScanner from './CameraScanner';
+import { Camera, PackageOpen, ScanText, Search, ShoppingCart } from 'lucide-react';
+import FastScanner from './FastScanner';
 import CardSearch from './CardSearch';
 import SecretLairPanel from './SecretLairPanel';
 import OrderImportPanel from './OrderImportPanel';
@@ -25,7 +25,7 @@ import { useT } from '../utils/i18n';
 // throw away, and neither view has state worth keeping alive across the other.
 export default function AddCards({ onAddSuccess, showToast, setActiveTab }) {
   const { t } = useT();
-  const [mode, setMode] = useState('scan');
+  const [mode, setMode] = useState('fastscan');
 
   // Demo build has no backend: neither the camera scanner nor the Secret Lair
   // importer can work, so show a notice instead of two controls that would fail.
@@ -42,7 +42,7 @@ export default function AddCards({ onAddSuccess, showToast, setActiveTab }) {
   }
 
   const MODES = [
-    { key: 'scan', icon: Camera, label: t('addcards.tabScan') },
+    { key: 'fastscan', icon: ScanText, label: t('addcards.tabFastScan') },
     { key: 'search', icon: Search, label: t('addcards.tabSearch') },
     { key: 'secretlair', icon: PackageOpen, label: t('addcards.tabSecretLair') },
     { key: 'orderimport', icon: ShoppingCart, label: t('addcards.tabOrderImport') },
@@ -84,7 +84,7 @@ export default function AddCards({ onAddSuccess, showToast, setActiveTab }) {
         ))}
       </div>
 
-      {mode === 'scan' && <CameraScanner onAddSuccess={onAddSuccess} showToast={showToast} setActiveTab={setActiveTab} />}
+      {mode === 'fastscan' && <FastScanner onAddSuccess={onAddSuccess} showToast={showToast} />}
       {/* CardSearch takes just the two hooks it uses: it reports an add so the
           stats refresh, and it toasts. It never navigates, so unlike the other
           panes it gets no setActiveTab. */}
