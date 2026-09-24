@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Zap, ZapOff, Repeat, ImageUp, Check, X, SwitchCamera, Camera, Sparkles, Trash2, Send } from 'lucide-react';
+import { Zap, ZapOff, ScanLine, Check, X, SwitchCamera, Camera, Sparkles, Trash2, Send } from 'lucide-react';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
 import { priceText } from '../utils/formatPrice';
 import { displayName } from '../utils/languages';
@@ -216,15 +216,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
     if (next) { seenIdsRef.current.clear(); autoLoop(); }
   };
 
-  const onPhoto = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null);
-    if (!bmp) { setError(t('fastscan.badPhoto')); return; }
-    await scan(bmp);
-    bmp.close?.();
-  };
+
 
   const chooseDest = async (value) => {
     if (value !== '__new') { setDest(value); localStorage.setItem('fastscan.dest', value); return; }
@@ -319,10 +311,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
         {cameraOn && (hint || error) && <div className={`fs-hint${error ? ' is-error' : ''}`}>{error || hint}</div>}
 
         <div className="fs-dock">
-          <label className="fs-icon fs-dock-side" aria-label={t('fastscan.photo')}>
-            <ImageUp size={20} />
-            <input type="file" accept="image/*" onChange={onPhoto} hidden />
-          </label>
+          <span className="fs-dock-side" aria-hidden="true" />
           <button
             type="button"
             className={`fs-shutter${busy ? ' is-busy' : ''}${auto ? ' is-auto' : ''}`}
@@ -331,7 +320,8 @@ export default function FastScanner({ onAddSuccess, showToast }) {
             aria-label={t('fastscan.scan')}
           ><span /></button>
           <button type="button" className={`fs-icon fs-dock-side${auto ? ' is-on' : ''}`} disabled={!cameraOn} onClick={toggleAuto} aria-pressed={auto} aria-label={t('fastscan.auto')}>
-            <Repeat size={20} />
+            <ScanLine size={20} />
+            <span className="fs-dock-label">{t('fastscan.autoShort')}</span>
           </button>
         </div>
       </div>
