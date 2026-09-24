@@ -24,7 +24,7 @@ const TYPE_COLORS = {
 };
 
 // Same Sort By options as the owner's collection view (CollectionList), minus
-// the owner-only 'favorite'/'added' notions. 'qty-desc' isn't a card-order
+// the owner-only 'added' notions. 'qty-desc' isn't a card-order
 // scheme so it's handled separately below.
 const SORT_CRITERIA = {
   'added-newest': [{ by: 'added_at', dir: 'desc' }, { by: 'entry_id', dir: 'desc' }],

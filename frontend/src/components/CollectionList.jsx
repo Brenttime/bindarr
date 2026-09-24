@@ -24,6 +24,7 @@ import {
 } from '../utils/collectionSessionCache';
 import { useMultiSelect } from '../utils/useMultiSelect';
 import { useT } from '../utils/i18n';
+import { inDayRange } from '../utils/looseMatch';
 import {
   ANCHOR_CONVERGENCE_MAX_FRAMES,
   INITIAL_RENDER_COUNT,
@@ -69,7 +70,6 @@ const SORT_CRITERIA = {
   'rarity-asc': [{ by: 'rarity', dir: 'asc' }, { by: 'name', dir: 'asc' }],
   'type-asc': [{ by: 'type', dir: 'asc' }, { by: 'name', dir: 'asc' }],
   'language-asc': [{ by: 'language', dir: 'asc' }, { by: 'name', dir: 'asc' }],
-  'favorite-first': [{ by: 'favorite', dir: 'desc' }, { by: 'added_at', dir: 'desc' }],
 };
 
 // Small labelled field wrapper to keep the filter grid uniform.
@@ -139,8 +139,9 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
   const [languageFilter, setLanguageFilter] = useState([]);
   const [minPriceFilter, setMinPriceFilter] = useState('');
   const [maxPriceFilter, setMaxPriceFilter] = useState('');
+  const [addedFromFilter, setAddedFromFilter] = useState('');
+  const [addedToFilter, setAddedToFilter] = useState('');
   const [sortBy, setSortBy] = useState('added-newest');
-  const [favoriteOnly, setFavoriteOnly] = useState(false);
 
   // Live-catalog mode: the query contains an operator only Scryfall's
   // database can answer (otag:, availability:, artist: ...). Those cannot be
@@ -475,16 +476,16 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
     + (searchFilter.trim() ? 1 : 0)
     + (minPriceFilter !== '' ? 1 : 0)
     + (maxPriceFilter !== '' ? 1 : 0)
-    + (tradeOnly ? 1 : 0)
-    + (favoriteOnly ? 1 : 0);
+    + (addedFromFilter || addedToFilter ? 1 : 0)
+    + (tradeOnly ? 1 : 0);
 
   const clearAllFilters = () => {
     setSearchFilter('');
     setRarityFilter([]); setConditionFilter([]);
     setPrintingFilter([]); setSetFilter([]); setTypeFilter([]); setSupertypeFilter([]);
     setCmcFilter([]); setLanguageFilter([]);
-    setMinPriceFilter(''); setMaxPriceFilter('');
-    setTradeOnly(false); setFavoriteOnly(false);
+    setMinPriceFilter(''); setMaxPriceFilter(''); setAddedFromFilter(''); setAddedToFilter('');
+    setTradeOnly(false);
   };
 
   // The unified box, classified and compiled once per keystroke. Plain names
@@ -734,15 +735,15 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       const matchesSupertype = supertypeFilter.length === 0 ? true : supertypeFilter.includes(item.supertype);
       const matchesCmc = cmcFilter.length === 0 ? true : cmcFilter.includes(String(item.cmc));
       const matchesLanguage = languageFilter.length === 0 ? true : languageFilter.includes(item.language);
-      const matchesFavorite = favoriteOnly ? item.favorite === 1 : true;
 
       const price = item.price_trend || 0;
+      const matchesAdded = inDayRange(item.added_at, addedFromFilter, addedToFilter);
       const matchesMinPrice = minPriceFilter === '' ? true : price >= parseFloat(minPriceFilter);
       const matchesMaxPrice = maxPriceFilter === '' ? true : price <= parseFloat(maxPriceFilter);
 
       return matchesSearch && matchesScryfall && matchesRarity && matchesCondition &&
              matchesPrinting && matchesSet && matchesType && matchesSupertype &&
-             matchesCmc && matchesLanguage && matchesFavorite && matchesMinPrice && matchesMaxPrice;
+             matchesCmc && matchesLanguage && matchesMinPrice && matchesMaxPrice && matchesAdded;
     });
 
     if (sortBy === 'qty-desc') {
@@ -753,7 +754,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
       sortCardsByOrder(result, SORT_CRITERIA[sortBy] || SORT_CRITERIA['added-newest'], undefined, setsList);
     }
     return result;
-  }, [baseCollection, searchFilter, scryfallPredicate, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, favoriteOnly, minPriceFilter, maxPriceFilter, sortBy, setsList]);
+  }, [baseCollection, searchFilter, scryfallPredicate, rarityFilter, conditionFilter, printingFilter, setFilter, typeFilter, supertypeFilter, cmcFilter, languageFilter, minPriceFilter, maxPriceFilter, addedFromFilter, addedToFilter, sortBy, setsList]);
 
   // Group duplicate cards if stack option is active. Printing is baked into the
   // shared stack key, so foils and non-foils of one card always stay separate.
@@ -1193,7 +1194,7 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
 
           <Field label={t('collection.sortBy')}>
             <select className="select-control" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-              {['added-newest', 'added-oldest', 'name-asc', 'name-desc', 'price-desc', 'price-asc', 'qty-desc', 'set-asc', 'number-asc', 'type-asc', 'rarity-desc', 'rarity-asc', 'language-asc', 'favorite-first']
+              {['added-newest', 'added-oldest', 'name-asc', 'name-desc', 'price-desc', 'price-asc', 'qty-desc', 'set-asc', 'number-asc', 'type-asc', 'rarity-desc', 'rarity-asc', 'language-asc']
                 .map(key => <option key={key} value={key}>{t(`collection.sort.${key}`)}</option>)}
             </select>
           </Field>
@@ -1307,6 +1308,14 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
               <Field label={t('collection.fMaxPrice')}>
                 <input type="number" className="input-control" placeholder={t('collection.maxPricePlaceholder')} value={maxPriceFilter} onChange={(e) => setMaxPriceFilter(e.target.value)} />
               </Field>
+
+              <Field label={t('collection.fAddedFrom')}>
+                <input type="date" className="input-control" aria-label={t('collection.fAddedFrom')} value={addedFromFilter} max={addedToFilter || undefined} onChange={(e) => setAddedFromFilter(e.target.value)} />
+              </Field>
+
+              <Field label={t('collection.fAddedTo')}>
+                <input type="date" className="input-control" aria-label={t('collection.fAddedTo')} value={addedToFilter} min={addedFromFilter || undefined} onChange={(e) => setAddedToFilter(e.target.value)} />
+              </Field>
             </div>
 
             {/* Options row: stacking + trade + clear */}
@@ -1333,13 +1342,6 @@ function CollectionList({ statsTrigger, onUpdate, showToast, token, selectedCard
                 <input type="checkbox" id="tradeOnlyOpt" checked={tradeOnly} onChange={(e) => setTradeOnly(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
                 <label htmlFor="tradeOnlyOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: 'var(--accent-yellow)', fontWeight: 600 }}>
                   {t('collection.tradeOnly')}
-                </label>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <input type="checkbox" id="favoriteOnlyOpt" checked={favoriteOnly} onChange={(e) => setFavoriteOnly(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
-                <label htmlFor="favoriteOnlyOpt" style={{ cursor: 'pointer', margin: 0, fontSize: '0.75rem', color: '#facc15', fontWeight: 600 }}>
-                  {t('collection.favoritesOnly')}
                 </label>
               </div>
 

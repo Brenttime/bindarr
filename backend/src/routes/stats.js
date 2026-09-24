@@ -158,7 +158,7 @@ router.get('/stats', async (req, res) => {
     const topValuableQuery = `
       SELECT
         c.id AS entry_id,
-        c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.is_trade, c.favorite,
+        c.quantity, c.condition, c.printing, c.language, c.purchase_price, c.is_trade,
         cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
         cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity, cc.price_trend,
         cc.price_normal, cc.price_holofoil
@@ -213,7 +213,7 @@ router.get('/stats', async (req, res) => {
     // Recently added cards (most useful "what did I just add" glance)
     const recentRows = await db.all(`
       SELECT c.id AS entry_id,
-             c.quantity, c.condition, c.printing, c.language, c.added_at, c.is_trade, c.favorite,
+             c.quantity, c.condition, c.printing, c.language, c.added_at, c.is_trade,
              cc.id as card_id, cc.name, cc.printed_name, cc.rarity, cc.set_name, cc.set_id, cc.number, cc.image_url,
              cc.supertype, cc.subtypes, cc.types, cc.cmc, cc.color_identity,
              cc.price_trend, cc.price_normal, cc.price_holofoil
@@ -456,6 +456,19 @@ router.get('/stats/networth', async (req, res) => {
 
 // Two windows: the last 30 days of snapshots, or everything Bindarr has recorded.
 const PRICE_HISTORY_RANGES = { '30d': 30 };
+
+// Rules (Oracle) text for one card. Served from card_cache; rows cached before
+// the oracle columns existed are filled from Scryfall on first view.
+router.get('/cards/:id/oracle', async (req, res) => {
+  try {
+    const data = await require('../scryfallApi').getOracleText(req.params.id);
+    if (!data) return res.status(404).json({ error: 'Card not found' });
+    res.json(data);
+  } catch (err) {
+    console.error('oracle text lookup failed:', err.message);
+    res.status(502).json({ error: 'Could not load rules text' });
+  }
+});
 
 // Get Card Price History
 router.get('/cards/:id/price-history', async (req, res) => {

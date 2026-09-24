@@ -192,7 +192,7 @@ async function runTests() {
 
     // A collection mutation invalidates the token before another page can be
     // mixed into the old first-page result.
-    await db.run(`UPDATE collection SET favorite = 1 WHERE card_id = 'mtg-local-1'`);
+    await db.run(`UPDATE collection SET notes = 'changed' WHERE card_id = 'mtg-local-1'`);
     res = await fetch(
       `${base}/api/search?scope=collection&q=${encodeURIComponent('otag:local-page')}&limit=2&page=2&snapshot=${encodeURIComponent(snapshot)}`,
       { headers: authHeaders }

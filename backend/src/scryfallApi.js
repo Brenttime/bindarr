@@ -282,8 +282,56 @@ function normalizeCard(raw, lang) {
     // Scryfall's `prices.usd` is TCGplayer's number and `prices.eur` Cardmarket's,
     // so the currency names the marketplace too (see the fallback above).
     price_source: 'scryfall',
-    price_currency: currency
+    price_currency: currency,
+    ...oracleFields(raw)
   };
+}
+
+// Rules text for the card inspector. Multi-face cards (transform/MDFC, split,
+// adventure, flip) carry oracle_text per face and none at the top level, so
+// keep each face's text alongside a joined fallback string.
+function oracleFields(raw) {
+  const faces = Array.isArray(raw.card_faces) && raw.card_faces.length > 1
+    ? raw.card_faces.map(f => ({
+      name: f.name || '',
+      mana_cost: f.mana_cost || '',
+      type_line: f.type_line || '',
+      oracle_text: f.oracle_text || ''
+    }))
+    : null;
+  const text = raw.oracle_text != null
+    ? String(raw.oracle_text)
+    : (faces ? faces.map(f => f.oracle_text).filter(Boolean).join('\n\n//\n\n') : '');
+  return { oracle_text: text, oracle_faces: faces };
+}
+
+// The rules text for one cached card, fetched from Scryfall (and cached) the
+// first time it is asked for when the row predates the oracle columns.
+async function getOracleText(cardId) {
+  const row = await db.get(`SELECT id, oracle_text, oracle_faces FROM card_cache WHERE id = ?`, [cardId]);
+  const shape = (r) => {
+    let faces = null;
+    try { faces = r.oracle_faces ? JSON.parse(r.oracle_faces) : null; } catch { faces = null; }
+    return { oracle_text: r.oracle_text || '', faces };
+  };
+  if (row && row.oracle_text != null) return shape(row);
+  if (!String(cardId).startsWith('mtg-')) return row ? { oracle_text: '', faces: null } : null;
+  let resp;
+  try {
+    resp = await scryGetRetried(`/cards/${encodeURIComponent(String(cardId).slice(4))}`);
+  } catch (err) {
+    if (err.response && err.response.status === 404) return null;
+    throw err;
+  }
+  if (!resp || !resp.data) return null;
+  const norm = normalizeCard(resp.data);
+  // Only the rules-text columns: a full re-cache here would also overwrite the
+  // row's prices/art outside the normal refresh path.
+  if (row) {
+    await db.run(`UPDATE card_cache SET oracle_text = ?, oracle_faces = ? WHERE id = ?`,
+      [norm.oracle_text, norm.oracle_faces ? JSON.stringify(norm.oracle_faces) : null, cardId]);
+  }
+  return { oracle_text: norm.oracle_text || '', faces: norm.oracle_faces };
 }
 
 const cacheCards = (cards) => cacheNormalizedCards(cards);
@@ -1267,4 +1315,4 @@ async function resolveCollectionQuery({
 // adapter. `collectionQueryCache` is the in-process half of the durable
 // catalog-query cache — exposed so tests can age an entry to drive the
 // stale-while-revalidate paths (production code never reads it directly).
-module.exports = { scryPostRetried, searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow, resolveCollectionQuery, collectionQueryCache };
+module.exports = { getOracleText, scryPostRetried, searchCards, normalizeCard, cacheCards, getCardsBySet, fetchAndCacheSets, updateCollectionPrices, getCardById, getPrintingInLang, bulkFetchByIdentifier, scryGetRetried, client, fetchWindow, resolveCollectionQuery, collectionQueryCache };
