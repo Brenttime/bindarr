@@ -29,6 +29,8 @@ function DeckBuilder({ showToast, onNavigate }) {
   const [activeDeck, setActiveDeck] = useState(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('list'); // 'list' or 'detail'
+  // Mobile-only editor tabs (CSS hides the inactive panes at <=768px).
+  const [editorTab, setEditorTab] = useState('cards'); // 'cards' | 'add' | 'stats'
   
   // Deck View & Display Modes
   // Grid by default; the user's last explicit choice is remembered.
@@ -1556,14 +1558,22 @@ function DeckBuilder({ showToast, onNavigate }) {
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem', alignItems: 'start' }}>
+          <div className="deck-editor-tabs" role="tablist">
+            {[['cards', t('deck.tabCards')], ['add', t('deck.tabAdd')], ['stats', t('deck.tabStats')]].map(([k, label]) => (
+              <button key={k} role="tab" type="button" aria-selected={editorTab === k}
+                className={`deck-editor-tab${editorTab === k ? ' active' : ''}`}
+                onClick={() => setEditorTab(k)}>{label}</button>
+            ))}
+          </div>
+
+          <div className="deck-editor-body" data-tab={editorTab} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem', alignItems: 'start' }}>
             <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '1.5rem' }}>
               
               {/* Left Column: Deck Card List */}
-              <div style={{ flex: '2 1 500px', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div className="deck-editor-main" style={{ flex: '2 1 500px', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                 
                 {/* Search & Quick Add to Deck */}
-                <div className="glass-panel">
+                <div className="glass-panel deck-pane-add">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <h3 style={{ fontSize: '0.95rem', color: 'var(--text-strong)', margin: 0 }}>{t('deck.addCardsTitle')}</h3>
                   </div>
@@ -1618,7 +1628,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                 </div>
 
                 {/* Deck Cards Header & Display Mode Toggle */}
-                <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div className="glass-panel deck-pane-cards" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <h3 style={{ fontSize: '1rem', color: 'var(--text-strong)', borderLeft: '3px solid var(--accent-red)', paddingLeft: '0.5rem', margin: 0 }}>
                       Deck Cards ({totalDeckCardsCount} / {targetDeckCardsCount})
@@ -1738,7 +1748,7 @@ function DeckBuilder({ showToast, onNavigate }) {
               </div>
 
               {/* Right Column: Statistics, Mana Curve & Deck Health */}
-              <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div className="deck-pane-stats" style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
                 {/* Value: what the deck's OWN printings cost vs the cheapest
                     printings floor. Two axes answer two different questions —

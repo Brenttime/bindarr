@@ -1949,3 +1949,23 @@ button, input, select, textarea {
 .mbsync-run { display: flex; gap: 12px; align-items: center; font-size: 0.85rem; padding: 6px 0; border-top: 1px solid var(--border-glass); }
 .mbsync-run span:first-child { flex: 1; color: var(--text-secondary); }
 .mbsync-run span:nth-child(2) { font-variant-numeric: tabular-nums; }
+
+/* Deck editor: tabs on mobile, side-by-side columns on desktop. */
+.deck-editor-tabs { display: none; }
+@media (max-width: 768px) {
+  .deck-editor-tabs {
+    display: flex; gap: 4px; padding: 4px; position: sticky; top: 0; z-index: 20;
+    background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(10px);
+    border: 1px solid var(--border-glass); border-radius: var(--radius-md);
+  }
+  .deck-editor-tab {
+    flex: 1; min-height: 40px; border: 0; border-radius: var(--radius-sm);
+    background: transparent; color: var(--text-secondary); font-weight: 700; font-size: 0.9rem; cursor: pointer;
+  }
+  .deck-editor-tab.active { background: rgba(255, 255, 255, 0.1); color: var(--text-strong); }
+  .deck-editor-body[data-tab="cards"] .deck-pane-add,
+  .deck-editor-body[data-tab="cards"] .deck-pane-stats,
+  .deck-editor-body[data-tab="add"] .deck-pane-cards,
+  .deck-editor-body[data-tab="add"] .deck-pane-stats,
+  .deck-editor-body[data-tab="stats"] .deck-editor-main { display: none !important; }
+}
