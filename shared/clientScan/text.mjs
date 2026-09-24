@@ -285,3 +285,41 @@ export function resolveFooter(ix, title, codes, numbers, setless = numbers) {
   }
   return global.size === 1 ? [...global][0] : null;
 }
+
+// Multi-frame vote, constrained to the title's own printings. Consecutive
+// frames of one still card garble the collector line differently ("0807303",
+// "080305", "080/505" for 080/303), so no token repeats verbatim, but the
+// printed, zero-padded number does. A printing wins only if its padded number
+// (3+ chars, as modern footers print it) appears in >= 2 distinct frames and
+// no other candidate printing's number appears in ANY frame. Set codes read in
+// the frames narrow the candidates first.
+export function voteFooter(ix, title, frames) {
+  let pool = ix.byTitle[title] || [];
+  if (pool.length < 2 || frames.length < 2) return null;
+  const codes = footerCodes(ix, frames.flat());
+  if (codes.length) {
+    const inSet = pool.filter(pi => codes.includes(ix.printings[pi][1]));
+    if (inSet.length) pool = inSet;
+  }
+  const texts = frames.map(raws => raws.join(' ').toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const key = (pi) => {
+    const n = String(ix.printings[pi][2]).toLowerCase();
+    return /^\d+$/.test(n) ? n.padStart(3, '0') : n;
+  };
+  const hits = new Map();
+  for (const pi of pool) {
+    const k = key(pi);
+    if (k.length < 3) continue;
+    // "NNN/303": never let the printed set total vote for card #303.
+    if (Number(k) === (ix.setMax.get(ix.printings[pi][1]) || -1)) continue;
+    const n = texts.filter(tx => tx.includes(k)).length;
+    if (n) hits.set(pi, n);
+  }
+  if (hits.size !== 1) return null;
+  const [[pi, n]] = [...hits];
+  // The number must be unique among the candidates, too (two printings can
+  // share a number across sets when no set code was read).
+  const k = key(pi);
+  if (pool.some(o => o !== pi && key(o) === k)) return null;
+  return n >= 2 ? pi : null;
+}

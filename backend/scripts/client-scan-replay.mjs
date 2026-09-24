@@ -43,7 +43,7 @@ const rec = await ort.InferenceSession.create(path.join(assets, manifest.rec), s
 const cornelius = await ort.InferenceSession.create(path.join(modelDir, 'cornelius.onnx'), sessOpts);
 console.log(`loaded: index ${tIndex} ms, total ${Date.now() - tLoad} ms; ${index.names.length} names, ${index.printings.length} printings`);
 
-const reader = createReader({ ort, cornelius, rec, chars, index });
+const reader = createReader({ ort, cornelius, rec, chars, index, footerStages: process.env.STAGES ? JSON.parse(process.env.STAGES) : undefined });
 
 function serverAnswer(j) {
   const ok = (j.results || []).filter(r => r.ok && r.card);
@@ -57,7 +57,8 @@ function serverAnswer(j) {
   };
 }
 
-const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg')).sort().slice(0, limit);
+const every = Number(opt('--every', 1));
+const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg')).sort().filter((f, i) => i % every === 0).slice(0, limit);
 const rows = [];
 for (const f of files) {
   const jsonPath = path.join(framesDir, f.replace(/\.jpg$/, '.json'));
@@ -68,7 +69,9 @@ for (const f of files) {
   // Every frame is independent here: the saved stream has gaps, and the
   // identity cache would turn later frames into free hits. Reset per frame so
   // each number below is a cold read.
-  reader.reset();
+  // --stream keeps cross-frame evidence (consecutive frames of one card), still
+  // clearing the identity cache so every frame is a real read.
+  if (args.includes('--stream')) reader.resetCache(); else reader.reset();
   const before = { ...reader.stats };
   const t0 = performance.now();
   const out = await reader.read(
@@ -79,7 +82,7 @@ for (const f of files) {
   const cand = out.candidates[0];
   rows.push({
     frame: f, ms: Math.round(ms), recCalls: reader.stats.recCalls - before.recCalls,
-    status: cand ? cand.status : 'no card', ok: !!r?.ok, id: r?.scryfallId || null,
+    status: cand ? cand.status : 'no card', sharp: cand?.sharpness, stage: r?.footer_stage, err: r?.error, ok: !!r?.ok, id: r?.scryfallId || null,
     title: r?.title || null, footer: r?.footer_ocr,
     got: r?.ok ? `${r.title}[${r.set} ${r.num}] via ${r.via}` : (r ? `${r.error}${r.title ? ` (${r.title})` : ''}` : ''),
     server: srv, timings: out.timings,
