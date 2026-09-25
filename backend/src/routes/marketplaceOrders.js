@@ -19,6 +19,7 @@ const {
   normalizeCookies, cookieCount, maskSecret, maskEmail, customerIdHints,
   fetchManapoolOrder, fetchTcgOrder, parseOrderPayload, addOrderToCollection, previewOrder,
   fetchManapoolOrderList, manapoolRecentOrderSummaries, fetchTcgRecentOrders,
+  resolveTcgPageLines,
   recentOrderSummaries, RECENT_LIMIT,
 } = require('../utils/marketplaceOrders');
 
@@ -268,6 +269,65 @@ router.post('/add', async (req, res) => {
   } catch (err) {
     const status = err && err.status ? err.status : 500;
     res.status(status).json({ error: err.message || 'Adding to collection failed' });
+  }
+});
+
+// TCGplayer page import: the bookmarklet already read the order off the user's
+// logged-in TCGplayer tab, so no credential is involved here at all. Lines are
+// keyed by TCGplayer product id and resolved by identity (see
+// resolveTcgPageLines); preview and add run the same resolver, so what the
+// preview shows is what gets filed.
+async function tcgPageLines(req, res) {
+  const raw = req.body && req.body.lines;
+  if (!Array.isArray(raw) || !raw.length) { res.status(400).json({ error: 'lines are required' }); return null; }
+  try {
+    const lines = await resolveTcgPageLines(raw);
+    if (!lines.length) { res.status(400).json({ error: 'No TCGplayer product lines were readable' }); return null; }
+    return lines;
+  } catch (err) {
+    res.status(502).json({ error: 'Could not resolve the TCGplayer products' });
+    return null;
+  }
+}
+
+router.post('/tcg-page/preview', async (req, res) => {
+  const lines = await tcgPageLines(req, res);
+  if (!lines) return;
+  try {
+    const preview = await previewOrder({ lines, userId: req.user.id });
+    const orders = Array.isArray(req.body.orders) ? req.body.orders.map(String).slice(0, 50) : [];
+    res.json({
+      number: orders.join(', ') || null,
+      lines,
+      lineCount: lines.length,
+      unmatchedNames: lines.__unmatched,
+      ...preview,
+      unresolved: lines.__unmatched.length,
+      extras: 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Could not resolve the order lines' });
+  }
+});
+
+router.post('/tcg-page/add', async (req, res) => {
+  const lines = await tcgPageLines(req, res);
+  if (!lines) return;
+  const { condition, printing_mode, language } = req.body || {};
+  try {
+    const result = await addOrderToCollection({ user: req.user, lines, condition, printingMode: printing_mode, language });
+    res.json({
+      added: result.added,
+      resolved: result.resolved,
+      totalListed: lines.length,
+      unresolved: lines.__unmatched.length,
+      failed: result.failed,
+      message: result.added
+        ? `Added ${result.added} card${result.added === 1 ? '' : 's'} from TCGplayer.`
+        : 'Nothing to add — no cards on that page matched a known printing.',
+    });
+  } catch (err) {
+    res.status(err && err.status ? err.status : 500).json({ error: err.message || 'Adding to collection failed' });
   }
 });
 

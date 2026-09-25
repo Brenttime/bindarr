@@ -83,6 +83,7 @@ async function runTests() {
         name: 'Buy list',
         game: 'mtg',
         accent_color: '#ef4444',
+        icon: 'crown',
         list_text: '4 Lightning Bolt\n2 Gaea\'s Cradle (JUP) 431\n1 Mox Diamond\n1 Card That Is Not Cached',
       })
     });
@@ -102,6 +103,7 @@ async function runTests() {
     assert.strictEqual(lists[0].total_card_types, 3);
     assert.strictEqual(lists[0].total_cards, 7, '4+2+1');
     assert.strictEqual(lists[0].accent_color, '#ef4444');
+    assert.strictEqual(lists[0].icon, 'crown');
 
     // --- Detail: cards + owned_qty (Lightning Bolt: want 4, own 2) ---
     const resD = await fetch(`http://localhost:${port}/api/lists/${listId}`, { headers: authHeaders });
@@ -190,6 +192,27 @@ async function runTests() {
       assert.strictEqual((await fetch(`http://localhost:${port}/api/lists/${listId}`, {
         method: 'DELETE', headers: { 'Authorization': `Bearer ${memberToken}` }
       })).status, 404, 'member cannot delete another user\'s list');
+    }
+
+    // --- Remove list cards from collection (trade pile) ---
+    {
+      const r = await fetch(`http://localhost:${port}/api/lists`, { method: 'POST', headers: json,
+        body: JSON.stringify({ name: 'Trade pile' }) });
+      const pile = (await r.json()).id;
+      await db.run(`INSERT INTO collection (card_id, quantity, user_id) VALUES (?, ?, ?)`, ['ls-c2', 1, adminId]);
+      await db.run(`INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, ?, ?)`, [pile, 'ls-c2', 3]);
+      await db.run(`INSERT INTO list_cards (list_id, card_id, quantity) VALUES (?, ?, ?)`, [pile, 'ls-c3', 1]);
+      const url = `http://localhost:${port}/api/lists/${pile}/remove-from-collection`;
+      const dry = await (await fetch(url, { method: 'POST', headers: json, body: JSON.stringify({ dry_run: true }) })).json();
+      assert.strictEqual(dry.requested, 4);
+      assert.strictEqual(dry.removed, 1, 'only 1 cradle owned, no mox');
+      assert.strictEqual(dry.short.length, 2);
+      assert.strictEqual((await db.get(`SELECT COUNT(*) n FROM collection WHERE card_id='ls-c2'`)).n, 1, 'dry run is read-only');
+      const done = await (await fetch(url, { method: 'POST', headers: json, body: '{}' })).json();
+      assert.strictEqual(done.removed, 1);
+      assert.strictEqual((await db.get(`SELECT COUNT(*) n FROM collection WHERE card_id='ls-c2'`)).n, 0, 'cradle removed');
+      assert.strictEqual((await db.get(`SELECT SUM(quantity) q FROM collection WHERE card_id='ls-c1'`)).q, 2, 'bolts untouched');
+      assert.strictEqual((await db.get(`SELECT COUNT(*) n FROM list_cards WHERE list_id=?`, [pile])).n, 2, 'list kept');
     }
 
     // --- Delete cascade ---

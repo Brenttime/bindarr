@@ -19,7 +19,7 @@ import {
 } from './imaging.mjs';
 import {
   ctcDecode, findCardByOcr, normName, uniqueTitlePrinting, uniqueOcrPrinting,
-  footerNumbers, footerCodes, resolveFooter, retroNumber, strongNumbers, looksLikeCopyright,
+  footerNumbers, footerCodes, resolveFooter, retroNumber, strongNumbers, looksLikeCopyright, voteFooter,
 } from './text.mjs';
 
 export const CORN_SIZE = 384;
@@ -27,14 +27,24 @@ const MEAN = [0.485, 0.456, 0.406];
 const STD = [0.229, 0.224, 0.225];
 const CORNER_GATE = 0.02;           // cornelius "sharpness" head: below = no card
 const EDGE_FRAC = 0.01;             // server: touches frame edge within 1%
-const TITLE_SHARP_FLOOR = 12;       // Laplacian variance of the sampled title band
+// Laplacian variance of the sampled title band. Replay of 506 saved phone
+// frames: every proven card scored >= 2161; below 500 no title was ever read,
+// so reading those only burned ~370 ms before failing. Auto waits for a
+// sharper frame instead.
+const TITLE_SHARP_FLOOR = 500;
 const STILL_DRIFT = 0.012;          // mean corner move / frame diagonal
 const REC_BATCH = 6;                // RapidOCR rec_batch_num
 const TITLE_CONF = 0.60, FOOTER_CONF = 0.45, RETRO_CONF = 0.60;
 
 const TITLE_FIRST = [[0.030, 0.82, 0.025, 0.100], [0.040, 0.80, 0.055, 0.120]];
 const TITLE_TIGHT = [[0.045, 0.80, 0.045, 0.140], [0.050, 0.80, 0.090, 0.170], [0.010, 0.95, 0.000, 0.090]];
-const FOOTER_STAGES = [[0.90, 0.92], 'retro', [0.88, 0.94, 0.86], [0.76, 0.78, 0.80, 0.82, 0.84]];
+// One modern batch first: 5 strips cost about the same as 2 on the recognizer
+// (one ONNX run either way), and 0.86-0.94 is where modern footers resolve.
+// Replay: same matches, p50 matched read -29%, 2.3 vs 3.3 recognizer calls.
+// The upper modern sweep (0.76-0.84) proved 2 of 353 cards on-device while
+// costing ~200 ms on every miss; an unproven card goes to the server, whose
+// own sweeps cover it.
+const FOOTER_STAGES = [[0.88, 0.90, 0.92, 0.94, 0.86], 'retro'];
 const RETRO_ROWS = [0.855, 0.845];
 
 // Cornelius input: the frame squashed to 384x384 (fit: fill, like the server's
@@ -90,6 +100,14 @@ export function createReader(env) {
   env.stats = { recCalls: 0, recStrips: 0 };
   let lastQuad = null;
   const cache = [];     // [{sig, result}] identity cache, like the sidecar's
+  // Cross-frame footer evidence. A still card is read on consecutive frames;
+  // each frame's footer OCR is noisy in different places, so an unresolved
+  // card's footer reads are kept and pooled with the next frame's IF it is the
+  // same card (same title, same art). Pooled reads then count as independent
+  // strips for the "two strips agree" rule. Exactness is unchanged: an answer
+  // is still one printing for title + number (+ set), or nothing.
+  let evidence = null;  // {sig, name, frames: [raws per frame], age}
+  const EVIDENCE_SIM = 0.92, EVIDENCE_FRAMES = 8, EVIDENCE_KEEP = 6;
 
   async function detect(small, channels, frameW, frameH) {
     const out = await env.cornelius.run({ image: corneliusTensor(env.ort, small, channels) });
@@ -138,14 +156,20 @@ export function createReader(env) {
       timings.total_ms = Math.round(now() - t0);
       return base;
     }
-    const result = await readCard(rgba, w, h, m, timings);
+    if (evidence && ++evidence.age > EVIDENCE_FRAMES) evidence = null;
+    const prior = evidence && cosine(evidence.sig, sig) >= EVIDENCE_SIM ? evidence : null;
+    const result = await readCard(rgba, w, h, m, timings, prior);
     timings.total_ms = Math.round(now() - t0);
     base.results.push(result);
-    if (result.ok) { cache.push({ sig, result }); if (cache.length > 64) cache.shift(); }
+    if (result.ok) { evidence = null; cache.push({ sig, result }); if (cache.length > 64) cache.shift(); }
+    else if (result.title && result.footer_ocr?.length) {
+      const keep = prior && prior.name === result.title ? prior.frames : [];
+      evidence = { sig, name: result.title, frames: [...keep, result.footer_ocr].slice(-EVIDENCE_KEEP), age: 0 };
+    }
     return base;
   }
 
-  async function readCard(rgba, w, h, m, timings) {
+  async function readCard(rgba, w, h, m, timings, prior = null) {
     const tA = now();
     const strip = (r) => sampleStrip(rgba, w, h, m, r[0], r[1], r[2], r[3]);
     const cands = [];
@@ -168,10 +192,10 @@ export function createReader(env) {
     cands.sort((a, b) => b.score - a.score || b.conf - a.conf || (a.name < b.name ? 1 : -1));
     const { name, raw, score } = cands[0];
     const ix = env.index;
-    const done = (pi, via, footer) => {
+    const done = (pi, via, footer, stage = -1) => {
       const p = ix.printings[pi];
       timings.footer_ms = Math.round(now() - tA) - timings.title_ms;
-      return { number: 1, ok: true, scryfallId: p[0], set: p[1], num: p[2], title: name, title_score: score, via, footer_ocr: footer };
+      return { number: 1, ok: true, scryfallId: p[0], set: p[1], num: p[2], title: name, title_score: score, via, footer_stage: stage, footer_ocr: footer };
     };
     let pi = uniqueTitlePrinting(ix, name);
     if (pi != null) return done(pi, 'unique physical printing', []);
@@ -179,7 +203,16 @@ export function createReader(env) {
     if (pi != null) return done(pi, 'unique printed title', []);
 
     const raws = [];
-    for (const stage of FOOTER_STAGES) {
+    const pooled = prior && prior.name === name ? prior.frames : null;
+    const tryPooled = (si) => {
+      if (!pooled || !raws.length) return null;
+      const frames = [...pooled, raws];
+      const all = frames.flat();
+      let p = resolveFooter(ix, name, footerCodes(ix, all), footerNumbers(all), strongNumbers(all));
+      if (p == null) p = voteFooter(ix, name, frames);
+      return p == null ? null : done(p, 'title+collector (multi-frame)', all, si);
+    };
+    for (const [si, stage] of (env.footerStages || FOOTER_STAGES).entries()) {
       if (stage === 'retro') {
         const reads = await recognize(env, RETRO_ROWS.map(y => strip([0.35, 0.95, y, y + 0.025])));
         const nums = [];
@@ -191,20 +224,24 @@ export function createReader(env) {
         }
         if (nums.length) {
           pi = resolveFooter(ix, name, [], nums);
-          if (pi != null) return done(pi, 'title+collector (retro frame)', raws);
+          if (pi != null) return done(pi, 'title+collector (retro frame)', raws, si);
         }
+        const pooledHit = tryPooled(si);
+        if (pooledHit) return pooledHit;
         continue;
       }
       const reads = await recognize(env, stage.map(y => strip([0, 0.22, y, y + 0.025])));
       for (const r of reads) if (r.text && r.conf >= FOOTER_CONF) raws.push(r.text);
       pi = resolveFooter(ix, name, footerCodes(ix, raws), footerNumbers(raws), strongNumbers(raws));
-      if (pi != null) return done(pi, 'title+set+collector', raws);
+      if (pi != null) return done(pi, 'title+set+collector', raws, si);
+      const pooledHit = tryPooled(si);
+      if (pooledHit) return pooledHit;
     }
     timings.footer_ms = Math.round(now() - tA) - timings.title_ms;
     return { number: 1, ok: false, retry: true, error: 'exact printing not resolved', title: name, footer_ocr: raws };
   }
 
-  return { read, stats: env.stats, reset() { lastQuad = null; cache.length = 0; } };
+  return { read, stats: env.stats, reset() { lastQuad = null; cache.length = 0; evidence = null; }, resetCache() { cache.length = 0; } };
 }
 
 export { normName };

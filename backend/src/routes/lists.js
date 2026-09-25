@@ -4,6 +4,7 @@ const cardApi = require('../utils/cardApi');
 const { parseCardRow } = require('../utils/priceHelpers');
 const { buildCardListText } = require('../../../shared/cardListText.js');
 const { sqlCardKey } = require('../utils/cardIdentity');
+const { logicalInventoryStatus, withAllocationLock } = require('../utils/collectionHelpers');
 const { getListMinimumValues, getCheapestPrintings, emptyDeckMinimumValue, currentPrintingPrice, deckCurrentPrintValues } = require('../utils/deckPricing');
 
 const router = express.Router();
@@ -24,11 +25,14 @@ async function unresolvedListCardCount(listId) {
 // quantities.
 
 // One user's lists with card counts.
+// Icon keys are validated loosely (short slug) so the client owns the palette.
+const cleanIcon = (v) => (typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v) ? v : null);
+
 router.get('/', async (req, res) => {
   try {
     const rows = await db.all(
       `SELECT
-         l.id, l.name, l.description, l.accent_color, l.created_at,
+         l.id, l.name, l.description, l.accent_color, l.icon, l.created_at,
          COUNT(DISTINCT CASE
            WHEN lc.quantity > 0 THEN CASE
              WHEN list_cc.id IS NULL THEN 'missing:' || lc.card_id
@@ -62,7 +66,7 @@ router.get('/', async (req, res) => {
 // knows (collection, decks, scans). Uncached names are reported back so the
 // client can say exactly what it could not place.
 router.post('/', async (req, res) => {
-  const { name, description = '', accent_color = '#10b981', list_text = '' } = req.body;
+  const { name, description = '', accent_color = '#10b981', list_text = '', icon } = req.body;
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: 'List name is required' });
   }
@@ -70,8 +74,8 @@ router.post('/', async (req, res) => {
 
   try {
     const result = await db.run(
-      `INSERT INTO card_lists (name, description, accent_color, user_id) VALUES (?, ?, ?, ?)`,
-      [String(name).trim(), description || '', accent, req.user.id]
+      `INSERT INTO card_lists (name, description, accent_color, icon, user_id) VALUES (?, ?, ?, ?, ?)`,
+      [String(name).trim(), description || '', accent, cleanIcon(icon), req.user.id]
     );
     const listId = result.lastID;
 
@@ -313,19 +317,20 @@ router.put('/:id/cheapest-printings', async (req, res) => {
 // Rename / describe / recolor a list.
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, description, accent_color } = req.body;
+  const { name, description, accent_color, icon } = req.body;
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: 'List name is required' });
   }
   const accent = accent_color != null && accent_color.startsWith('#') ? accent_color : null;
   try {
     const result = await db.run(
-      `UPDATE card_lists SET name = ?, description = ?, accent_color = ?
+      `UPDATE card_lists SET name = ?, description = ?, accent_color = ?, icon = ?
        WHERE id = ? AND user_id = ?`,
       [
         String(name).trim(),
         description != null ? description : '',
         accent,
+        cleanIcon(icon),
         id,
         req.user.id
       ]
@@ -353,6 +358,70 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to delete list' });
+  }
+});
+
+// Pull a list's cards OUT of the collection (trade / give-away pile). For each
+// list row, remove up to its quantity: exact printing first, then other
+// printings of the same card, newest rows first. Copies reserved by a Built
+// deck are never touched. `dry_run: true` reports what would happen so the UI
+// can confirm with real numbers. The list itself is left alone.
+router.post('/:id/remove-from-collection', async (req, res) => {
+  const { id } = req.params;
+  const dryRun = !!(req.body && req.body.dry_run);
+  try {
+    const list = await db.get(`SELECT id FROM card_lists WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    if (!list) return res.status(404).json({ error: 'List not found or unauthorized' });
+    const outcome = await withAllocationLock(async () => {
+      const work = async () => {
+        const rows = await db.all(`
+          SELECT lc.card_id, lc.quantity, cc.name
+          FROM list_cards lc JOIN card_cache cc ON cc.id = lc.card_id
+          WHERE lc.list_id = ? AND lc.quantity > 0`, [id]);
+        // Per game-card budget: owned - locked, shared across list rows.
+        const budget = new Map();
+        let requested = 0, removed = 0;
+        const short = [];
+        for (const row of rows) {
+          requested += row.quantity;
+          const status = await logicalInventoryStatus(db, req.user.id, row.card_id);
+          const key = status ? status.card_key : row.name;
+          if (!budget.has(key)) {
+            budget.set(key, status ? Math.max(0, Number(status.owned_qty) - Number(status.locked_qty)) : 0);
+          }
+          let want = Math.min(row.quantity, budget.get(key));
+          const got = want;
+          if (want > 0) {
+            const owned = await db.all(`
+              SELECT c.id, c.quantity FROM collection c
+              JOIN card_cache owned_cc ON owned_cc.id = c.card_id
+              JOIN card_cache target ON target.id = ?
+              WHERE c.user_id = ? AND c.quantity > 0
+                AND ${sqlCardKey('owned_cc')} = ${sqlCardKey('target')}
+              ORDER BY (c.card_id = ?) DESC, c.id DESC`, [row.card_id, req.user.id, row.card_id]);
+            for (const entry of owned) {
+              if (want <= 0) break;
+              const take = Math.min(want, entry.quantity);
+              if (!dryRun) {
+                if (take >= entry.quantity) await db.run(`DELETE FROM collection WHERE id = ? AND user_id = ?`, [entry.id, req.user.id]);
+                else await db.run(`UPDATE collection SET quantity = quantity - ? WHERE id = ? AND user_id = ?`, [take, entry.id, req.user.id]);
+              }
+              want -= take;
+            }
+          }
+          const taken = got - want;
+          budget.set(key, budget.get(key) - taken);
+          removed += taken;
+          if (taken < row.quantity) short.push({ card_id: row.card_id, name: row.name, wanted: row.quantity, removed: taken });
+        }
+        return { requested, removed, short };
+      };
+      return dryRun ? work() : db.withTransaction(work);
+    });
+    res.json({ dry_run: dryRun, ...outcome });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to remove list cards from collection' });
   }
 });
 
@@ -458,6 +527,44 @@ router.post('/:id/cards/bulk', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to add cards to list' });
+  }
+});
+
+// Exact inverse of /cards/bulk (Scan Cards' Undo): DECREMENT the same
+// printing-equivalent row by the quantity that was added, deleting it at 0.
+// The single-card DELETE below removes every copy, which would also erase
+// copies that were on the list before the send.
+router.post('/:id/cards/bulk-remove', async (req, res) => {
+  const { id } = req.params;
+  const entries = Array.isArray(req.body?.cards) ? req.body.cards : [];
+  if (!entries.length || entries.length > 250) return res.status(400).json({ error: 'cards must be 1-250 entries' });
+  try {
+    const list = await db.get(`SELECT id FROM card_lists WHERE id = ? AND user_id = ?`, [id, req.user.id]);
+    if (!list) return res.status(404).json({ error: 'List not found or unauthorized' });
+    let removed = 0;
+    for (const entry of entries) {
+      const cardId = entry?.card_id;
+      const qty = Math.max(1, parseInt(entry?.quantity, 10) || 1);
+      if (!cardId) continue;
+      const row = await db.get(`
+        SELECT lc.card_id, lc.quantity FROM list_cards lc
+        JOIN card_cache existing_cc ON existing_cc.id = lc.card_id
+        JOIN card_cache target_cc ON target_cc.id = ?
+        WHERE lc.list_id = ? AND ${sqlCardKey('existing_cc')} = ${sqlCardKey('target_cc')}
+        ORDER BY (lc.card_id = ?) DESC, lc.card_id LIMIT 1
+      `, [cardId, id, cardId]);
+      if (!row) continue;
+      if (row.quantity > qty) {
+        await db.run(`UPDATE list_cards SET quantity = quantity - ? WHERE list_id = ? AND card_id = ?`, [qty, id, row.card_id]);
+      } else {
+        await db.run(`DELETE FROM list_cards WHERE list_id = ? AND card_id = ?`, [id, row.card_id]);
+      }
+      removed += Math.min(qty, row.quantity);
+    }
+    res.json({ removed });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to remove cards from list' });
   }
 });
 

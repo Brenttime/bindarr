@@ -166,7 +166,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
       zIndex: 999
     }} onClick={handleClose}>
       <div className="glass-panel card-inspector" onClick={(e) => e.stopPropagation()}>
-        <button className="btn btn-secondary btn-icon-only" onClick={handleClose} style={{
+        <button type="button" className="btn btn-secondary btn-icon-only" onClick={handleClose} aria-label={t('common.close')} title={t('common.close')} style={{
           position: 'absolute',
           top: '1rem',
           right: '1rem',

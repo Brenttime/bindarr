@@ -5,19 +5,48 @@ import Logo from './components/Logo';
 import { pushBackGuard } from './utils/useBackGuard';
 import { getRememberedTab, rememberView, clearRememberedView, forgetOpenSubviews } from './utils/viewMemory';
 import { useT } from './utils/i18n';
+import { readTcgImportHash, TCG_IMPORT_KEY } from './utils/tcgBookmarklet';
 
 // View components are code-split so heavy deps (recharts in the chart views)
 // load on demand instead of in the initial bundle.
-const Dashboard = lazy(() => import('./components/Dashboard'));
-const AddCards = lazy(() => import('./components/AddCards'));
-const CollectionList = lazy(() => import('./components/CollectionList'));
-const Settings = lazy(() => import('./components/Settings'));
-const SetupWizard = lazy(() => import('./components/SetupWizard'));
-const SharedCollection = lazy(() => import('./components/SharedCollection'));
-const DeckBuilder = lazy(() => import('./components/DeckBuilder'));
-const Lists = lazy(() => import('./components/Lists'));
-const LimitedLands = lazy(() => import('./components/LimitedLands'));
-const Rules = lazy(() => import('./components/Rules'));
+// A deploy replaces the hashed chunk files. A tab opened before the deploy
+// still asks for the old names and gets "Failed to fetch dynamically imported
+// module". Reload once to pick up the new index.html (guarded so a real
+// outage can't loop), and retry once first for a flaky network.
+const CHUNK_RELOAD_KEY = 'scrybox.chunkReloadAt';
+function isChunkError(err) {
+  return /dynamically imported module|Importing a module script failed|error loading dynamically imported|Unable to preload CSS/i.test(String(err?.message || err));
+}
+function reloadForNewDeploy() {
+  const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0);
+  if (Date.now() - last < 30000) return false;
+  sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+  window.location.reload();
+  return true;
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (event) => {
+    if (reloadForNewDeploy()) event.preventDefault();
+  });
+}
+const lazyView = (load) => lazy(() => load().catch(err => {
+  if (!isChunkError(err)) throw err;
+  return new Promise(r => setTimeout(r, 400)).then(load).catch(err2 => {
+    if (isChunkError(err2) && reloadForNewDeploy()) return new Promise(() => {});
+    throw err2;
+  });
+}));
+
+const Dashboard = lazyView(() => import('./components/Dashboard'));
+const AddCards = lazyView(() => import('./components/AddCards'));
+const CollectionList = lazyView(() => import('./components/CollectionList'));
+const Settings = lazyView(() => import('./components/Settings'));
+const SetupWizard = lazyView(() => import('./components/SetupWizard'));
+const SharedCollection = lazyView(() => import('./components/SharedCollection'));
+const DeckBuilder = lazyView(() => import('./components/DeckBuilder'));
+const Lists = lazyView(() => import('./components/Lists'));
+const LimitedLands = lazyView(() => import('./components/LimitedLands'));
+const Rules = lazyView(() => import('./components/Rules'));
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -28,6 +57,8 @@ class ErrorBoundary extends React.Component {
     return { hasError: true, error };
   }
   componentDidCatch(error, errorInfo) {
+    // Nested lazy chunks (charts, card inspector, admin) land here too.
+    if (isChunkError(error) && reloadForNewDeploy()) return;
     console.error("ErrorBoundary caught an error", error, errorInfo);
   }
   render() {
@@ -96,7 +127,18 @@ function App() {
   // Boot where the refresh found us, not on Dashboard. Only meaningful once
   // we know we are logged in and not on a share route — see the effect below
   // that reconciles this with token/user/share state.
-  const [activeTab, setActiveTab] = useState(() => getRememberedTab());
+  const [activeTab, setActiveTab] = useState(() => {
+    // TCGplayer bookmarklet handoff: stash the order (it may need to survive a
+    // login first), scrub it from the URL, and boot straight into Add Cards.
+    const handoff = readTcgImportHash(window.location.hash);
+    if (handoff) {
+      try { sessionStorage.setItem(TCG_IMPORT_KEY, JSON.stringify(handoff)); } catch { /* storage blocked */ }
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      rememberView('add-cards');
+      return 'add-cards';
+    }
+    return getRememberedTab();
+  });
   // First-run scanning setup. Asked once per session, only for an admin, and only
   // while it is genuinely incomplete — setupNeeded() reads the same endpoints the
   // wizard does so there is one definition of 'set up'.

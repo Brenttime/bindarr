@@ -845,6 +845,12 @@ function DeckBuilder({ showToast, onNavigate }) {
   const btnStack = { display: 'flex', alignItems: 'center', gap: '0.4rem' };
   const quietBtn = { ...btnStack, border: '1px solid var(--border-glass)', color: 'var(--text-secondary)' };
   const moreItem = { display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: '0.82rem', cursor: 'pointer', textAlign: 'left' };
+  // Per-card value: the deck's own printing (same current_price the Value
+  // panel sums), one copy. Em dash when the printing has no USD price.
+  const cardPriceLabel = (card) => (card.current_price === null || card.current_price === undefined)
+    ? '—'
+    : priceText(Number(card.current_price), 'USD');
+
   const detailOpen = viewMode === 'detail' && !!activeDeck;
 
   // Value-section numbers for the open deck. Null-safe: the deck list renders
@@ -1685,6 +1691,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                                   </div>
 
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                    <span className="deck-card-price" title={t('deck.cardPriceTitle')}>{cardPriceLabel(card)}</span>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(0,0,0,0.2)', padding: '2px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
                                       <button
                                         className={`btn ${card.quantity === 1 ? 'btn-danger' : 'btn-secondary'} btn-icon-only`}
@@ -1721,6 +1728,7 @@ function DeckBuilder({ showToast, onNavigate }) {
                                     <span style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.85)', color: 'var(--accent-yellow)', fontSize: '0.75rem', fontWeight: 800, padding: '1px 6px', borderRadius: '10px', border: '1px solid var(--accent-yellow)' }}>
                                       x{card.quantity}
                                     </span>
+                                    <span className="deck-card-price-chip" title={t('deck.cardPriceTitle')}>{cardPriceLabel(card)}</span>
                                     {(card.owned_qty || 0) < card.quantity && !isBasicLand(card) && (
                                       <span className="deck-missing-chip" title={t('deck.rowMissingTitle', { need: card.quantity, have: card.owned_qty || 0 })}>
                                         +{card.quantity - (card.owned_qty || 0)}

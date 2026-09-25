@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Mountain, Plus, Minus, Trash2, Copy, Wand2, RotateCcw, ClipboardPaste, Layers } from 'lucide-react';
 import { MANA_TYPES, allocateMana } from '../utils/landMana.js';
 import { sourceOdds } from '../utils/landOdds.js';
+import { colorWeights } from '../utils/landWeights.js';
 import { useT } from '../utils/i18n';
 
 // Limited (40-card) land-base calculator. Ported from the standalone Land Desk
@@ -12,7 +13,7 @@ import { useT } from '../utils/i18n';
 const STORAGE_KEY = 'bindarr_limited_lands_v1';
 const IDS = MANA_TYPES.map(m => m.id);
 const zeros = () => Object.fromEntries(IDS.map(id => [id, 0]));
-const fresh = () => ({ total: 17, deckSize: 40, pips: zeros(), existing: [] });
+const fresh = () => ({ total: 17, deckSize: 40, pips: zeros(), cards: zeros(), weightMode: 'blend', existing: [] });
 const whole = (n, max, min = 0) => Number.isInteger(n) && n >= min && n <= max;
 const MANA_COLOR = { W: '#f8e7b9', U: '#0e68ab', B: '#a69f9d', R: '#d3202a', G: '#00733e', C: '#b8b3ae' };
 const sym = id => `/mana/${id}.svg`;
@@ -25,6 +26,8 @@ function load() {
     if (whole(s.total, 40)) st.total = s.total;
     if (whole(s.deckSize, 99, 40)) st.deckSize = s.deckSize;
     for (const id of IDS) if (whole(s.pips?.[id], 999)) st.pips[id] = s.pips[id];
+    for (const id of IDS) if (whole(s.cards?.[id], 99)) st.cards[id] = s.cards[id];
+    if (['blend', 'pips', 'cards'].includes(s.weightMode)) st.weightMode = s.weightMode;
     if (Array.isArray(s.existing)) st.existing = s.existing.slice(0, 40).filter(r => r && whole(r.quantity, 40, 1)
       && Array.isArray(r.produces) && r.produces.every(id => IDS.includes(id)))
       .map((r, i) => ({ uid: i + 1, name: String(r.name || ''), quantity: r.quantity, produces: [...new Set(r.produces)], tapped: !!r.tapped, conditional: !!r.conditional }));
@@ -75,7 +78,7 @@ export default function LimitedLands({ showToast, onNavigate }) {
   const { result, issue } = useMemo(() => {
     if (existingCount > state.total) return { result: null, issue: t('limited.overBudget') };
     try {
-      const r = allocateMana(state.total, state.pips, state.existing.map(({ quantity, produces, tapped, conditional }) => ({ quantity, produces, tapped, conditional })));
+      const r = allocateMana(state.total, colorWeights(state.pips, state.cards, state.weightMode), state.existing.map(({ quantity, produces, tapped, conditional }) => ({ quantity, produces, tapped, conditional })));
       return { result: (r.hasPips || r.remainingBasics === 0) ? r : null, issue: '' };
     } catch { return { result: null, issue: t('limited.checkInputs') }; }
   }, [state, existingCount, t]);
@@ -89,6 +92,7 @@ export default function LimitedLands({ showToast, onNavigate }) {
       setUndo(state);
       patch(s => {
         s.pips = { ...zeros(), ...j.pips };
+        s.cards = { ...zeros(), ...(j.colorCards || {}) };
         s.existing = j.lands.map((l, i) => ({ uid: i + 1, ...l }));
         if (j.landCount >= 10 && j.landCount <= 20) s.total = j.landCount;
         if (j.deckSize >= 40 && j.deckSize <= 99) s.deckSize = j.deckSize;
@@ -211,11 +215,24 @@ export default function LimitedLands({ showToast, onNavigate }) {
               {MANA_TYPES.map(m => (
                 <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '0.45rem 0.55rem', borderRadius: 'var(--radius-sm)', background: state.pips[m.id] ? `${MANA_COLOR[m.id]}1f` : 'var(--surface-1)', border: `1px solid ${state.pips[m.id] ? MANA_COLOR[m.id] + '66' : 'var(--border-glass)'}` }}>
                   <img src={sym(m.id)} alt={m.name} title={m.id === 'C' ? t('limited.colorlessCost') : m.name} width={22} height={22} />
-                  <Stepper value={state.pips[m.id]} label={`${m.name} pips`} onChange={v => patch(s => { s.pips[m.id] = v; })} />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+                    <Stepper value={state.pips[m.id]} label={`${m.name} pips`} onChange={v => patch(s => { s.pips[m.id] = v; })} />
+                    <div className="ll-cards-row" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                      <span>{t('limited.cardsShort')}</span>
+                      <Stepper value={state.cards[m.id]} max={99} label={`${m.name} cards`} onChange={v => patch(s => { s.cards[m.id] = v; })} />
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
-            <p style={helper}>{t('limited.pipsHelp')}</p>
+            <div className="ll-weight-mode" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: '0.75rem' }}>
+              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-secondary)' }}>{t('limited.weightBy')}</span>
+              {['blend', 'pips', 'cards'].map(k => (
+                <button key={k} type="button" aria-pressed={state.weightMode === k} className={`btn ${state.weightMode === k ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.3rem 0.65rem' }}
+                  onClick={() => patch(s => { s.weightMode = k; })}>{t(`limited.weight.${k}`)}</button>
+              ))}
+            </div>
+            <p style={helper}>{t('limited.pipsHelp')} {t(`limited.weightHelp.${state.weightMode}`)}</p>
           </section>
 
           <section className="glass-panel" style={card}>
@@ -280,7 +297,7 @@ export default function LimitedLands({ showToast, onNavigate }) {
                       <img src={sym(m.id)} alt="" width={26} height={26} />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 800, color: 'var(--text-strong)' }}>{m.land}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{t('limited.rowDetail', { pips: state.pips[m.id], sources: result.sources[m.id], untapped: result.untappedSources[m.id] })}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{t('limited.rowDetail', { pips: state.pips[m.id], sources: result.sources[m.id], untapped: result.untappedSources[m.id] })}{state.cards[m.id] > 0 ? ` · ${t('limited.rowCards', { count: state.cards[m.id] })}` : ''}</div>
                       </div>
                       <strong style={{ fontSize: '1.5rem', color: 'var(--text-strong)' }}>{result.basics[m.id]}</strong>
                     </li>

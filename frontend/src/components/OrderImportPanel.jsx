@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { ShoppingCart, Loader2, ShieldAlert, KeyRound } from 'lucide-react';
+import { ShoppingCart, Loader2, ShieldAlert, KeyRound, Bookmark, Copy, Smartphone } from 'lucide-react';
 import CardImage from './CardImage';
 import { LANGUAGES } from '../utils/cardOptions';
 import { useT } from '../utils/i18n';
+import { buildBookmarklet, takePendingTcgImport } from '../utils/tcgBookmarklet';
 
 // Pull every card from a ManaPool or TCGplayer ORDER into the collection in one
 // action. The flow mirrors SecretLairPanel (enter -> preview resolved lines ->
@@ -43,6 +44,14 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
   const [language, setLanguage] = useState('English');
   const [printingMode, setPrintingMode] = useState('auto');
   const previewSeq = useRef(0);
+  // TCGplayer runs through the bookmarklet: the order arrives already read off
+  // the user's logged-in TCGplayer page, so no cookie is needed or used.
+  const [pageImport, setPageImport] = useState(null);   // {orders, lines}
+  const bookmarkRef = useRef(null);
+  useEffect(() => {
+    // React refuses javascript: hrefs in JSX; set it on the element directly.
+    if (bookmarkRef.current) bookmarkRef.current.setAttribute('href', buildBookmarklet(window.location.origin));
+  });
 
   // Which sources are usable right now. A missing credential is not an error —
   // the panel says so and points at Settings rather than showing a form that
@@ -56,7 +65,7 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
     return () => { cancelled = true; };
   }, []);
 
-  const readyFor = (src) => !!status && !!(status[src] && status[src].configured);
+  const readyFor = (src) => src === 'tcgplayer' || (!!status && !!(status[src] && status[src].configured));
   const needsSetup = status && !readyFor(source);
 
   // Recent-order picker: fetch the source's list when the form opens (and when
@@ -65,7 +74,7 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
   const [recent, setRecent] = useState({ loading: false, orders: null, error: '' });
   const recentSeq = useRef(0);
   const loadRecent = async (src) => {
-    if (!readyFor(src)) return;
+    if (src === 'tcgplayer' || !readyFor(src)) return;
     const seq = ++recentSeq.current;
     setRecent((r) => ({ ...r, loading: true }));
     try {
@@ -109,8 +118,54 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
     }
   };
 
+  const doPagePreview = async (handoff) => {
+    const seq = ++previewSeq.current;
+    setBusy(true); setError(''); setPreview(null);
+    try {
+      const res = await fetch('/api/marketplace/tcg-page/preview', {
+        method: 'POST', headers: JSON_HEADERS,
+        body: JSON.stringify({ orders: handoff.orders, lines: handoff.lines }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (seq !== previewSeq.current) return;
+      if (!res.ok) { setError(data.error || t('orderimport.errPreview')); return; }
+      setPageImport(handoff);
+      setPreview(data);
+      setPhase('preview');
+    } catch {
+      if (seq === previewSeq.current) setError(t('orderimport.errPreview'));
+    } finally {
+      if (seq === previewSeq.current) setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    const handoff = takePendingTcgImport();
+    if (handoff) { setSource('tcgplayer'); doPagePreview(handoff); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const doAdd = async () => {
     if (!preview) return;
+    if (pageImport) {
+      setBusy(true); setError('');
+      try {
+        const res = await fetch('/api/marketplace/tcg-page/add', {
+          method: 'POST', headers: JSON_HEADERS,
+          body: JSON.stringify({ lines: pageImport.lines, printing_mode: printingMode, language }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(data.error || t('orderimport.errAdd')); return; }
+        setResult(data); setPhase('done'); setPageImport(null);
+        if (data.added) showToast?.(t('orderimport.added', { count: data.added }));
+        onAddSuccess?.();
+      } catch {
+        setError(t('orderimport.errAdd'));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -141,7 +196,7 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
 
   const reset = () => {
     previewSeq.current += 1;
-    setPreview(null); setResult(null); setError(''); setPhase('form'); setBusy(false);
+    setPreview(null); setResult(null); setError(''); setPhase('form'); setBusy(false); setPageImport(null);
   };
 
   const dollars = (cents) => cents == null ? null : `$${(cents / 100).toFixed(2)}`;
@@ -165,7 +220,50 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
           ))}
         </div>
 
-        {status && (
+        {source === 'tcgplayer' && (
+          <div className="tcg-bookmarklet" style={{ display: 'flex', flexDirection: 'column', gap: '.6rem', fontSize: '.82rem', color: 'var(--text-secondary)' }}>
+            <div>{t('orderimport.tcgHow')}</div>
+            <ol style={{ margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '.3rem' }}>
+              <li>{t('orderimport.tcgStep1')}</li>
+              <li>{t('orderimport.tcgStep2')}</li>
+              <li>{t('orderimport.tcgStep3')}</li>
+            </ol>
+            <a ref={bookmarkRef} className="btn btn-primary tcg-bookmarklet-link" draggable="true"
+              onClick={(e) => { e.preventDefault(); showToast?.(t('orderimport.tcgDragHint')); }}
+              style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: '.4rem', cursor: 'grab' }}>
+              <Bookmark size={14} /> {t('orderimport.tcgBookmarkName')}
+            </a>
+            <details className="tcg-phone-setup" style={{ fontSize: '.8rem' }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 700, color: 'var(--text-strong)', display: 'inline-flex', alignItems: 'center', gap: '.35rem' }}>
+                <Smartphone size={14} /> {t('orderimport.tcgPhoneTitle')}
+              </summary>
+              <ol style={{ margin: '.5rem 0 0', paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '.3rem' }}>
+                <li>
+                  <button type="button" className="btn btn-small btn-secondary tcg-copy-bookmarklet" style={{ display: 'inline-flex', alignItems: 'center', gap: '.3rem' }}
+                    onClick={async () => {
+                      const code = buildBookmarklet(window.location.origin);
+                      let ok = false;
+                      try { await navigator.clipboard.writeText(code); ok = true; } catch {
+                        const ta = document.createElement('textarea'); ta.value = code; document.body.append(ta); ta.select();
+                        try { ok = document.execCommand('copy'); } catch { /* reported below */ } ta.remove();
+                      }
+                      showToast?.(ok ? t('orderimport.tcgCopied') : t('orderimport.tcgCopyFailed'));
+                    }}>
+                    <Copy size={12} /> {t('orderimport.tcgCopyCode')}
+                  </button>
+                </li>
+                <li>{t('orderimport.tcgPhoneIos')}</li>
+                <li>{t('orderimport.tcgPhoneAndroid')}</li>
+                <li>{t('orderimport.tcgPhoneUse')}</li>
+              </ol>
+            </details>
+            <div style={{ fontSize: '.72rem', color: 'var(--text-muted)' }}>{t('orderimport.tcgPrivacy')}</div>
+            {busy && <div><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> {t('orderimport.retrieving')}</div>}
+            {error && <div style={{ color: 'var(--accent-red)' }}>{error}</div>}
+          </div>
+        )}
+
+        {source !== 'tcgplayer' && status && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem', fontSize: '.78rem', color: readyFor(source) ? 'var(--text-secondary)' : 'var(--accent-yellow)' }}>
             {readyFor(source)
               ? <>{t('orderimport.ready', { source: t(`orderimport.source.${source}`) })}</>
@@ -176,6 +274,7 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
           </div>
         )}
 
+        {source !== 'tcgplayer' && (<>
         {/* Recent orders: a quick-pick list when the provider exposes one. */}
         {readyFor(source) && recent.loading && (
           <div style={{ fontSize: '.78rem', color: 'var(--text-secondary)' }}>{t('orderimport.recentLoading')}</div>
@@ -223,6 +322,7 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
             {busy ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> {t('orderimport.retrieving')}</> : t('orderimport.retrieve')}
           </button>
         </div>
+        </>)}
       </div>
     );
   }
@@ -307,6 +407,9 @@ export default function OrderImportPanel({ onAddSuccess, showToast, setActiveTab
       {(preview.unresolved > 0 || preview.extras > 0) && (
         <p style={{ color: 'var(--text-secondary)', fontSize: '.78rem', margin: 0 }}>
           {preview.unresolved > 0 && <span>{t('orderimport.unresolvedNote', { count: preview.unresolved })} </span>}
+          {Array.isArray(preview.unmatchedNames) && preview.unmatchedNames.length > 0 && (
+            <span style={{ display: 'block', opacity: .8 }}>{preview.unmatchedNames.slice(0, 8).join(', ')}{preview.unmatchedNames.length > 8 ? '…' : ''}</span>
+          )}
           {preview.extras > 0 && (
             <span>{t('orderimport.extrasNote', { count: preview.extras })}</span>
           )}

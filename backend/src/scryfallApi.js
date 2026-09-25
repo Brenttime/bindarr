@@ -592,7 +592,8 @@ async function runSearch(meta, nameQuery = '', numberQuery = '', setQuery = '', 
     try {
       // A set code narrows to that printing (exact, usually one result -> fast
       // path in the scanner); without it, return every printing to pick from.
-      const q = setList.length ? `!"${cleanName}" ${scrySet} unique:prints` : `!"${cleanName}" unique:prints`;
+      // -is:digital: MTGO/Arena printings are not cards anyone can scan or own.
+      const q = setList.length ? `!"${cleanName}" ${scrySet} unique:prints -is:digital` : `!"${cleanName}" unique:prints -is:digital`;
       // Use the normal paging helper rather than reading only Scryfall's first
       // 175-card page. The caller chooses a bounded window (the scanner asks for
       // 250) so heavily reprinted cards do not silently lose later printings.

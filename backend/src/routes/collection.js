@@ -466,6 +466,7 @@ async function addCardToCollection(user, body) {
     }
 
     let lastInsertedId = null;
+    const insertedIds = [];
     const count = Math.max(1, parseInt(quantity, 10) || 1);
     // Stacking is quantity-on-one-row, which is meaningful only for
     // interchangeable copies.
@@ -482,6 +483,7 @@ async function addCardToCollection(user, body) {
         is_trade ? 1 : 0
       ]);
       lastInsertedId = result.lastID;
+      insertedIds.push(result.lastID);
     } else {
       for (let i = 0; i < count; i++) {
         const result = await db.run(`
@@ -494,6 +496,7 @@ async function addCardToCollection(user, body) {
           is_trade ? 1 : 0
         ]);
         lastInsertedId = result.lastID;
+        insertedIds.push(result.lastID);
       }
     }
 
@@ -501,7 +504,8 @@ async function addCardToCollection(user, body) {
 
     return {
       message: 'Card added to collection',
-      id: lastInsertedId
+      id: lastInsertedId,
+      ids: insertedIds
     };
   }
 }
@@ -561,10 +565,12 @@ async function bulkAddToCollection(user, entries, shared) {
     // knows its OWN grade (this slab is NM, that one LP), so a per-entry
     // condition must not be flattened to the one shared default either.
     if (keyed && entry.condition != null && entry.condition !== '') perCard.condition = entry.condition;
+    // Scanner rows each carry their own finish (one foil among nonfoils).
+    if (keyed && entry.printing != null && entry.printing !== '') perCard.printing = entry.printing;
 
     try {
       const result = await addCardToCollection(user, { ...shared, ...perCard, card_id });
-      added.push({ card_id, id: result.id });
+      added.push({ card_id, id: result.id, ids: result.ids });
     } catch (error) {
       if (!(error instanceof AddCardError)) console.error(error);
       failed.push({ card_id, error: error instanceof AddCardError ? error.message : 'Failed to add card' });
@@ -587,6 +593,9 @@ router.post('/collection/bulk-add', async (req, res) => {
       ? `Added ${added.length} of ${card_ids.length} cards; ${failed.length} failed.`
       : `Added ${added.length} card${added.length === 1 ? '' : 's'}${qty > 1 ? ` (x${qty} each)` : ''} to collection.`,
     added: added.length,
+    // Row ids per card, so a caller (Scan Cards' Undo) can remove exactly the
+    // copies it just added and nothing older.
+    entries: added,
     failed
   });
 });
