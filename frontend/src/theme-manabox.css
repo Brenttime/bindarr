@@ -529,10 +529,10 @@
   display: grid;
   place-items: center;
 }
-:root[data-theme="manabox"] .list-tile-accent::after {
-  content: "\2605";
+/* The chip shows the list's chosen icon. */
+:root[data-theme="manabox"] .list-tile-accent .list-tile-accent-icon {
+  display: block;
   color: var(--list-accent);
-  font-size: 18px;
 }
 :root[data-theme="manabox"] .list-tile-head { grid-area: head; min-width: 0; }
 :root[data-theme="manabox"] .list-tile-title > div:first-child { font-size: 0.95rem !important; font-weight: 650 !important; }

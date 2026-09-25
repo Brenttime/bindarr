@@ -32,6 +32,7 @@ const a = analyzeCards([
 ]);
 assert.deepStrictEqual(a.pips, { W: 0, U: 0, B: 4, R: 0, G: 2, C: 0 });
 assert.strictEqual(a.basics.B, 8);
+assert.deepStrictEqual(a.colorCards, { W: 0, U: 0, B: 4, R: 0, G: 2, C: 0 }, 'cards per color, every copy');
 assert.strictEqual(a.spells, 6);
 assert.strictEqual(a.landCount, 10);
 assert.deepStrictEqual(a.lands[0], { name: 'Scoured Barrens', quantity: 1, produces: ['W', 'B'], tapped: true, conditional: false });

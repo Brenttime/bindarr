@@ -5,6 +5,7 @@ import CardSearch from './CardSearch';
 import SecretLairPanel from './SecretLairPanel';
 import OrderImportPanel from './OrderImportPanel';
 import { useT } from '../utils/i18n';
+import { hasPendingTcgImport } from '../utils/tcgBookmarklet';
 
 // The "Add Cards" tab. It holds four independent ways to put cards in the
 // collection, so it opens on a choice between them rather than assuming the
@@ -25,7 +26,7 @@ import { useT } from '../utils/i18n';
 // throw away, and neither view has state worth keeping alive across the other.
 export default function AddCards({ onAddSuccess, showToast, setActiveTab }) {
   const { t } = useT();
-  const [mode, setMode] = useState('fastscan');
+  const [mode, setMode] = useState(() => (hasPendingTcgImport() ? 'orderimport' : 'fastscan'));
 
   // Demo build has no backend: neither the camera scanner nor the Secret Lair
   // importer can work, so show a notice instead of two controls that would fail.

@@ -639,6 +639,9 @@ async function initDb() {
   if (listCols.length && !listCols.some(c => c.name === 'source')) {
     await run(`ALTER TABLE card_lists ADD COLUMN source TEXT`);
   }
+  if (listCols.length && !listCols.some(c => c.name === 'icon')) {
+    await run(`ALTER TABLE card_lists ADD COLUMN icon TEXT`);
+  }
   await run(`
     CREATE TABLE IF NOT EXISTS manabox_sync_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

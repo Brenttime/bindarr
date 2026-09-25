@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Zap, ZapOff, ScanLine, Check, X, SwitchCamera, Camera, Sparkles, Trash2, Send, Undo2 } from 'lucide-react';
+import { Zap, ZapOff, ScanLine, Check, X, SwitchCamera, Camera, Sparkles, Trash2, Send, Undo2, Minus, Plus } from 'lucide-react';
 import { resolveCardPrice } from '../utils/resolveCardPrice';
 import { priceText } from '../utils/formatPrice';
 import { displayName } from '../utils/languages';
 import { useT } from '../utils/i18n';
-import { FRAME_MAX, fitContain, quadPath } from '../utils/fastScan';
+import { FRAME_MAX, fitContain, quadPath, zoomPlan } from '../utils/fastScan';
 import { loadClientScan, readOnDevice, lastFrameJpeg, hydrateResults, needsServer } from '../utils/clientScan';
 
 // Fast scan. One request per scan: the frame goes up once, the cardscan
@@ -40,6 +40,9 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   const videoRef = useRef(null);
   const overlayRef = useRef(null);
   const canvasRef = useRef(null);
+  // When the card now in view was first seen, so the latency pill shows the
+  // user's real wait across every auto pass, not just the final read.
+  const firstSeenRef = useRef(null);
   const streamRef = useRef(null);
   const busyRef = useRef(false);
   const autoRef = useRef(false);
@@ -223,13 +226,18 @@ export default function FastScanner({ onAddSuccess, showToast }) {
       else if (hedged) out = await hedged;
       else out = await serverRead((async () => (onDeviceRef.current && await Promise.resolve(lastFrameJpeg()).catch(() => null)) || grabJpeg(source, sw, sh, canvasRef))());
       if (out.busy) return { busy: true };
+      const plan = zoomPlan({ candidates: out.candidates, results: out.results, frame: out.frame, sw: out.frame?.width || sw, sh: out.frame?.height || sh });
       const ms = Math.round(performance.now() - t0);
-      const byNumber = new Map(out.results.map(x => [x.number, x]));
+      const byNumber = new Map(out.results.map(x => [x.number ?? x.scene_number, x]));
       drawOverlay(out.frame, out.candidates, byNumber);
       const hits = out.results.filter(x => x.ok && x.card);
       const eligible = out.candidates.filter(c => c.eligible).length;
+      if (!out.candidates.length) firstSeenRef.current = null;
+      else if (firstSeenRef.current == null) firstSeenRef.current = t0;
+      const waited = autoPass && firstSeenRef.current != null ? Math.round(performance.now() - firstSeenRef.current) : ms;
       if (!out.candidates.length) setHint(t('fastscan.hintNoCard'));
       else if (!eligible) setHint(t('fastscan.hintAdjust', { reason: out.candidates[0].status }));
+      else if (plan.tooSmall.length && hits.length < eligible) setHint(t('fastscan.hintCloser', { count: plan.tooSmall.length }));
       else if (!hits.length) setHint(t('fastscan.hintHold'));
       else setHint('');
 
@@ -241,14 +249,15 @@ export default function FastScanner({ onAddSuccess, showToast }) {
         return !last || now - last > 4000;
       });
       for (const h of hits) seenIdsRef.current.set(h.card.id, now);
+      if (hits.length) firstSeenRef.current = null;
       if (fresh.length) {
-        setLatency(ms);
+        setLatency({ total: waited, read: ms });
         setFlash(f => f + 1);
         navigator.vibrate?.(18);
         const rows = fresh.map(h => ({ key: `${h.card.id}-${now}-${Math.random().toString(36).slice(2, 7)}`, card: h.card, added: false }));
         setResults(prev => [...rows, ...prev].slice(0, 80));
       } else if (!autoPass) {
-        setLatency(ms);
+        setLatency({ total: ms, read: ms });
       }
       return { matched: fresh.length, none: !out.candidates.length };
     } catch (e) {
@@ -296,6 +305,12 @@ export default function FastScanner({ onAddSuccess, showToast }) {
     setDest(String(newId)); localStorage.setItem('fastscan.dest', String(newId));
   };
 
+  // Per-row finish and count, set from the tray before sending.
+  const qtyOf = (row) => Math.max(1, row.qty || 1);
+  const printingOf = (row) => (row.foil ? 'Holofoil' : 'Normal');
+  const patchRow = (key, fn) => setResults(prev => prev.map(x => (x.key === key ? { ...x, ...fn(x) } : x)));
+  const canFoil = (card) => card?.price_holofoil > 0 || (Array.isArray(card?.finishes) && card.finishes.includes('foil'));
+
   // Send every unsent scan to the chosen destination in one request.
   const sendAll = async () => {
     const rows = results.filter(r => !r.sent);
@@ -307,14 +322,14 @@ export default function FastScanner({ onAddSuccess, showToast }) {
         r = await fetch('/api/collection/bulk-add', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            card_ids: rows.map(row => ({ card_id: row.card.id, quantity: 1, purchase_price: resolveCardPrice(row.card, 'Normal') })),
+            card_ids: rows.map(row => ({ card_id: row.card.id, quantity: qtyOf(row), printing: printingOf(row), purchase_price: resolveCardPrice(row.card, printingOf(row)) })),
             quantity: 1, condition: 'Near Mint', printing: 'Normal', language: 'English',
           }),
         });
       } else {
         r = await fetch(`/api/lists/${encodeURIComponent(dest)}/cards/bulk`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cards: rows.map(row => ({ card_id: row.card.id, quantity: 1 })) }),
+          body: JSON.stringify({ cards: rows.map(row => ({ card_id: row.card.id, quantity: qtyOf(row) })) }),
         });
       }
       const j = await r.json().catch(() => ({}));
@@ -327,7 +342,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
       const where = dest === 'collection' ? t('fastscan.destCollection') : (lists.find(l => String(l.id) === dest)?.name || t('fastscan.destList'));
       clearTimeout(undoTimer.current);
       if (sentRows.length) {
-        setUndo({ rows: sentRows, dest, where, entryIds: dest === 'collection' ? (j.entries || []).map(e => e.id).filter(Boolean) : null });
+        setUndo({ rows: sentRows, dest, where, entryIds: dest === 'collection' ? (j.entries || []).flatMap(e => (e.ids?.length ? e.ids : [e.id])).filter(Boolean) : null });
         undoTimer.current = setTimeout(() => setUndo(null), 15000);
       }
       showToast?.(t('fastscan.sent', { count: keys.size, where }));
@@ -367,7 +382,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
       } else {
         const r = await fetch(`/api/lists/${encodeURIComponent(u.dest)}/cards/bulk-remove`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cards: u.rows.map(row => ({ card_id: row.card.id, quantity: 1 })) }),
+          body: JSON.stringify({ cards: u.rows.map(row => ({ card_id: row.card.id, quantity: qtyOf(row) })) }),
         });
         if (!r.ok) throw new Error('undo failed');
       }
@@ -383,8 +398,9 @@ export default function FastScanner({ onAddSuccess, showToast }) {
   }
 
   const pending = results.filter(r => !r.sent).length;
-  const priceOf = (card) => Number(resolveCardPrice(card, 'Normal')) || 0;
-  const total = results.reduce((sum, r) => sum + priceOf(r.card), 0);
+  const priceOf = (card, printing = 'Normal') => Number(resolveCardPrice(card, printing)) || 0;
+  const rowPrice = (row) => priceOf(row.card, printingOf(row)) * qtyOf(row);
+  const total = results.reduce((sum, r) => sum + rowPrice(r), 0);
   const currency = results[0]?.card?.price_currency;
   const destValid = dest === 'collection' || lists.some(l => String(l.id) === dest);
 
@@ -397,7 +413,7 @@ export default function FastScanner({ onAddSuccess, showToast }) {
 
         <div className="fs-topbar">
           {results.length > 0 && <span className="fs-pill fs-pill-value">{priceText(total, currency)} · {results.length}</span>}
-          {latency != null && <span className="fs-pill"><Sparkles size={12} /> {latency} ms</span>}
+          {latency != null && <span className="fs-pill" title={t('fastscan.latencyHint', { read: latency.read })}><Sparkles size={12} /> {latency.total >= 1000 ? `${(latency.total / 1000).toFixed(1)} s` : `${latency.total} ms`}</span>}
           {auto && <span className="fs-pill fs-pill-live"><span className="fs-dot" /> {t('fastscan.autoOn')}</span>}
           {onDevice && <span className="fs-pill" title={t('fastscan.onDeviceHint')}>{t('fastscan.onDevice')}</span>}
           <span className="fs-spacer" />
@@ -462,11 +478,27 @@ export default function FastScanner({ onAddSuccess, showToast }) {
                     <button type="button" className="fs-card-edit" onClick={() => openPrintings(row)} aria-label={t('fastscan.changePrinting')} />
                   )}
                   <button type="button" className="fs-card-x" onClick={() => setResults(prev => prev.filter(r => r.key !== row.key))} aria-label={t('fastscan.dismiss')}><X size={12} /></button>
-                  <span className="fs-card-price">{priceText(priceOf(row.card), row.card.price_currency)}</span>
+                  <span className="fs-card-price">{priceText(rowPrice(row), row.card.price_currency)}</span>
                   {row.sent && <span className="fs-card-badge"><Check size={14} /></span>}
                 </div>
                 <div className="fs-card-name">{displayName(row.card)}</div>
                 <div className="fs-card-meta">{String(row.card.set_id || '').toUpperCase()} · #{row.card.number}</div>
+                {!row.sent && (
+                  <div className="fs-card-quick">
+                    <div className="fs-qty" role="group" aria-label={t('fastscan.quantity')}>
+                      <button type="button" onClick={() => patchRow(row.key, x => ({ qty: Math.max(1, qtyOf(x) - 1) }))} disabled={qtyOf(row) <= 1} aria-label={t('fastscan.qtyLess')}><Minus size={12} /></button>
+                      <span aria-live="polite">{qtyOf(row)}</span>
+                      <button type="button" onClick={() => patchRow(row.key, x => ({ qty: Math.min(99, qtyOf(x) + 1) }))} aria-label={t('fastscan.qtyMore')}><Plus size={12} /></button>
+                    </div>
+                    {dest === 'collection' && (
+                      <button type="button" className={`fs-foil${row.foil ? ' is-on' : ''}`} aria-pressed={!!row.foil}
+                        disabled={!row.foil && !canFoil(row.card)}
+                        onClick={() => patchRow(row.key, x => ({ foil: !x.foil }))}>
+                        <Sparkles size={11} />{t('fastscan.foil')}
+                      </button>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>

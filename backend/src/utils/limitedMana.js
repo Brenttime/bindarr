@@ -58,6 +58,9 @@ function frontFace(card) {
 // spell//land MDFC counts as a spell (the side you usually count).
 function analyzeCards(cards) {
   const pips = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
+  // Cards (every copy) that need each color at all: 14 black pips on 6 cards
+  // is a different demand from 14 on 14 cards.
+  const colorCards = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
   const basics = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
   const lands = [];
   let spells = 0;
@@ -82,12 +85,15 @@ function analyzeCards(cards) {
     }
     spells += quantity;
     const p = costPips(face.mana_cost != null ? face.mana_cost : card.mana_cost);
-    for (const id of Object.keys(pips)) pips[id] += p[id] * quantity;
+    for (const id of Object.keys(pips)) {
+      pips[id] += p[id] * quantity;
+      if (p[id] > 0) colorCards[id] += quantity;
+    }
   }
   for (const id of Object.keys(pips)) pips[id] = Math.round(pips[id]);
   const basicCount = Object.values(basics).reduce((a, b) => a + b, 0);
   const landCount = basicCount + lands.reduce((a, l) => a + l.quantity, 0);
-  return { pips, basics, lands, spells, landCount, basicCount, deckSize: spells + landCount };
+  return { pips, colorCards, basics, lands, spells, landCount, basicCount, deckSize: spells + landCount };
 }
 
 module.exports = { parseDecklist, costPips, analyzeCards };

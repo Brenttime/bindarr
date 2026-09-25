@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Trash2, X, ChevronLeft, Search, ListChecks, Copy, Pencil,
-  Layers, Minus, ShoppingCart, Wand2, DollarSign,
+  Layers, Minus, ShoppingCart, Wand2, DollarSign, PackageMinus, PackagePlus,
+  Star, Heart, Gift, Flame, Crown, Gem, Swords, Shield, Sparkles, Bookmark, Trophy, Skull, Zap, Target, Package, Coins,
 } from 'lucide-react';
 import OverflowMenu from './OverflowMenu';
 import CardImage from './CardImage';
@@ -14,6 +15,36 @@ import { buildManapoolUrl } from '../utils/manapoolUrl';
 import { buildTcgMassEntryUrl } from '../utils/tcgMassEntryUrl';
 import { deckMinimumValueText, deckMinimumValueHint } from '../utils/deckMinimumValue';
 import { priceText } from '../utils/formatPrice';
+
+export const LIST_ICONS = [
+  ['list-checks', ListChecks], ['star', Star], ['heart', Heart], ['shopping-cart', ShoppingCart],
+  ['gift', Gift], ['flame', Flame], ['crown', Crown], ['gem', Gem], ['swords', Swords],
+  ['shield', Shield], ['sparkles', Sparkles], ['wand', Wand2], ['bookmark', Bookmark],
+  ['trophy', Trophy], ['skull', Skull], ['zap', Zap], ['target', Target], ['package', Package],
+  ['coins', Coins], ['layers', Layers],
+];
+const ListIcon = ({ name, ...props }) => {
+  const Icon = (LIST_ICONS.find(([k]) => k === name) || LIST_ICONS[0])[1];
+  return <Icon {...props} />;
+};
+const IconPicker = ({ value, onChange, accent, t }) => (
+  <div className="form-group">
+    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>{t('lists.icon')}</label>
+    <div className="list-icon-picker" role="radiogroup" aria-label={t('lists.icon')} style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', paddingTop: '0.2rem' }}>
+      {LIST_ICONS.map(([key, Icon]) => {
+        const on = (value || 'list-checks') === key;
+        return (
+          <button key={key} type="button" role="radio" aria-checked={on} title={key} aria-label={key} data-icon={key}
+            onClick={() => onChange(key)}
+            style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0,
+              background: on ? `${accent}33` : 'rgba(0,0,0,0.3)', border: on ? `1.5px solid ${accent}` : '1.5px solid rgba(255,255,255,0.12)', color: on ? accent : 'var(--text-secondary)' }}>
+            <Icon size={16} />
+          </button>
+        );
+      })}
+    </div>
+  </div>
+);
 
 const ACCENTS = [
   { name: 'Emerald', hex: '#10b981' },
@@ -48,6 +79,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   const [newDesc, setNewDesc] = useState('');
 
   const [newAccent, setNewAccent] = useState('#10b981');
+  const [newIcon, setNewIcon] = useState('list-checks');
   const [importText, setImportText] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -56,6 +88,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editAccent, setEditAccent] = useState('#10b981');
+  const [editIcon, setEditIcon] = useState('list-checks');
 
   // Buy modal ("shop cart"): the plain list text is fetched when the modal
   // opens rather than on header click, so no half-fetched tab is ever opened.
@@ -151,6 +184,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     setNewName('');
     setNewDesc('');
     setNewAccent('#10b981');
+    setNewIcon('list-checks');
     setImportText('');
     setShowCreate(true);
   };
@@ -159,6 +193,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     setEditName(activeList.name);
     setEditDesc(activeList.description || '');
     setEditAccent(activeList.accent_color || '#10b981');
+    setEditIcon(activeList.icon || 'list-checks');
     setShowEdit(true);
   };
 
@@ -174,6 +209,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
           name: newName,
           description: newDesc,
           accent_color: newAccent,
+          icon: newIcon,
           list_text: importText,
         }),
       });
@@ -211,7 +247,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
       const res = await fetch(`/api/lists/${activeList.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editName, description: editDesc, accent_color: editAccent }),
+        body: JSON.stringify({ name: editName, description: editDesc, accent_color: editAccent, icon: editIcon }),
       });
       if (res.ok) {
         showToast(t('lists.listUpdated'));
@@ -241,6 +277,52 @@ function Lists({ showToast, handoff, onHandoffDone }) {
     } catch (err) {
       console.error(err);
       showToast(t('lists.errDelete'));
+    }
+  };
+
+  // Add every card on the list to the collection at its list quantity (e.g. a
+  // trade or purchase that arrived). Uses the collection bulk-add route, <=250 entries per call.
+  const registerInCollection = async () => {
+    const rows = (listDetail?.cards || []).filter(c => c.quantity > 0);
+    const total = rows.reduce((n, c) => n + c.quantity, 0);
+    if (!total) { showToast(t('lists.registerNone')); return; }
+    if (!window.confirm(t('lists.registerConfirm', { count: total, name: activeList.name }))) return;
+    let added = 0, failed = 0;
+    try {
+      for (let i = 0; i < rows.length; i += 250) {
+        const chunk = rows.slice(i, i + 250);
+        const res = await fetch('/api/collection/bulk-add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ card_ids: chunk.map(c => ({ card_id: c.id, quantity: c.quantity })) }) });
+        const body = await res.json().catch(() => ({}));
+        const ok = new Set((body.entries || []).map(e => e.card_id));
+        added += chunk.filter(c => ok.has(c.id)).reduce((n, c) => n + c.quantity, 0);
+        failed += Array.isArray(body.failed) ? body.failed.length : (res.ok ? 0 : chunk.length);
+      }
+      showToast(failed ? t('lists.registerPartial', { count: added, failed }) : t('lists.registerDone', { count: added }));
+      await Promise.all([loadList(activeList.id), fetchLists()]);
+    } catch (err) {
+      console.error(err);
+      showToast(t('lists.registerError'));
+    }
+  };
+
+  const pullFromCollection = async () => {
+    const url = `/api/lists/${activeList.id}/remove-from-collection`;
+    const post = (dry) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dry_run: dry }) });
+    try {
+      const pre = await post(true);
+      if (!pre.ok) { showToast(t('lists.pullError')); return; }
+      const plan = await pre.json();
+      if (!plan.removed) { showToast(t('lists.pullNone')); return; }
+      const shortNote = plan.short.length ? '\n\n' + t('lists.pullShort', { count: plan.requested - plan.removed }) : '';
+      if (!window.confirm(t('lists.pullConfirm', { count: plan.removed, name: activeList.name }) + shortNote)) return;
+      const res = await post(false);
+      if (!res.ok) { showToast(t('lists.pullError')); return; }
+      const done = await res.json();
+      showToast(t('lists.pullDone', { count: done.removed }));
+      await Promise.all([loadList(activeList.id), fetchLists()]);
+    } catch (err) {
+      console.error(err);
+      showToast(t('lists.pullError'));
     }
   };
 
@@ -640,13 +722,17 @@ function Lists({ showToast, handoff, onHandoffDone }) {
                   onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = `0 12px 30px ${accent}25`; }}
                   onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
                 >
-                  <div className="list-tile-accent" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '3px', background: `linear-gradient(90deg, ${accent}, ${accent}cc)` }} />
+                  <div className="list-tile-accent" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '3px', background: `linear-gradient(90deg, ${accent}, ${accent}cc)` }}>
+                    <ListIcon name={list.icon} size={18} className="list-tile-accent-icon" aria-hidden="true" />
+                  </div>
                   <div className="list-tile-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-                    <div className="list-tile-title" style={{ minWidth: 0 }}>
+                    <div className="list-tile-title" style={{ minWidth: 0, display: 'flex', gap: '0.6rem', alignItems: 'flex-start' }}>
+                      <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{list.name}</div>
                       {list.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.2rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{list.description}</div>}
+                      </div>
                     </div>
-                    <button className="btn btn-danger btn-icon-only list-tile-delete" title={t('deck.deleteDeck')}
+                    <button className="btn btn-danger btn-icon-only list-tile-delete" title={t('lists.deleteList')} aria-label={t('lists.deleteList')}
                       onClick={e => { e.stopPropagation(); window.confirm(t('lists.confirmDelete', { name: list.name })) && fetch(`/api/lists/${list.id}`, { method: 'DELETE' }).then(() => { showToast(t('lists.deleted')); fetchLists(); }); }}
                       style={{ width: '1.6rem', height: '1.6rem', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Trash2 size={14} />
@@ -698,6 +784,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
                     </div>
                   </div>
                 </div>
+                <IconPicker value={newIcon} onChange={setNewIcon} accent={newAccent} t={t} />
                 <div className="form-group">
                   <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>{t('lists.importOptional')}</label>
                   <textarea className="input-control" value={importText} onChange={e => setImportText(e.target.value)}
@@ -726,6 +813,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
           <button className="btn btn-secondary btn-icon-only" onClick={leaveList} title={t('nav.dashboard')}><ChevronLeft size={16} /></button>
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+              <ListIcon name={activeList.icon} size={20} className="list-detail-icon" style={{ color: accent, flexShrink: 0 }} />
               <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-strong)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeList.name}</h2>
               <button className="icon-btn-ghost" onClick={openEdit} title={t('lists.editList')} aria-label={t('lists.editList')}><Pencil size={15} /></button>
             </div>
@@ -749,8 +837,14 @@ function Lists({ showToast, handoff, onHandoffDone }) {
             <Wand2 size={14} /> {movingCheapest ? t('lists.cheapestWorking') : t('lists.cheapestButton')}
           </button>
           <OverflowMenu label={t('lists.moreActions')}>
+            <button role="menuitem" style={menuItem} onClick={registerInCollection}>
+              <PackagePlus size={14} /> {t('lists.registerButton')}
+            </button>
+            <button role="menuitem" style={{ ...menuItem, color: 'var(--accent-red)' }} onClick={pullFromCollection}>
+              <PackageMinus size={14} /> {t('lists.pullButton')}
+            </button>
             <button role="menuitem" style={{ ...menuItem, color: 'var(--accent-red)' }} onClick={handleDelete}>
-              <Trash2 size={14} /> {t('deck.deleteDeck')}
+              <Trash2 size={14} /> {t('lists.deleteList')}
             </button>
           </OverflowMenu>
         </div>
@@ -842,7 +936,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
           <div style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>{t('lists.emptyListHint')}</div>
         </div>
       ) : (
-        <div className="glass-panel" style={{ overflowX: 'auto', padding: 0 }}>
+        <div className="glass-panel list-cards-panel" style={{ overflowX: 'auto', padding: 0 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
@@ -928,6 +1022,7 @@ function Lists({ showToast, handoff, onHandoffDone }) {
                   ))}
                 </div>
               </div>
+              <IconPicker value={editIcon} onChange={setEditIcon} accent={editAccent} t={t} />
               <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowEdit(false)}>{t('lists.cancel')}</button>
                 <button type="submit" className="btn btn-primary" style={{ fontWeight: 700 }}>{t('lists.save')}</button>

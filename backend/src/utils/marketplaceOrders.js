@@ -832,8 +832,93 @@ async function previewOrder({ lines, userId, includeExtras = false }, deps = {})
   };
 }
 
+// --- TCGplayer page import (bookmarklet) -------------------------------------
+// The bookmarklet reads an order off the user's own logged-in TCGplayer page
+// and hands over lines keyed by TCGplayer product id. That id is exactly what
+// Scryfall stores as tcgplayer_id, so the printing is matched by identity, not
+// by name: first against card_cache (already-known printings, English row
+// preferred), then Scryfall's /cards/tcgplayer/:id for anything not cached.
+// A product id that resolves nowhere (sealed, tokens TCGplayer sells that
+// Scryfall lacks) stays unresolved and is reported, never guessed.
+const TCG_PAGE_MAX_LINES = 1000;
+function cleanTcgPageLines(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const l of raw.slice(0, TCG_PAGE_MAX_LINES)) {
+    if (!l || typeof l !== 'object') continue;
+    const pid = String(l.tcgplayer_product_id ?? '').trim();
+    if (!/^\d{1,10}$/.test(pid)) continue;
+    const qty = Math.floor(Number(l.quantity));
+    const cents = l.price_cents == null ? null : Math.round(Number(l.price_cents));
+    out.push({
+      tcgplayer_product_id: pid,
+      name: String(l.name || '').slice(0, 200).trim(),
+      quantity: Number.isFinite(qty) && qty > 0 && qty < 1000 ? qty : 1,
+      price_cents: Number.isFinite(cents) && cents >= 0 && cents < 10_000_000 ? cents : null,
+      is_foil: l.is_foil === true,
+      condition: mapCondition(l.condition, null),
+      order: l.order ? String(l.order).slice(0, 64) : null,
+    });
+  }
+  return out;
+}
+
+async function resolveTcgPageLines(rawLines, deps = {}) {
+  const lines = cleanTcgPageLines(rawLines);
+  const database = deps.db || require('../db');
+  const scryGet = deps.scryGet || require('../scryfallApi').scryGetRetried;
+  const ids = [...new Set(lines.map((l) => l.tcgplayer_product_id))];
+  const byPid = new Map();
+  if (ids.length) {
+    const ph = ids.map(() => '?').join(',');
+    const rows = await database.all(
+      `SELECT id, tcgplayer_product_id AS pid, language FROM card_cache
+        WHERE id LIKE 'mtg-%' AND tcgplayer_product_id IN (${ph})
+        ORDER BY CASE WHEN language IS NULL OR language = 'English' THEN 0 ELSE 1 END`,
+      ids.map(Number)
+    );
+    for (const r of rows) {
+      const k = String(r.pid);
+      if (!byPid.has(k)) byPid.set(k, String(r.id).slice(4));
+    }
+  }
+  for (const pid of ids) {
+    if (byPid.has(pid)) continue;
+    try {
+      const resp = await scryGet(`/cards/tcgplayer/${pid}`);
+      if (resp && resp.data && resp.data.id) byPid.set(pid, String(resp.data.id));
+    } catch { /* 404: not a card Scryfall knows; stays unresolved */ }
+  }
+  const out = lines.map((l) => {
+    const sid = byPid.get(l.tcgplayer_product_id) || null;
+    return {
+      name: l.name,
+      set_code: null,
+      number: null,
+      scryfall_id: sid,
+      tcgplayer_product_id: l.tcgplayer_product_id,
+      quantity: l.quantity,
+      price_cents: l.price_cents,
+      is_foil: l.is_foil,
+      condition: l.condition,
+      year: null,
+      sealed: false,
+      // Unresolvable ids are not sent to the name resolver: TCGplayer product
+      // names carry set/variant suffixes that would match the wrong printing.
+      junk: !sid,
+    };
+  });
+  out.__extras = out.filter((l) => l.junk).length;
+  out.__cardCopies = out.reduce((n, l) => n + (l.junk ? 0 : l.quantity), 0);
+  out.__cardLines = out.filter((l) => !l.junk).length;
+  out.__unmatched = out.filter((l) => l.junk).map((l) => l.name || `#${l.tcgplayer_product_id}`);
+  return out;
+}
+
 module.exports = {
   MANAPOOL_BASE,
+  cleanTcgPageLines,
+  resolveTcgPageLines,
   RECENT_LIMIT,
   normalizeCookies,
   cookieCount,
