@@ -14,7 +14,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAINTENANCE_POLL_MS = 60 * 60 * 1000;
 const START_DELAY_MS = 30 * 1000;
 const BULK_ENDPOINT = 'https://api.scryfall.com/bulk-data';
-const USER_AGENT = 'Bindarr/1.0 (+https://github.com/Brenttime/bindarr)';
+const USER_AGENT = 'Scrybox/1.0 (+https://github.com/Brenttime/scrybox)';
 const LOCAL_COLLECTION_OPERATORS = new Set([
   // Keep this deliberately narrower than the SQL compiler. Scryfall implicitly
   // includes extras when a query explicitly targets certain names, layouts,

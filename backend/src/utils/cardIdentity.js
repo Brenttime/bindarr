@@ -1,5 +1,5 @@
 // A card's printing id identifies the physical object shown in the collection.
-// Everywhere else, Bindarr treats reprints and alternate art as the same game
+// Everywhere else, Scrybox treats reprints and alternate art as the same game
 // card. card_cache does not persist Scryfall oracle_id, so the identity available
 // across existing rows is Scryfall's canonical English `name`. This is a
 // compatibility fallback, not a perfect Oracle identity: future canonical name

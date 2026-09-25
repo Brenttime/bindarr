@@ -999,7 +999,7 @@ async function initDb() {
     }
   }
   // OIDC / SSO unique identifier (subject claim `sub`). Links an external IdP
-  // user account to a Bindarr user row.
+  // user account to a Scrybox user row.
   if (!usersCols.some(c => c.name === 'oidc_sub')) {
     await run(`ALTER TABLE users ADD COLUMN oidc_sub TEXT`);
   }
@@ -1091,7 +1091,7 @@ async function initDb() {
   if (!mfxDecksCols.some(c => c.name === 'moxfield_public_id')) {
     await run(`ALTER TABLE decks ADD COLUMN moxfield_public_id TEXT`);
   }
-  // A public Moxfield deck may legitimately be mirrored by several Bindarr
+  // A public Moxfield deck may legitimately be mirrored by several Scrybox
   // users. Uniqueness is per owner, not global. Drop the former global index
   // before creating its user-scoped replacement under a new stable name.
   await run(`DROP INDEX IF EXISTS idx_decks_mfx_public_id`);

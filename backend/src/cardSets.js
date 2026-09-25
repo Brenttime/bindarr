@@ -11,7 +11,7 @@ const languages = require('./utils/languages');
 // scryfallApi is lazy-required inside the build/preview paths only — it pulls
 // in the DB module, which verify-only worker threads must not load.
 
-const http = axios.create({ timeout: 30000, headers: { 'User-Agent': 'Bindarr/1.0', 'Accept': 'application/json' } });
+const http = axios.create({ timeout: 30000, headers: { 'User-Agent': 'Scrybox/1.0', 'Accept': 'application/json' } });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // "This set has no data in this language" — an expected gap, not a failure.

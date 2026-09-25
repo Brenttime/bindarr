@@ -26,11 +26,11 @@ const { spawnSync } = require('child_process');
 // about how many rows it can see. That is a test failure describing nothing but a
 // dirty temp directory, which is the fastest way to teach people to ignore a suite.
 //
-// Matched tightly — `bindarr-<name>-<digits>.db` in the OS temp dir, plus its WAL
+// Matched tightly — `scrybox-<name>-<digits>.db` in the OS temp dir, plus its WAL
 // sidecars — because that is exactly the shape the tests generate and nothing else.
 function clearStaleTestDatabases() {
   const dir = os.tmpdir();
-  const shape = /^bindarr-[a-z-]+-\d+\.db(-wal|-shm)?$/i;
+  const shape = /^scrybox-[a-z-]+-\d+\.db(-wal|-shm)?$/i;
   let cleared = 0;
   for (const name of fs.readdirSync(dir)) {
     if (!shape.test(name)) continue;

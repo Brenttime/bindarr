@@ -69,7 +69,7 @@ function checkScanModels() {
     return;
   }
   // The models ship in neither the image nor the repository: they are AGPL-3.0
-  // while Bindarr is MIT, so fetching them is the operator's deliberate step. That
+  // while Scrybox is MIT, so fetching them is the operator's deliberate step. That
   // makes "no models" the ordinary state of a fresh install rather than a fault,
   // and it deserves the command that fixes it instead of silence until someone
   // points a camera at a card.
@@ -347,7 +347,7 @@ db.initDb()
 // Unauthenticated; pings the DB so a wedged database reads as unhealthy.
 // Declared before the /api collection mount so nothing shadows it.
 app.get('/api/health', async (req, res) => {
-  res.setHeader('X-App-Name', 'Bindarr');
+  res.setHeader('X-App-Name', 'Scrybox');
   if (!dbReady) {
     return res.status(503).json({ status: 'db_initializing' });
   }
@@ -490,7 +490,7 @@ app.use((err, req, res, next) => {
 // Start Express Server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`=========================================`);
-  console.log(`Bindarr Server running on port ${PORT}`);
+  console.log(`Scrybox Server running on port ${PORT}`);
   console.log(`Access local: http://localhost:${PORT}`);
   console.log(`=========================================`);
   // Camera scanning needs a secure context, so a LAN/Docker install serves TLS

@@ -2,19 +2,21 @@
 
 <img src="frontend/public/logo.svg" width="120" height="120" alt="" />
 
-# Bindarr
+# Scrybox
 
-**Self-hosted collection manager for Magic: The Gathering cards.**
+**Self-hosted Magic: The Gathering collection manager — a ManaBox replacement you run yourself.**
 
 Identify cards with your phone camera, track prices, and pull decks back out of your collection again.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/Brenttime/bindarr/docker-build.yml?branch=main&label=CI&logo=github)](https://github.com/Brenttime/bindarr/actions/workflows/docker-build.yml)
-[![Docker image](https://img.shields.io/badge/ghcr.io-bindarr-2496ED?logo=docker&logoColor=white)](https://github.com/Brenttime/bindarr/pkgs/container/bindarr)
-[![License: MIT](https://img.shields.io/github/license/Brenttime/bindarr?color=blue)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/Brenttime/bindarr?style=flat&logo=github)](https://github.com/Brenttime/bindarr/stargazers)
-[![Issues](https://img.shields.io/github/issues/Brenttime/bindarr)](https://github.com/Brenttime/bindarr/issues)
+[![CI](https://img.shields.io/github/actions/workflow/status/Brenttime/scrybox/docker-build.yml?branch=main&label=CI&logo=github)](https://github.com/Brenttime/scrybox/actions/workflows/docker-build.yml)
+[![Docker image](https://img.shields.io/badge/ghcr.io-scrybox-2496ED?logo=docker&logoColor=white)](https://github.com/Brenttime/scrybox/pkgs/container/scrybox)
+[![License: MIT](https://img.shields.io/github/license/Brenttime/scrybox?color=blue)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Brenttime/scrybox?style=flat&logo=github)](https://github.com/Brenttime/scrybox/stargazers)
+[![Issues](https://img.shields.io/github/issues/Brenttime/scrybox)](https://github.com/Brenttime/scrybox/issues)
 
-[Fork differences](#about-this-fork) · [Install](#install) · [Features](#features) · [How it works](PROJECT.md) · [Report a bug](https://github.com/Brenttime/bindarr/issues/new)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Scrybox-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/M4M31KYZ9Y)
+
+[Fork differences](#about-this-fork) · [Install](#install) · [Features](#features) · [How it works](PROJECT.md) · [Report a bug](https://github.com/Brenttime/scrybox/issues/new)
 
 </div>
 
@@ -22,11 +24,18 @@ Identify cards with your phone camera, track prices, and pull decks back out of 
 
 ## About this fork
 
-This repository is an opinionated, MTG-only fork of
-[`thenotoriousJeremy/bindarr`](https://github.com/thenotoriousJeremy/bindarr).
-It follows upstream selectively: fixes and improvements that fit the focused
-Magic workflow are brought across, while upstream features that broaden Bindarr
-into a general trading-card manager are deliberately left out.
+Scrybox is a **hard fork** of
+[`thenotoriousJeremy/bindarr`](https://github.com/thenotoriousJeremy/bindarr),
+narrowed to **Magic: The Gathering only**. Its goal is to replace ManaBox for
+people who want their collection, scans, decks and lists on their own server,
+with no subscription and no cloud account.
+
+It no longer tracks upstream: compatible scanner, performance and correctness
+fixes may still be ported by hand, but upstream features that broaden the app
+into a general trading-card manager are deliberately left out. Some internal
+names (the `bindarr.db` database file, browser storage keys, the
+`com.bindarr.app` mobile identifier) keep their original spelling so existing
+installs, saved logins and app-store builds keep working.
 
 Compared with upstream, this fork:
 
@@ -45,9 +54,7 @@ Compared with upstream, this fork:
 - adds MTG-focused deck checkout, precon import, collection registration,
   inventory-integrity safeguards, and large-catalog search optimizations.
 
-Those boundaries are product decisions, not missing upstream work. Upstream
-syncs should preserve them while continuing to adopt compatible scanner,
-performance, correctness, and interface improvements.
+Those boundaries are product decisions, not missing upstream work.
 
 ---
 
@@ -75,9 +82,9 @@ No clone, no build. Create a `docker-compose.yml`:
 
 ```yaml
 services:
-  bindarr:
-    image: ghcr.io/brenttime/bindarr:edge
-    container_name: bindarr
+  scrybox:
+    image: ghcr.io/brenttime/scrybox:edge
+    container_name: scrybox
     restart: unless-stopped
     ports:
       - "3001:3001"   # HTTP  — point a reverse proxy here
@@ -118,7 +125,7 @@ Both ports serve the same app and the same database. Only the transport differs.
 | Port | Use it when |
 | --- | --- |
 | `3001` (HTTP) | You have a reverse proxy (Caddy, NPM, Traefik, Tailscale Serve) terminating TLS in front, or you're on the host itself at `http://localhost:3001`. |
-| `3443` (HTTPS) | You have no proxy and want to reach Bindarr from a phone. **Card scanning only works here** — browsers refuse camera access over plain HTTP to anything but `localhost`. |
+| `3443` (HTTPS) | You have no proxy and want to reach Scrybox from a phone. **Card scanning only works here** — browsers refuse camera access over plain HTTP to anything but `localhost`. |
 
 Publish only the one you use. Behind a proxy, drop the `3443` line and set `TRUST_PROXY=1`.
 
@@ -156,19 +163,19 @@ All optional.
 
 ### Prebuilt server binary
 
-If you'd rather not run Docker, every release ships a self-contained server. Download it from the [latest release](https://github.com/Brenttime/bindarr/releases/latest), unpack, run, then open `http://localhost:3001`.
+If you'd rather not run Docker, every release ships a self-contained server. Download it from the [latest release](https://github.com/Brenttime/scrybox/releases/latest), unpack, run, then open `http://localhost:3001`.
 
 | OS | File | Run |
 |----|------|-----|
-| Windows | `Bindarr-Server-windows-x64.zip` | unzip, double-click `bindarr-server.exe` |
-| Linux | `Bindarr-Server-linux-x64.tar.gz` | `tar xzf`, then `chmod +x bindarr-server && ./bindarr-server` |
-| macOS (Apple Silicon) | `Bindarr-Server-macos-arm64.tar.gz` | `tar xzf`, then `chmod +x bindarr-server && ./bindarr-server` |
+| Windows | `Scrybox-Server-windows-x64.zip` | unzip, double-click `scrybox-server.exe` |
+| Linux | `Scrybox-Server-linux-x64.tar.gz` | `tar xzf`, then `chmod +x scrybox-server && ./scrybox-server` |
+| macOS (Apple Silicon) | `Scrybox-Server-macos-arm64.tar.gz` | `tar xzf`, then `chmod +x scrybox-server && ./scrybox-server` |
 
 The first visit in a browser asks you to create the owner account. The SQLite file is created next to the binary. To set variables from the table above, create `app/backend/.env` before the first run — HTTPS is off by default here, so add `HTTPS_PORT=3443` if you want to scan from a phone.
 
 ### Mobile apps
 
-`Bindarr-Android.apk` is attached to each release (allow "install from unknown sources"). iOS goes out through TestFlight. Both talk to a Bindarr server, so install one of the above first and point the app at it.
+`Scrybox-Android.apk` is attached to each release (allow "install from unknown sources"). iOS goes out through TestFlight. Both talk to a Scrybox server, so install one of the above first and point the app at it.
 
 ---
 
@@ -179,11 +186,11 @@ neither ships inside the app:
 
 **1. The models.** Two small neural networks (~8 MB together) find the card in
 the frame and turn its artwork into a fingerprint. The detector is MIT and the
-embedding model is AGPL-3.0-only; Bindarr itself is MIT, so the models are fetched
+embedding model is AGPL-3.0-only; Scrybox itself is MIT, so the models are fetched
 deliberately rather than bundled:
 
 ```bash
-docker exec bindarr node scripts/fetch-models.mjs
+docker exec scrybox node scripts/fetch-models.mjs
 ```
 
 (Running from source or the prebuilt binary: `node scripts/fetch-models.mjs` in
@@ -217,7 +224,7 @@ The pipeline, its accuracy numbers, and the measurement harness are documented i
 Prices come from Scryfall, which quotes two marketplaces: TCGplayer's USD price
 for printings it lists, and Cardmarket's EUR price for everything else (most
 non-English printings). Prices are stored in the currency they were quoted in
-and never converted — an exchange rate is a live number Bindarr has no source
+and never converted — an exchange rate is a live number Scrybox has no source
 for — so each card shows its own symbol (`$4.50`, `€4.50`) and the card
 inspector names the marketplace. Collection totals sum the currencies as-is;
 `currencies` in the API response says when a total is mixed.
@@ -248,7 +255,7 @@ Revoking is one click in the same panel; anything using the old key stops immedi
 
 Everything is in one SQLite file (`DB_PATH`, in the `bindarr-data` volume under Docker).
 
-Bindarr snapshots the database itself every 24 hours into a `backups/` folder beside it, keeping the last 10. That runs while the server is live and needs no downtime.
+Scrybox snapshots the database itself every 24 hours into a `backups/` folder beside it, keeping the last 10. That runs while the server is live and needs no downtime.
 
 For an off-box copy, stop the container first so the WAL is checkpointed:
 
@@ -283,7 +290,7 @@ Tests: `npm test`. Frontend lint (matches CI, fails on any warning): `cd fronten
 
 ## Translating
 
-Bindarr speaks English, Brazilian Portuguese, French, German, Italian, Japanese, Korean, Russian, Simplified Chinese, Traditional Chinese and Spanish. More are welcome, and it doesn't require writing code: copy [`frontend/src/locales/en.json`](frontend/src/locales/en.json), translate the text after each `:`, open a pull request. Partial files are fine — anything missing falls back to English key by key.
+Scrybox speaks English, Brazilian Portuguese, French, German, Italian, Japanese, Korean, Russian, Simplified Chinese, Traditional Chinese and Spanish. More are welcome, and it doesn't require writing code: copy [`frontend/src/locales/en.json`](frontend/src/locales/en.json), translate the text after each `:`, open a pull request. Partial files are fine — anything missing falls back to English key by key.
 
 Details, including placeholder and plural rules, in [docs/TRANSLATING.md](docs/TRANSLATING.md).
 
@@ -294,3 +301,11 @@ This is the language of the *app*. The language a card was printed in is a separ
 ## License
 
 [MIT](LICENSE).
+
+---
+
+## Support
+
+If Scrybox saves you a ManaBox subscription, you can say thanks on Ko-fi:
+
+[![Support me on Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/M4M31KYZ9Y)

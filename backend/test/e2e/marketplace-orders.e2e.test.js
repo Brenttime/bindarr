@@ -15,7 +15,7 @@ const { spawn } = require('child_process');
 // auth is actually enforced, credentials really persist and are really withheld
 // from every GET body, and the numbers a user sees in preview are the numbers
 // that land in the collection.
-const tmpDb = path.join(os.tmpdir(), `bindarr-mkt-e2e-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-mkt-e2e-${process.pid}.db`);
 const projectRoot = path.join(__dirname, '../../..');
 
 // --- the fake markets ------------------------------------------------------

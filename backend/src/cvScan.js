@@ -11,7 +11,7 @@
 // two ONNX files and one 56 MB catalog, so there is no index build at all.
 //
 // LICENSING: both models are AGPL-3.0 (https://huggingface.co/HanClinto/milo,
-// https://huggingface.co/HanClinto/cornelius). Bindarr is MIT. Shipping this
+// https://huggingface.co/HanClinto/cornelius). Scrybox is MIT. Shipping this
 // enabled is a licensing decision, not just a technical one — see docs.
 const fs = require('fs');
 const path = require('path');

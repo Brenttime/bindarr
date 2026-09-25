@@ -1,5 +1,5 @@
 # =========================================
-# Bindarr Dockerfile
+# Scrybox Dockerfile
 # Stage 1: Build Frontend Assets
 # =========================================
 FROM node:20-alpine AS frontend-builder
@@ -66,7 +66,7 @@ ENV DB_PATH=/app/database/bindarr.db
 # Scan models and catalogs live on the persisted volume, both so a build has a
 # writable target under the non-root `node` user and so an image update does not
 # discard them. The two ONNX models are NOT in the image — they are AGPL-3.0 while
-# Bindarr is MIT, so the operator fetches them into this directory deliberately:
+# Scrybox is MIT, so the operator fetches them into this directory deliberately:
 #   docker exec <container> node scripts/fetch-models.mjs
 ENV CV_MODEL_DIR=/app/database/models
 

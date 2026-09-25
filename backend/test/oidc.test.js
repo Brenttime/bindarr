@@ -93,7 +93,7 @@ function testIssuerTransport() {
 function testIdTokenValidation() {
   const { validateIdTokenClaims } = oidc;
   const ISS = 'https://auth.example.com';
-  const CID = 'bindarr';
+  const CID = 'scrybox';
   const NONCE = 'nonce-abc';
   const ok = () => ({
     iss: ISS,
@@ -184,7 +184,7 @@ async function testMockOidcFlow() {
 
         const mockIdTokenPayload = {
           iss: `http://${req.headers.host}`,
-          aud: 'bindarr-test-client',
+          aud: 'scrybox-test-client',
           exp: Math.floor(Date.now() / 1000) + 3600,
           nonce: currentNonce,
           sub: 'auth-user-999',
@@ -214,7 +214,7 @@ async function testMockOidcFlow() {
 
   process.env.OIDC_ENABLED = 'true';
   process.env.OIDC_ISSUER_URL = mockIssuer;
-  process.env.OIDC_CLIENT_ID = 'bindarr-test-client';
+  process.env.OIDC_CLIENT_ID = 'scrybox-test-client';
   process.env.OIDC_CLIENT_SECRET = 'secret123';
   oidc._resetDiscoveryCache();
 
@@ -223,7 +223,7 @@ async function testMockOidcFlow() {
     const authUrl = await oidc.buildAuthorizationUrl();
     const parsedAuth = new URL(authUrl);
     assert.strictEqual(parsedAuth.pathname, '/auth');
-    assert.strictEqual(parsedAuth.searchParams.get('client_id'), 'bindarr-test-client');
+    assert.strictEqual(parsedAuth.searchParams.get('client_id'), 'scrybox-test-client');
     assert.strictEqual(parsedAuth.searchParams.get('response_type'), 'code');
     assert.strictEqual(parsedAuth.searchParams.get('code_challenge_method'), 'S256');
 

@@ -30,7 +30,7 @@ import { useT } from '../utils/i18n';
 //
 // Two separate acts, deliberately. Uploading fixes the gap on THIS instance
 // immediately and offline. Contributing is a second, explicit press that hands
-// the user the file plus a prefilled issue — Bindarr never uploads anything
+// the user the file plus a prefilled issue — Scrybox never uploads anything
 // anywhere on its own, and the user submits (or does not) on GitHub.
 
 const MAX_BYTES = 8 * 1024 * 1024; // matches backend/src/cardArt.js

@@ -3,7 +3,7 @@
 The native apps are the existing React frontend wrapped with [Capacitor](https://capacitorjs.com).
 No separate codebase: every web change flows into both apps on the next build.
 
-Because each user self-hosts Bindarr, the app asks for a **Server URL** on the
+Because each user self-hosts Scrybox, the app asks for a **Server URL** on the
 login screen (shown only in the native app) and stores it locally. All `/api`
 calls are routed to that server through Capacitor's native HTTP layer, which
 also sidesteps WebView CORS — no backend CORS changes needed.
@@ -65,7 +65,7 @@ Apple secrets the iOS job self-skips.
 |--------|---------------|
 | `ANDROID_KEYSTORE_BASE64` | base64 of an upload keystore (`.p12`/`.jks`) — generate with openssl or keytool |
 | `ANDROID_KEYSTORE_PASSWORD` | keystore password you chose |
-| `ANDROID_KEY_ALIAS` | key alias (e.g. `bindarr`) |
+| `ANDROID_KEY_ALIAS` | key alias (e.g. `scrybox`) |
 | `ANDROID_KEY_PASSWORD` | key password (same as keystore password for a `.p12`) |
 | `PLAY_SERVICE_ACCOUNT_JSON` | Play Console -> Setup -> API access -> service account JSON key with release permission |
 

@@ -257,7 +257,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `bindarr_collection.${format === 'json' ? 'json' : 'csv'}`;
+      a.download = `scrybox_collection.${format === 'json' ? 'json' : 'csv'}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -763,7 +763,7 @@ function Settings({ user, onUpdateUser, showToast, target }) {
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
             {t('settings.updateChecksNote')}{' '}
             <a href={versionInfo?.releases_url || `${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-yellow)' }}>
-              Brenttime/bindarr
+              Brenttime/scrybox
             </a>
           </div>
         </SettingsSection>

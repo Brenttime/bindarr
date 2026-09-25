@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bindarr-art-cleanup-'));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scrybox-art-cleanup-'));
 const databaseDir = path.join(root, 'database');
 const modelDir = path.join(root, 'models');
 process.env.DB_PATH = path.join(databaseDir, 'bindarr.db');

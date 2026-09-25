@@ -1,6 +1,6 @@
 // Card-list text export, shared by the frontend (CollectionList bulk bar,
 // Settings) and the backend (GET /api/collection/cardlist) so every copy of
-// Bindarr emits byte-identical text.
+// Scrybox emits byte-identical text.
 //
 // Two shapes:
 //   plain    "4 Lightning Bolt"

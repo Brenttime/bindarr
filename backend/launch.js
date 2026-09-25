@@ -15,12 +15,12 @@ const path = require('node:path');
 // startup crash showed as a window that "opens and closes really quick" with no
 // clue what went wrong. Print the error and wait for a keypress instead.
 function fatal(err) {
-  console.error('\nBindarr could not start.\n');
+  console.error('\nScrybox could not start.\n');
   console.error(err && err.stack ? err.stack : String(err));
   if (err && err.code === 'MODULE_NOT_FOUND') {
     console.error(
       '\nA file the server needs is missing from this download. Please report this at\n' +
-      'https://github.com/Brenttime/bindarr/issues with the text above.'
+      'https://github.com/Brenttime/scrybox/issues with the text above.'
     );
   }
   console.error('\nPress any key to close...');

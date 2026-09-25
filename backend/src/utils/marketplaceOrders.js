@@ -2,7 +2,7 @@
 // into collection entries, the same way the Secret Lair importer turns a product
 // card list into entries — resolve each line through the proven
 // bulkFetchByIdentifier -> card_cache path, then file through the shared
-// bulk-add core. The user picks the order; Bindarr does the rest.
+// bulk-add core. The user picks the order; Scrybox does the rest.
 //
 // Why the two providers are built differently (verified against their live
 // endpoints, see the probes in the commit that introduced this file):
@@ -205,7 +205,7 @@ async function httpGet(url, headers = {}) {
   const axios = require('axios');
   try {
     const res = await axios.get(url, {
-      headers: { 'User-Agent': 'Bindarr', Accept: 'application/json', ...headers },
+      headers: { 'User-Agent': 'Scrybox', Accept: 'application/json', ...headers },
       timeout: HTTP_TIMEOUT_MS,
       maxRedirects: 3,
       validateStatus: () => true,

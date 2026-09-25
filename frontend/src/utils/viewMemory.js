@@ -19,7 +19,7 @@ function viewKey() {
   try {
     who = (JSON.parse(localStorage.getItem('bindarr_user')) || {}).username || 'anon';
   } catch { /* missing/corrupt user JSON: anon bucket */ }
-  return 'bindarr_view_' + who;
+  return 'scrybox_view_' + who;
 }
 
 // Storage is best-effort everywhere here: a full or blocked localStorage must
@@ -87,7 +87,7 @@ export function rememberView(tab) {
 // other-user entry must survive so logging back in restores that account's place.
 export function clearRememberedView(username) {
   try {
-    if (username) localStorage.removeItem('bindarr_view_' + username);
+    if (username) localStorage.removeItem('scrybox_view_' + username);
     else localStorage.removeItem(viewKey());
   } catch { /* best effort */ }
 }

@@ -8,7 +8,7 @@ const zlib = require('zlib');
 const { Readable } = require('stream');
 
 process.env.SCRYFALL_GAP_SCALE = '0';
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-oracle-tags-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-oracle-tags-${process.pid}.db`);
 const db = require('../src/db');
 const oracleTags = require('../src/oracleTags');
 const scryfallApi = require('../src/scryfallApi');

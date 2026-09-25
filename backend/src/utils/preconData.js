@@ -38,7 +38,7 @@ const INDEX_URL = `${MTGJSON}/DeckList.json`;
 // never mentions it (e.g. "Lorehold Spirit").
 const SETLIST_URL = `${MTGJSON}/SetList.json`;
 const DECKS_URL = `${MTGJSON}/decks/`;
-const client = axios.create({ timeout: 60000, headers: { 'User-Agent': 'Bindarr/1.0' } });
+const client = axios.create({ timeout: 60000, headers: { 'User-Agent': 'Scrybox/1.0' } });
 // The index changes with the daily MTGJSON build; once a day is the right
 // cadence for a search box, and it is what the cache header asks for anyway.
 const INDEX_MAX_AGE_MS = 24 * 60 * 60 * 1000;

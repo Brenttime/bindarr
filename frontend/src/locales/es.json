@@ -762,7 +762,7 @@
   "shared.collection.valueLabel": "Valor estimado de la colección",
   "shared.errLoad": "No se ha podido cargar la colección compartida.",
   "shared.estMarketPrice": "PRECIO DE MERCADO EST.",
-  "shared.goToBindarr": "Ir a Scrybox",
+  "shared.goToScrybox": "Ir a Scrybox",
   "shared.noCards": "Todavía no hay cartas.",
   "shared.noData": "Todavía no hay datos.",
   "shared.noSetData": "Todavía no hay datos de valor por set.",

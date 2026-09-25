@@ -1,4 +1,4 @@
-// A Scryfall-search-syntax evaluator that Bindarr runs against cards it
+// A Scryfall-search-syntax evaluator that Scrybox runs against cards it
 // already holds. The collection screen filters its loaded rows in the browser;
 // this module is the single source of truth for what the syntax means, so the
 // UI and any future server-side use cannot drift.

@@ -5,7 +5,7 @@
 
 // Boards to mirror from a Moxfield /v3/decks/all payload. Everything else
 // (attractions, stickers, maybeboard, the token boards) is a Moxfield display
-// concern with no Bindarr equivalent. Commander decks put their commander(s)
+// concern with no Scrybox equivalent. Commander decks put their commander(s)
 // in `commanders`, not the mainboard — a 99+1 layout — so they mirror into
 // the same 100-card slot.
 const MIRROR_BOARDS = ['mainboard', 'commanders', 'sideboard'];
@@ -15,7 +15,7 @@ const MIRROR_BOARDS = ['mainboard', 'commanders', 'sideboard'];
 // Moxfield's payload shape (verified live, 2026-08):
 //   details.boards = { mainboard: { count, cards: { <key>: { quantity, card } } }, ... }
 // Tokens / proxies that carry no scryfall_id are skipped (they have no
-// Bindarr card to map onto).
+// Scrybox card to map onto).
 function extractDeckCards(details) {
   const boards = (details && details.boards) || {};
   const out = [];
@@ -41,10 +41,10 @@ function boardCounts(entries) {
   return counts;
 }
 
-// Map a Moxfield card onto Bindarr's card_cache id: mtg-<scryfall uuid>.
+// Map a Moxfield card onto Scrybox's card_cache id: mtg-<scryfall uuid>.
 // The scryfall_id Moxfield hands us is exactly the UUID that lives after the
 // 'mtg-' prefix in card_cache.id — verified against the running collection.
-function bindarrCardId(card) {
+function scryboxCardId(card) {
   return `mtg-${card.scryfall_id}`;
 }
 
@@ -81,13 +81,13 @@ function targetSizeForFormat(format) {
 // cacheCards. price_source='moxfield' is what tells the price sweep and any
 // other Scryfall-keyed feature that this row is not a real Scryfall card.
 const COLOR_NAMES = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
-function synthesizeMoxfieldCard(bindarrId, card) {
+function synthesizeMoxfieldCard(scryboxId, card) {
   const c = card || {};
   const typeLine = c.type_line || '';
   const colors = Array.isArray(c.colors) ? c.colors : [];
   const colorWords = colors.map(x => COLOR_NAMES[x] || x);
   return {
-    id: bindarrId,
+    id: scryboxId,
     name: c.name || 'Unknown',
     supertype: 'MTG',
     subtypes: typeLine.split(/[^A-Za-z]+/).filter(Boolean),
@@ -116,7 +116,7 @@ module.exports = {
   MIRROR_BOARDS,
   extractDeckCards,
   boardCounts,
-  bindarrCardId,
+  scryboxCardId,
   mfxFormatLabel,
   targetSizeForFormat,
   synthesizeMoxfieldCard

@@ -12,7 +12,7 @@ const assert = require('assert');
 const os = require('os');
 const path = require('path');
 
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-languages-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-languages-${process.pid}.db`);
 const languages = require('../src/utils/languages');
 const scryfallApi = require('../src/scryfallApi');
 

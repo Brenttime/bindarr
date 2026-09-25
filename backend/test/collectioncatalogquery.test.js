@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 
 process.env.SCRYFALL_GAP_SCALE = '0';
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-colcatalog-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-colcatalog-${process.pid}.db`);
 const db = require('../src/db');
 const scryfallApi = require('../src/scryfallApi');
 const languages = require('../src/utils/languages');

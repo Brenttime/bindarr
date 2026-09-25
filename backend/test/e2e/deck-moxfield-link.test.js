@@ -10,7 +10,7 @@ const { spawn } = require('child_process');
 // API contract those two views depend on: the id is present on moxfield-sourced
 // rows and null for hand-made ones, and adding the column must not disturb the
 // aggregate totals the same query reports.
-const tmpDb = path.join(os.tmpdir(), `bindarr-deck-moxfield-link-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-deck-moxfield-link-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 const port = '3033';
 const projectRoot = path.join(__dirname, '../../../');

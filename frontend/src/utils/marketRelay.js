@@ -2,10 +2,10 @@
 // not a credential channel.
 //
 // Two facts decide the design:
-//   - Bindarr cannot inject anything into a manapool.com / tcgplayer.com page.
+//   - Scrybox cannot inject anything into a manapool.com / tcgplayer.com page.
 //     A popup has no cross-origin scripting access, period.
 //   - localStorage is partitioned per SITE FOR TOP FRAME. A manapool.com popup
-//     opened by Bindarr does NOT share a readable store with the Bindarr tab
+//     opened by Scrybox does NOT share a readable store with the Scrybox tab
 //     (opaque/second-site origins), so the old injected-script + poll design
 //     could never deliver a credential. It always timed out.
 //
@@ -17,7 +17,7 @@
 //   tcgplayer -> the account page, where dev-tools cookie capture is explained.
 // The user copies the value and pastes it into the field beside the button.
 // Nothing is captured, transmitted, or polled; there is never a credential in
-// Bindarr's memory. The tab is verified open in the same tick as the call --
+// Scrybox's memory. The tab is verified open in the same tick as the call --
 // nothing may sit behind an await before window.open -- so callers can toast
 // success only for real launches and errors only for real failures.
 

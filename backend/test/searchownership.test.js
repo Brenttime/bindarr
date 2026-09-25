@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const { performance } = require('perf_hooks');
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-search-ownership-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-search-ownership-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 
 const db = require('../src/db');

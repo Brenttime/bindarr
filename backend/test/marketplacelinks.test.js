@@ -15,7 +15,7 @@ const assert = require('assert');
 const os = require('os');
 const path = require('path');
 
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-mplinks-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-mplinks-${process.pid}.db`);
 
 // Real values, copied out of backend/database/bindarr.db — a hand-written URL
 // would only prove the test agrees with itself.

@@ -11,7 +11,7 @@ const { spawn } = require('child_process');
 // throwaway DB, the same way scryfall.test.js does, with the Scryfall mock
 // preloaded so no request ever reaches api.scryfall.com.
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-colcatalog-e2e-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-colcatalog-e2e-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 const db = require('../../src/db');
 const oracleTags = require('../../src/oracleTags');

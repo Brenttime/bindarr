@@ -4,7 +4,7 @@ const os = require('os');
 const assert = require('assert');
 const { spawn } = require('child_process');
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-printing-identity-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-printing-identity-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 const port = '3021';
 const projectRoot = path.join(__dirname, '../../../');

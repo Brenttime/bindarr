@@ -58,7 +58,7 @@ async function loadOrCreateCert(dir) {
 
   const notBeforeDate = new Date();
   const notAfterDate = new Date(notBeforeDate.getTime() + CERT_DAYS * 86400000);
-  const pems = await require('selfsigned').generate([{ name: 'commonName', value: 'bindarr' }], {
+  const pems = await require('selfsigned').generate([{ name: 'commonName', value: 'scrybox' }], {
     keySize: 2048,
     algorithm: 'sha256',
     notBeforeDate,

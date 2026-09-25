@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-import-test-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-import-test-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 const db = require('../../src/db');
 const port = '3027';

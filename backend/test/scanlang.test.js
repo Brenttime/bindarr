@@ -11,7 +11,7 @@
 const assert = require('assert');
 
 process.env.DB_PATH = require('path').join(
-  require('os').tmpdir(), `bindarr-scanlang-${process.pid}.db`
+  require('os').tmpdir(), `scrybox-scanlang-${process.pid}.db`
 );
 
 (async () => {

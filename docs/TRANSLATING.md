@@ -1,6 +1,6 @@
-# Translating Bindarr
+# Translating Scrybox
 
-Bindarr's interface is translated by whoever wants to translate it. There is no
+Scrybox's interface is translated by whoever wants to translate it. There is no
 account to make and no tool to learn: every language is a single JSON file in
 [`frontend/src/locales/`](../frontend/src/locales), and a translation is a pull
 request that adds or edits one.
@@ -85,7 +85,7 @@ and the checker names the exact ones your file is missing. Leave a plural out
 entirely and it just falls back to English; leave it half-done and some counts
 show English while others show your language, which looks broken.
 
-**3. Do not translate names.** `Bindarr`, `Magic: The Gathering`,
+**3. Do not translate names.** `Scrybox`, `Magic: The Gathering`,
 `LCARS`, `Scryfall`, and set or card names are brands or data, not interface text.
 Card and set names come from Scryfall in the language the card was
 printed in, so they are never in these files to begin with.
