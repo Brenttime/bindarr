@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 // preconData pulls in the db module; park it in a throwaway file so the test
 // can never touch a real (dev) database.
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-precon-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-precon-${process.pid}.db`);
 const { rankPrecons, importPreconCardsIntoDeck } = require('../src/utils/preconData');
 
 const DECKS = [

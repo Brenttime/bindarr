@@ -10,7 +10,7 @@ const assert = require('assert');
 // this test's fixture rows — and the inserts below failed on a UNIQUE
 // constraint. Rare, entirely dependent on which PID the OS handed out, and it
 // looked like a real regression when it finally fired. Start from empty.
-const tmpDb = path.join(os.tmpdir(), `bindarr-schema-test-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-schema-test-${process.pid}.db`);
 try { fs.rmSync(tmpDb, { force: true }); } catch { /* nothing to remove */ }
 process.env.DB_PATH = tmpDb;
 

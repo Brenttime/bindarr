@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-listmin-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-listmin-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 
 const db = require('../src/db');

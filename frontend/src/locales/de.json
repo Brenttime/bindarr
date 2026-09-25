@@ -761,7 +761,7 @@
   "shared.collection.valueLabel": "Geschätzter Sammlungswert",
   "shared.errLoad": "Geteilte Sammlung konnte nicht geladen werden.",
   "shared.estMarketPrice": "GESCHÄTZTER MARKTPREIS",
-  "shared.goToBindarr": "Zu Scrybox",
+  "shared.goToScrybox": "Zu Scrybox",
   "shared.noCards": "Noch keine Karten.",
   "shared.noData": "Noch keine Daten.",
   "shared.noSetData": "Noch keine Set-Werte.",

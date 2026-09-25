@@ -6,7 +6,7 @@ const os = require('os');
 const crypto = require('crypto');
 const assert = require('assert');
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-auth-test-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-auth-test-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 // initDb only seeds the 'admin' user when this is set — the wizard creates the
 // owner account otherwise, and these tests want a user id 1 to exist.

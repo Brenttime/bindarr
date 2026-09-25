@@ -11,7 +11,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-deckcommander-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-deckcommander-${process.pid}.db`);
 const db = require('../src/db');
 const { getDeckCommanders } = require('../src/utils/deckCommander');
 

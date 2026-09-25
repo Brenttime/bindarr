@@ -15,7 +15,7 @@ const axios = require('axios');
 const router = express.Router();
 const CACHE = process.env.RULES_CACHE || path.join(__dirname, '../../../database/mtg-rules.json');
 const MAX_AGE = 7 * 86400 * 1000;
-const UA = { 'User-Agent': 'Bindarr/1.0 (rules reference)' };
+const UA = { 'User-Agent': 'Scrybox/1.0 (rules reference)' };
 let mem = null;
 let inflight = null;
 

@@ -4,7 +4,7 @@
 //   POST /api/limited/analyze  { list: "2 Doom Blade\n1 Scoured Barrens\n..." }
 //
 // Card data comes from Scryfall /cards/collection by name (the same queued,
-// rate-limited client the rest of Bindarr uses). Nothing is stored.
+// rate-limited client the rest of Scrybox uses). Nothing is stored.
 const express = require('express');
 const { client, scryPostRetried } = require('../scryfallApi');
 const { parseDecklist, analyzeCards } = require('../utils/limitedMana');

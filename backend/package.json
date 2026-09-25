@@ -1,7 +1,7 @@
 {
-  "name": "bindarr-backend",
+  "name": "scrybox-backend",
   "version": "1.8.5",
-  "description": "Backend API for Bindarr",
+  "description": "Backend API for Scrybox",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

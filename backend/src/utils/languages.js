@@ -1,4 +1,4 @@
-// The card languages Bindarr can search, scan and store — one table, because
+// The card languages Scrybox can search, scan and store — one table, because
 // three different providers each spell them their own way.
 //
 // `name` is the display name, and it is deliberately the same string

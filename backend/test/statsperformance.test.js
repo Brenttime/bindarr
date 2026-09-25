@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const dbPath = path.join(os.tmpdir(), `bindarr-stats-performance-${process.pid}.db`);
+const dbPath = path.join(os.tmpdir(), `scrybox-stats-performance-${process.pid}.db`);
 process.env.DB_PATH = dbPath;
 const db = require('../src/db');
 const statsRouter = require('../src/routes/stats');

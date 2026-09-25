@@ -5,8 +5,8 @@ const http = require('http');
 const assert = require('assert');
 const { spawn } = require('child_process');
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-oidc-test-${process.pid}.db`);
-const linkDb = path.join(os.tmpdir(), `bindarr-oidc-link-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-oidc-test-${process.pid}.db`);
+const linkDb = path.join(os.tmpdir(), `scrybox-oidc-link-${process.pid}.db`);
 const projectRoot = path.join(__dirname, '../../../');
 
 async function waitForServer(url) {
@@ -50,7 +50,7 @@ async function runTests() {
       req.on('end', () => {
         const payloadB64 = Buffer.from(JSON.stringify({
           iss: `http://${req.headers.host}`,
-          aud: 'bindarr-test-id',
+          aud: 'scrybox-test-id',
           exp: Math.floor(Date.now() / 1000) + 3600,
           nonce: currentNonce,
           ...mockUserClaims
@@ -81,22 +81,22 @@ async function runTests() {
   const idpPort = idpServer.address().port;
   const idpIssuer = `http://127.0.0.1:${idpPort}`;
 
-  // 2. Start Bindarr backend server with OIDC configuration
-  const bindarrPort = '3019';
-  const base = `http://localhost:${bindarrPort}`;
+  // 2. Start Scrybox backend server with OIDC configuration
+  const scryboxPort = '3019';
+  const base = `http://localhost:${scryboxPort}`;
 
   const server = spawn('node', [path.join(projectRoot, 'backend/src/server.js')], {
     env: {
       ...process.env,
       DEFAULT_ADMIN_PASSWORD: '',
-      PORT: bindarrPort,
+      PORT: scryboxPort,
       DB_PATH: tmpDb,
       HTTPS_PORT: '',
       OIDC_ENABLED: 'true',
       OIDC_PROVIDER_NAME: 'TestIdP',
       OIDC_ISSUER_URL: idpIssuer,
-      OIDC_CLIENT_ID: 'bindarr-test-id',
-      OIDC_CLIENT_SECRET: 'bindarr-test-secret',
+      OIDC_CLIENT_ID: 'scrybox-test-id',
+      OIDC_CLIENT_SECRET: 'scrybox-test-secret',
       OIDC_AUTO_PROVISION: 'true'
     }
   });
@@ -120,7 +120,7 @@ async function runTests() {
 
     const authUrl = new URL(redirectLocation);
     assert.strictEqual(authUrl.pathname, '/authorize');
-    assert.strictEqual(authUrl.searchParams.get('client_id'), 'bindarr-test-id');
+    assert.strictEqual(authUrl.searchParams.get('client_id'), 'scrybox-test-id');
     const state = authUrl.searchParams.get('state');
     currentNonce = authUrl.searchParams.get('nonce');
     assert(currentNonce, 'the authorization request must carry a nonce');
@@ -317,7 +317,7 @@ async function runUsernameLinkTests() {
       req.on('end', () => {
         const payloadB64 = Buffer.from(JSON.stringify({
           iss: `http://${req.headers.host}`,
-          aud: 'bindarr-test-id',
+          aud: 'scrybox-test-id',
           exp: Math.floor(Date.now() / 1000) + 3600,
           nonce: currentNonce,
           ...mockUserClaims
@@ -357,8 +357,8 @@ async function runUsernameLinkTests() {
       OIDC_ENABLED: 'true',
       OIDC_PROVIDER_NAME: 'TestIdP',
       OIDC_ISSUER_URL: idpIssuer,
-      OIDC_CLIENT_ID: 'bindarr-test-id',
-      OIDC_CLIENT_SECRET: 'bindarr-test-secret',
+      OIDC_CLIENT_ID: 'scrybox-test-id',
+      OIDC_CLIENT_SECRET: 'scrybox-test-secret',
       OIDC_AUTO_PROVISION: 'true',
       OIDC_ALLOW_USERNAME_LINK: 'true'
     }

@@ -1,4 +1,4 @@
-// Moxfield sync engine: mirrors an author's public Moxfield decks into Bindarr.
+// Moxfield sync engine: mirrors an author's public Moxfield decks into Scrybox.
 //
 // Two cadences, driven by moxfieldScheduler.js on its 20s tick:
 //
@@ -53,7 +53,7 @@ const {
   MIRROR_BOARDS,
   extractDeckCards,
   boardCounts,
-  bindarrCardId,
+  scryboxCardId,
   mfxFormatLabel,
   targetSizeForFormat,
   synthesizeMoxfieldCard
@@ -63,7 +63,7 @@ const {
 // Scryfall backfill for cards not yet in card_cache
 // ---------------------------------------------------------------------------
 
-// Moxfield hands us complete card data, but Bindarr's card_cache is what every
+// Moxfield hands us complete card data, but Scrybox's card_cache is what every
 // downstream read joins against (art, prices, rarity, marketplace links — and
 // the MTG price sweep). For cards we do not already hold, resolve them against
 // Scryfall by id — the same batched, queue-limited lookup the import path uses.
@@ -73,7 +73,7 @@ const {
 // synthesized into card_cache from Moxfield's own card block so the deck never
 // ends up with a dangling reference (price_source='moxfield' marks the row).
 async function backfillMissingCards(entries) {
-  const ids = [...new Set(entries.map(e => bindarrCardId(e.card)))];
+  const ids = [...new Set(entries.map(e => scryboxCardId(e.card)))];
   const missing = [];
   for (const id of ids) {
     const cached = await db.get(`SELECT id FROM card_cache WHERE id = ?`, [id]);
@@ -96,7 +96,7 @@ async function backfillMissingCards(entries) {
     const seen = new Set();
     const synthesized = [];
     for (const e of entries) {
-      const id = bindarrCardId(e.card);
+      const id = scryboxCardId(e.card);
       if (stillMissing.has(id) && !seen.has(id)) {
         seen.add(id);
         synthesized.push(synthesizeMoxfieldCard(id, e.card));
@@ -457,7 +457,7 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   // sum those quantities instead of creating parallel deck rows.
   const rawDesired = new Map();
   for (const e of entries) {
-    const id = bindarrCardId(e.card);
+    const id = scryboxCardId(e.card);
     rawDesired.set(id, (rawDesired.get(id) || 0) + e.quantity);
   }
   const desiredIds = [...rawDesired.keys()];
@@ -532,7 +532,7 @@ async function pullDeckContent(author, publicId, knownRow = null) {
   // reprint representative still carries the flag.
   const commanderKeys = new Set(entries
     .filter(e => e.board === 'commanders')
-    .map(e => keysById.get(bindarrCardId(e.card)))
+    .map(e => keysById.get(scryboxCardId(e.card)))
     .filter(Boolean));
   await markDeckCommanders(tx, targetDeckId, commanderKeys);
 
@@ -765,7 +765,7 @@ module.exports = {
   // Re-exported from utils/mfxPayload so callers can import everything from one place.
   extractDeckCards,
   boardCounts,
-  bindarrCardId,
+  scryboxCardId,
   mfxFormatLabel,
   targetSizeForFormat,
   MIRROR_BOARDS, markDeckCommanders };

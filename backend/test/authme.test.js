@@ -17,7 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const assert = require('assert');
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-authme-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-authme-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 // Seed the 'admin' user (id 1) so the handler has someone to return.
 process.env.DEFAULT_ADMIN_PASSWORD = 'test-admin-password';

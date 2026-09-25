@@ -9,7 +9,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-deckownership-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-deckownership-${process.pid}.db`);
 const db = require('../src/db');
 const { getDeckOwnership } = require('../src/utils/deckOwnership');
 

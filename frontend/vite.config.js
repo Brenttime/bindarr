@@ -11,9 +11,9 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  // Demo build is served from https://<user>.github.io/bindarr/, so assets need
+  // Demo build is served from https://<user>.github.io/scrybox/, so assets need
   // that sub-path prefix. Every other build (web/mobile) stays root-relative.
-  base: process.env.VITE_DEMO ? '/bindarr/' : '/',
+  base: process.env.VITE_DEMO ? '/scrybox/' : '/',
   plugins: [react(), basicSsl()],
   // Matches how the app already reads build-time config (VITE_DEMO), so this
   // needs no new global and no eslint exception.

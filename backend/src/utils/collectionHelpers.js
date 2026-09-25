@@ -4,7 +4,7 @@ const db = require('../db');
 const { sqlCardKey, sqlIsBasicLand } = require('./cardIdentity');
 
 // Checkout and inventory reductions must be linearizable with respect to each
-// other. Bindarr intentionally runs one Node process, so this FIFO mutex closes
+// other. Scrybox intentionally runs one Node process, so this FIFO mutex closes
 // the gap between a reduction's availability read and its multi-row stack write
 // without pretending the shared sqlite3 connection provides request-local
 // transactions. Every operation that can reserve or shrink logical supply uses

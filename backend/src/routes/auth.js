@@ -80,7 +80,7 @@ router.get('/oidc/callback', authLimiter, async (req, res) => {
     //    username — only when the operator has said their IdP's usernames can be
     //    trusted for it. See isUsernameLinkEnabled: with it on by default, anyone
     //    who could set their own preferred_username to "admin" at the IdP could
-    //    take the Bindarr owner account by signing in once.
+    //    take the Scrybox owner account by signing in once.
     if (!user) {
       const existingUser = await db.get(`SELECT * FROM users WHERE username = ?`, [username]);
       // Linking off and the name is taken: say so, rather than falling through to
@@ -90,7 +90,7 @@ router.get('/oidc/callback', authLimiter, async (req, res) => {
       if (existingUser && !oidc.isUsernameLinkEnabled()) {
         console.warn(`OIDC: "${username}" already exists locally and OIDC_ALLOW_USERNAME_LINK is off — not linking.`);
         return frontendRedirect({
-          oidc_error: 'A Bindarr account with this username already exists. An administrator must set OIDC_ALLOW_USERNAME_LINK=true to attach single sign-on to it.'
+          oidc_error: 'A Scrybox account with this username already exists. An administrator must set OIDC_ALLOW_USERNAME_LINK=true to attach single sign-on to it.'
         });
       }
       if (existingUser) {
@@ -151,7 +151,7 @@ router.get('/oidc/callback', authLimiter, async (req, res) => {
         user = await db.get(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
       } else {
         return frontendRedirect({
-          oidc_error: 'No matching Bindarr account found. Auto-provisioning is disabled; ask an administrator to create your account.'
+          oidc_error: 'No matching Scrybox account found. Auto-provisioning is disabled; ask an administrator to create your account.'
         });
       }
     }

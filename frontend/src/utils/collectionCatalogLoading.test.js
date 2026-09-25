@@ -42,7 +42,7 @@ function deferred() {
 }
 
 function requestDetails(url) {
-  const parsed = new URL(url, 'http://bindarr.test');
+  const parsed = new URL(url, 'http://scrybox.test');
   return {
     query: parsed.searchParams.get('q'),
     page: Number(parsed.searchParams.get('page')),

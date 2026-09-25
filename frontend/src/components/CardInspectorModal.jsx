@@ -349,7 +349,7 @@ function CardInspectorModal({ card, onClose, onUpdate, onDeleted, showToast, sta
                     </div>
                   )}
                   {/* Printings are priced separately; conditions are not, by anyone
-                      Bindarr talks to — TCGplayer, Scryfall and Cardmarket all quote
+                      Scrybox talks to — TCGplayer, Scryfall and Cardmarket all quote
                       a Near Mint copy. Saying so beats letting a played card show a
                       NM price with nothing to explain it, and beats inventing a
                       condition multiplier, which would be a made-up number wearing

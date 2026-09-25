@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 
 process.env.SCRYFALL_GAP_SCALE = '0';
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-scrylocal-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-scrylocal-${process.pid}.db`);
 const db = require('../src/db');
 const scryfallApi = require('../src/scryfallApi');
 const { matches } = require('../../shared/scryfallQuery.js');

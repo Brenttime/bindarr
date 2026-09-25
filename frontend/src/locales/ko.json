@@ -760,7 +760,7 @@
   "shared.collection.valueLabel": "컬렉션 추정 가치",
   "shared.errLoad": "공유된 컬렉션을 불러올 수 없습니다.",
   "shared.estMarketPrice": "추정 마켓 가격",
-  "shared.goToBindarr": "Scrybox로 이동",
+  "shared.goToScrybox": "Scrybox로 이동",
   "shared.noCards": "아직 카드가 없습니다.",
   "shared.noData": "아직 데이터가 없습니다.",
   "shared.noSetData": "아직 세트별 가치 데이터가 없습니다.",

@@ -20,7 +20,7 @@ const assert = require('assert');
 const os = require('os');
 const path = require('path');
 
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-newsetcount-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-newsetcount-${process.pid}.db`);
 const db = require('../src/db');
 const { newSetCount } = require('../src/catalog');
 

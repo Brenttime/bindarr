@@ -51,14 +51,14 @@ router.get('/export', async (req, res) => {
 
     if (format.toLowerCase() === 'json') {
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename=bindarr_collection_${targetFormat}.json`);
+      res.setHeader('Content-Disposition', `attachment; filename=scrybox_collection_${targetFormat}.json`);
       return res.json(rows);
     }
 
     const csvContent = generateExportCSV(rows, targetFormat);
 
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=bindarr_collection_${targetFormat}.csv`);
+    res.setHeader('Content-Disposition', `attachment; filename=scrybox_collection_${targetFormat}.csv`);
     res.send(csvContent);
   } catch (error) {
     res.status(500).json({ error: 'Export failed', message: error.message });

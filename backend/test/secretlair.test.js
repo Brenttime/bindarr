@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 // secretLair pulls in the db module transitively; park it on a throwaway file
 // so an injected-stub run can never touch a real (dev) database.
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-seclair-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-seclair-${process.pid}.db`);
 const {
   baseName, isFoilRow, searchSecretLair, previewSecretLairDrop, addSecretLairToCollection,
 } = require('../src/utils/secretLair');

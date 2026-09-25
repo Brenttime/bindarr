@@ -454,7 +454,7 @@ router.get('/stats/networth', async (req, res) => {
   }
 });
 
-// Two windows: the last 30 days of snapshots, or everything Bindarr has recorded.
+// Two windows: the last 30 days of snapshots, or everything Scrybox has recorded.
 const PRICE_HISTORY_RANGES = { '30d': 30 };
 
 // Rules (Oracle) text for one card. Served from card_cache; rows cached before
@@ -519,7 +519,7 @@ router.get('/cards/:id/price-history', async (req, res) => {
     res.json({
       data: data.map(p => ({ price: p.price, recorded_at: new Date(p.time).toISOString(), source: p.source })),
       // What the line is actually made of, so the UI can say so rather than
-      // implying Bindarr knows more than it does.
+      // implying Scrybox knows more than it does.
       marketCount: 0,
       recordedCount,
       insufficientHistory: data.length < 2,

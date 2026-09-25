@@ -15,7 +15,7 @@ const os = require('os');
 const path = require('path');
 // The util pulls the db module transitively (ownership read); park it on a
 // throwaway file so an injected-stub run can never touch a real (dev) database.
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-mktorders-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-mktorders-${process.pid}.db`);
 
 const {
   normalizeCookies, cookieCount, maskSecret, maskEmail, customerIdHints,

@@ -1,7 +1,7 @@
 {
-  "name": "bindarr-monorepo",
+  "name": "scrybox-monorepo",
   "private": true,
-  "description": "Monorepo for Bindarr, a self-hosted Magic: The Gathering card collection manager",
+  "description": "Monorepo for Scrybox, a self-hosted Magic: The Gathering card collection manager",
   "scripts": {
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",

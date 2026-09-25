@@ -70,7 +70,7 @@ non-zero on any wrong printing:
 
 ```sh
 cd backend
-node scripts/client-scan-replay.mjs <CLIENT_SCAN_DIR> ~/projects/bindarr-host/cardscan/debug
+node scripts/client-scan-replay.mjs <CLIENT_SCAN_DIR> ~/projects/scrybox-host/cardscan/debug
 ```
 
 ## Limits

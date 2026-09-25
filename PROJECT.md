@@ -1,10 +1,10 @@
-# Bindarr — Architecture & Developer Guide
+# Scrybox — Architecture & Developer Guide
 
 Developer-facing reference for the codebase. For install/run/deploy and end-user
 features, see [README.md](README.md); this document explains **how the system is
 built and why**.
 
-Bindarr is a self-hosted trading-card collection manager for **Magic:
+Scrybox is a self-hosted trading-card collection manager for **Magic:
 The Gathering**. It identifies cards from a phone photo (no typing),
 values the collection over time, and helps you pull the cards for a deck back
 out again.
@@ -69,7 +69,7 @@ points `CV_MODEL_DIR` at `/app/database/models` on the mounted volume — otherw
 an image update discards every catalog an admin built.
 
 The two models are in neither the repository nor the image, and that is a
-licensing decision rather than an omission: they are AGPL-3.0 while Bindarr is MIT,
+licensing decision rather than an omission: they are AGPL-3.0 while Scrybox is MIT,
 so the operator fetches them into `CV_MODEL_DIR` as a deliberate step
 (`node scripts/fetch-models.mjs`, optionally `--catalogs` for the published
 fallbacks). Startup says so when they are absent, because that is the ordinary
@@ -264,7 +264,7 @@ cards. There is no index build in the scan path at all, so set-scoped scanning
 needs no preparation and a scan has no geometric verification stage to be slow in.
 
 Both models are AGPL-3.0 ([milo](https://huggingface.co/HanClinto/milo),
-[cornelius](https://huggingface.co/HanClinto/cornelius)) and Bindarr is MIT.
+[cornelius](https://huggingface.co/HanClinto/cornelius)) and Scrybox is MIT.
 Shipping them enabled is a licensing decision, not only a technical one.
 
 Test-time augmentation (two extra dewarps at 0.92×/1.08× crop tightness, averaged
@@ -403,7 +403,7 @@ on `entry_id`, never on `card_id` alone.
 ## Frontend
 
 `App.jsx` holds auth state (`token`/`user` in `localStorage` under
-`bindarr_*`), installs a `fetch` wrapper that injects the `Bearer` header on
+`scrybox_*`), installs a `fetch` wrapper that injects the `Bearer` header on
 `/api/*` calls and dispatches a logout event on `401`, and tab-routes between
 code-split view components. `/share/:token` renders the public view without auth.
 

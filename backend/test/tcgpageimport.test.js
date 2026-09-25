@@ -2,7 +2,7 @@
 const assert = require('assert');
 const os = require('os');
 const path = require('path');
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-tcgpage-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-tcgpage-${process.pid}.db`);
 const { cleanTcgPageLines, resolveTcgPageLines } = require('../src/utils/marketplaceOrders');
 
 (async () => {

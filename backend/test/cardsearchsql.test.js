@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-searchsql-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-searchsql-${process.pid}.db`);
 const { collectionQuery, localCacheQuery, numberClause, nameClause } = require('../src/utils/cardSearchSql');
 
 const squash = (s) => s.replace(/\s+/g, ' ').trim();

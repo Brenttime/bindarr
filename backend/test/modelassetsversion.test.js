@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bindarr-model-version-'));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrybox-model-version-'));
 process.env.CV_MODEL_DIR = dir;
 
 const { MODELS, isPresent } = require('../src/utils/modelAssets');

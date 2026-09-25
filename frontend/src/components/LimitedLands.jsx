@@ -7,7 +7,7 @@ import { useT } from '../utils/i18n';
 
 // Limited (40-card) land-base calculator. Ported from the standalone Land Desk
 // tool; the allocation/odds engines are the same tested modules. Improvements:
-// counts pips from a pasted decklist or a Bindarr deck, and shows every
+// counts pips from a pasted decklist or a Scrybox deck, and shows every
 // color's early-play odds at once.
 
 const STORAGE_KEY = 'bindarr_limited_lands_v1';

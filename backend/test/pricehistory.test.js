@@ -6,7 +6,7 @@ const assert = require('assert');
 const os = require('os');
 const path = require('path');
 
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-pricehist-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-pricehist-${process.pid}.db`);
 const db = require('../src/db');
 const { recordPrice, shouldSweepPrices, markPricesSwept } = require('../src/utils/priceHelpers');
 

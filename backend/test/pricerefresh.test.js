@@ -19,7 +19,7 @@ const assert = require('assert');
 const os = require('os');
 const path = require('path');
 
-process.env.DB_PATH = path.join(os.tmpdir(), `bindarr-pricerefresh-${process.pid}.db`);
+process.env.DB_PATH = path.join(os.tmpdir(), `scrybox-pricerefresh-${process.pid}.db`);
 const db = require('../src/db');
 const {
   shouldSweepPrices,

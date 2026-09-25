@@ -519,7 +519,7 @@
   "admin.errDeleteUserGeneric": "Error deleting user.",
   "shared.errLoad": "Failed to load shared collection.",
   "shared.unavailable": "Collection Unavailable",
-  "shared.goToBindarr": "Go to Scrybox",
+  "shared.goToScrybox": "Go to Scrybox",
   "shared.sharedBy": "Shared by",
   "shared.ownerTitle": "{owner}'s {list}",
   "shared.collection.tab": "Collection",

@@ -3,7 +3,7 @@
 //
 // The models are not in this repository and not baked into the container image,
 // which is a licensing decision rather than an oversight: the detector is MIT,
-// while the embedding model is AGPL-3.0-only and Bindarr is MIT. The operator
+// while the embedding model is AGPL-3.0-only and Scrybox is MIT. The operator
 // fetches them deliberately instead of receiving the AGPL model inside an
 // MIT-licensed artifact. Nothing runs this automatically.
 //
@@ -11,7 +11,7 @@
 //   node scripts/fetch-models.mjs --catalogs      # ...plus the MTG fallback (~56 MB)
 //   node scripts/fetch-models.mjs --catalogs-only
 //
-// In a container:  docker exec bindarr node scripts/fetch-models.mjs
+// In a container:  docker exec scrybox node scripts/fetch-models.mjs
 //
 // Sizes are asserted, not assumed. A truncated ONNX file fails at session
 // creation with a protobuf error that says nothing about the download, and a
@@ -63,7 +63,7 @@ const wanted = [
 
 console.log(`Target: ${MODEL_DIR}`);
 console.log(`Together, cornelius and milo require ${LICENSE.spdx} compliance (${LICENSE.urls.join(', ')}).`);
-console.log('Bindarr is MIT. Running them in your own install is your call to make;');
+console.log('Scrybox is MIT. Running them in your own install is your call to make;');
 console.log('shipping them onward is a licensing decision.');
 
 fs.mkdirSync(MODEL_DIR, { recursive: true });

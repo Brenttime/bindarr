@@ -760,7 +760,7 @@
   "shared.collection.valueLabel": "コレクションの推定価値",
   "shared.errLoad": "共有コレクションの読み込みに失敗しました。",
   "shared.estMarketPrice": "推定マーケット価格",
-  "shared.goToBindarr": "Scrybox へ移動",
+  "shared.goToScrybox": "Scrybox へ移動",
   "shared.noCards": "カードはまだありません。",
   "shared.noData": "データはまだありません。",
   "shared.noSetData": "セット別の価値データはまだありません。",

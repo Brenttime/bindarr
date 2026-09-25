@@ -34,7 +34,7 @@ const fs = require('fs');
 const os = require('os');
 const assert = require('assert');
 
-const tmpDb = path.join(os.tmpdir(), `bindarr-legacy-depokemon-${process.pid}.db`);
+const tmpDb = path.join(os.tmpdir(), `scrybox-legacy-depokemon-${process.pid}.db`);
 process.env.DB_PATH = tmpDb;
 delete process.env.DEFAULT_ADMIN_PASSWORD;
 

@@ -6,7 +6,7 @@ const {
   MIRROR_BOARDS,
   extractDeckCards,
   boardCounts,
-  bindarrCardId,
+  scryboxCardId,
   mfxFormatLabel,
   targetSizeForFormat,
   synthesizeMoxfieldCard
@@ -79,10 +79,10 @@ function testBoardCounts() {
   assert.strictEqual(counts.maybeboard, 0, 'unmirrored boards stay zero');
 }
 
-function testBindarrCardId() {
+function testScryboxCardId() {
   // The mapping that makes the whole feature work: Moxfield scryfall_id →
   // card_cache id. Verified against the running collection (mtg-<uuid>).
-  assert.strictEqual(bindarrCardId({ scryfall_id: 'cb28fe03-8269-41de-b766-42c3421aeaef' }),
+  assert.strictEqual(scryboxCardId({ scryfall_id: 'cb28fe03-8269-41de-b766-42c3421aeaef' }),
     'mtg-cb28fe03-8269-41de-b766-42c3421aeaef');
 }
 
@@ -146,7 +146,7 @@ function testSynthesizeMoxfieldCard() {
 function main() {
   testExtract();
   testBoardCounts();
-  testBindarrCardId();
+  testScryboxCardId();
   testFormatLabel();
   testTargetSize();
   testMirrorBoards();

@@ -1,9 +1,9 @@
 services:
-  bindarr:
+  scrybox:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: bindarr
+    container_name: scrybox
     restart: unless-stopped
     # Same app on both ports — only the transport differs. 3001 is what you point a
     # reverse proxy at; 3443 is what you use directly when there is no proxy (card

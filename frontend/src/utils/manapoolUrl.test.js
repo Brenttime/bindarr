@@ -22,7 +22,7 @@ const deckOf = (url) => {
 
 // Hard oracle: the exact base64 ManaPool put on the wire for this list, taken
 // from Brent's reference link. Reproducing it byte-for-byte is what proves
-// Bindarr speaks ManaPool's dialect rather than merely a self-consistent one.
+// Scrybox speaks ManaPool's dialect rather than merely a self-consistent one.
 const ORACLE_LIST = [
   '1 Echocasting Symposium [SOS] 44',
   '1 The Legend of Yangchen // Avatar Yangchen [TLA] 27',

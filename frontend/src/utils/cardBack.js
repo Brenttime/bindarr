@@ -1,4 +1,4 @@
-// The image a card falls back to when nobody has art for it — a Bindarr card
+// The image a card falls back to when nobody has art for it — a Scrybox card
 // back, drawn rather than fetched.
 //
 // Drawn, for three reasons. It costs no network round trip at the exact moment
@@ -75,7 +75,7 @@ function svg() {
   <text x="${cx}" y="${H - 92}" text-anchor="middle"
         font-family="Outfit, 'Plus Jakarta Sans', system-ui, sans-serif"
         font-size="40" font-weight="800" letter-spacing="14"
-        fill="#ffffff" fill-opacity="0.22">BINDARR</text>
+        fill="#ffffff" fill-opacity="0.22">SCRYBOX</text>
 </svg>`;
 }
 

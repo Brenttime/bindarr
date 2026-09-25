@@ -1,13 +1,13 @@
 # ManaBox theme
 
-Bindarr ships an opt-in skin modeled on the ManaBox mobile app: graphite
+Scrybox ships an opt-in skin modeled on the ManaBox mobile app: graphite
 surfaces, a single orange accent, flat list-first panels, a left sidebar on
 desktop and a bottom tab bar on phones.
 
 - Code: `frontend/src/theme-manabox.css` (imported from `frontend/src/main.jsx`)
 - Turn it on: Settings -> Preferences -> Theme -> "ManaBox", or add `?theme=manabox` to any URL
   (works for share links too, e.g. `/share/<token>?theme=manabox`)
-- Design reference: the static concept in `bindarr-design-demos/redesigns/manabox/index.html`
+- Design reference: the static concept in `scrybox-design-demos/redesigns/manabox/index.html`
 - Guard test: `frontend/src/utils/themeManabox.test.js` (runs in `npm test`)
 
 ## What makes it ManaBox

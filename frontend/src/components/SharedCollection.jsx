@@ -146,7 +146,7 @@ function SharedCollection({ shareToken }) {
             backgroundColor: 'var(--accent-red)', color: 'var(--text-strong)',
             textDecoration: 'none', fontWeight: 700, borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-accent)'
           }}>
-            {t('shared.goToBindarr')}
+            {t('shared.goToScrybox')}
           </a>
         </div>
       </div>
