@@ -1,3 +1,4 @@
+import { looksLikeSyntax } from './scryfallSyntax.js';
 // Preserve the scanner's established "SET NUMBER" and card-name shortcuts while
 // still allowing explicit Scryfall syntax in the manual fallback field.
 export function manualSearchFields(raw) {
@@ -13,6 +14,6 @@ export function manualSearchFields(raw) {
 
   // An explicit Scryfall operator is intentional raw syntax; ordinary text is a
   // card-name search so names containing spaces continue to work as before.
-  if (/(?:^|\s)[a-z][a-z0-9_-]*\s*:/i.test(query)) return { q: query };
+  if (looksLikeSyntax(query)) return { q: query };
   return { name: query };
 }
